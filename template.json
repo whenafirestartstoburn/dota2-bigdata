@@ -1,0 +1,43 @@
+{
+	"template": {
+		"version": "0.1.0",
+		"commit": "29e03be"
+	},
+	"name": "dota2-collector",
+	"blocks": [
+		"core",
+		"api",
+		"docker",
+		"postgres",
+		"migrations",
+		"pino"
+	],
+	"packages": [
+		{
+			"name": "shared",
+			"kind": "lib"
+		},
+		{
+			"name": "api",
+			"kind": "service"
+		},
+		{
+			"name": "cli",
+			"kind": "scripts"
+		},
+		{
+			"name": "worker",
+			"kind": "service"
+		}
+	],
+	"extraPackages": [
+		{
+			"name": "cli",
+			"kind": "scripts"
+		},
+		{
+			"name": "worker",
+			"kind": "service"
+		}
+	]
+}

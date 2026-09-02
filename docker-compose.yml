@@ -1,0 +1,121 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dota
+      POSTGRES_PASSWORD: dota
+      POSTGRES_DB: dota
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dota -d dota"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: dota
+      CLICKHOUSE_PASSWORD: dota
+      CLICKHOUSE_DB: dota
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "dota", "--password", "dota", "--query", "SELECT 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: apply dbmate migrations, then exit. Not the app image.
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2
+    working_dir: /app
+    volumes:
+      - ./db:/app/db
+    command: ["--wait", "--url", "postgres://dota:dota@postgres:5432/dota?sslmode=disable", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot: same dbmate image, ClickHouse migrations only.
+  clickhouse-migrate:
+    image: ghcr.io/amacneil/dbmate:2
+    working_dir: /app
+    volumes:
+      - ./db:/app/db
+    command:
+      - "--wait"
+      - "--url"
+      - "clickhouse://dota:dota@clickhouse:9000/dota"
+      - "--migrations-dir"
+      - "db/clickhouse/migrations"
+      - "--schema-file"
+      - "db/clickhouse/schema.sql"
+      - "up"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: packages/worker/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PGURI: postgres://dota:dota@postgres:5432/dota?sslmode=disable
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: dota
+      CLICKHOUSE_PASSWORD: dota
+      CLICKHOUSE_DATABASE: dota
+      LIVE_POLL_INTERVAL_MS: "3000"
+      WORKER_PORT: "8080"
+      HISTORY_DETAILS_ENQUEUE_LIMIT: ${HISTORY_DETAILS_ENQUEUE_LIMIT:-500}
+      HISTORY_REPLAY_ENQUEUE_LIMIT: ${HISTORY_REPLAY_ENQUEUE_LIMIT:-50}
+    ports:
+      - "3001:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      clickhouse-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PGURI: postgres://dota:dota@postgres:5432/dota?sslmode=disable
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: dota
+      CLICKHOUSE_PASSWORD: dota
+      CLICKHOUSE_DATABASE: dota
+      SERVER_PORT: "8080"
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "3000:8080"
+    depends_on:
+      worker:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  clickhouse_data:

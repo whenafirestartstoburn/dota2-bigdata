@@ -1,0 +1,19 @@
+{
+	"name": "@app/shared",
+	"private": true,
+	"type": "module",
+	"main": "./src/app.ts",
+	"imports": {
+		"#src/*": "./src/*.ts"
+	},
+	"scripts": {
+		"test": "NODE_ENV=development bun test --env-file=../../.env"
+	},
+	"dependencies": {
+		"@clickhouse/client": "catalog:",
+		"drizzle-orm": "catalog:",
+		"pino": "catalog:",
+		"snappy": "^7.4.2",
+		"zod": "catalog:"
+	}
+}

@@ -1,1 +1,20 @@
-template/*
+node_modules
+# Шаблоном, а не одним именем: .env.production и .env.local несут те же
+# PGURI и секреты, что и локальный .env, и под правило `.env` не подпадают.
+.env*
+!.env.example
+.proxies.local
+.accounts*.local
+*.log
+.DS_Store
+# Локальные настройки редактора. Сами скиллы блоков (.claude/skills/**)
+# коммитятся: они часть проекта, а не машины.
+.claude/settings.local.json
+
+# Справочные материалы CTO — не часть собираемого сервиса.
+template/
+notion_data/
+example_projects/
+
+# MinIO / Postgres / ClickHouse volumes, если compose пишет рядом.
+.data/

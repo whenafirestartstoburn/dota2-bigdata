@@ -1,0 +1,33 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"style": {
+				"noNonNullAssertion": "off",
+				"useNamingConvention": "off",
+				"noDefaultExport": "off"
+			},
+			"suspicious": { "noConsole": "off" },
+			"correctness": {
+				"noUnusedImports": "off",
+				"noUnusedVariables": { "level": "warn", "fix": "none" }
+			}
+		}
+	},
+	"files": {
+		"includes": [
+			"**/src/**/*",
+			"**/package.json",
+			"scripts/**/*.ts"
+		]
+	},
+	"javascript": {
+		"formatter": {
+			"semicolons": "asNeeded",
+			"quoteStyle": "single",
+			"lineWidth": 80
+		}
+	}
+}

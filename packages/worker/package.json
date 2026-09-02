@@ -1,0 +1,17 @@
+{
+	"name": "@app/worker",
+	"private": true,
+	"type": "module",
+	"imports": {
+		"#src/*": "./src/*.ts"
+	},
+	"scripts": {
+		"test": "NODE_ENV=development bun test --env-file=../../.env"
+	},
+	"dependencies": {
+		"@app/shared": "workspace:*",
+		"graphile-worker": "catalog:",
+		"steam-user": "catalog:",
+		"zod": "catalog:"
+	}
+}

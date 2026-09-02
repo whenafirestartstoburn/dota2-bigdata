@@ -1,0 +1,15 @@
+{
+	"name": "@app/api",
+	"private": true,
+	"type": "module",
+	"imports": {
+		"#src/*": "./src/*.ts"
+	},
+	"scripts": {
+		"test": "NODE_ENV=development bun test --env-file=../../.env"
+	},
+	"dependencies": {
+		"zod": "catalog:",
+		"@app/shared": "workspace:*"
+	}
+}

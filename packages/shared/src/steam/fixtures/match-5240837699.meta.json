@@ -1,0 +1,84 @@
+{
+	"match_id": 5240837699,
+	"source": {
+		"replay": "Valve CDN replay236.valve.net — .dem.bz2 then bunzip; Clarity NDJSON fixture from that file.",
+		"facts": "Box score and draft from the same match (seq-num / GC), independent of our mapper."
+	},
+	"start_time": 1581598865,
+	"duration": 2071,
+	"radiant_win": true,
+	"radiant_score": 34,
+	"dire_score": 24,
+	"league_id": 11629,
+	"first_blood_time": 145,
+	"radiant_name": "Astralis",
+	"dire_name": "Longinus",
+	"picks_bans": [
+		{ "is_pick": false, "hero_id": 41, "ord": 0 },
+		{ "is_pick": false, "hero_id": 94, "ord": 1 },
+		{ "is_pick": false, "hero_id": 66, "ord": 2 },
+		{ "is_pick": false, "hero_id": 7, "ord": 3 },
+		{ "is_pick": false, "hero_id": 58, "ord": 4 },
+		{ "is_pick": false, "hero_id": 19, "ord": 5 },
+		{ "is_pick": true, "hero_id": 31, "ord": 6 },
+		{ "is_pick": true, "hero_id": 86, "ord": 7 },
+		{ "is_pick": true, "hero_id": 93, "ord": 8 },
+		{ "is_pick": true, "hero_id": 28, "ord": 9 },
+		{ "is_pick": false, "hero_id": 57, "ord": 10 },
+		{ "is_pick": false, "hero_id": 89, "ord": 11 },
+		{ "is_pick": false, "hero_id": 10, "ord": 12 },
+		{ "is_pick": false, "hero_id": 54, "ord": 13 },
+		{ "is_pick": true, "hero_id": 121, "ord": 14 },
+		{ "is_pick": true, "hero_id": 87, "ord": 15 },
+		{ "is_pick": true, "hero_id": 65, "ord": 16 },
+		{ "is_pick": true, "hero_id": 12, "ord": 17 },
+		{ "is_pick": false, "hero_id": 11, "ord": 18 },
+		{ "is_pick": false, "hero_id": 97, "ord": 19 },
+		{ "is_pick": true, "hero_id": 47, "ord": 20 },
+		{ "is_pick": true, "hero_id": 74, "ord": 21 }
+	],
+	"players": [
+		{ "player_slot": 0, "hero_id": 65, "kills": 4, "deaths": 6, "assists": 13 },
+		{ "player_slot": 1, "hero_id": 93, "kills": 20, "deaths": 3, "assists": 6 },
+		{ "player_slot": 2, "hero_id": 86, "kills": 2, "deaths": 4, "assists": 19 },
+		{ "player_slot": 3, "hero_id": 74, "kills": 6, "deaths": 2, "assists": 23 },
+		{
+			"player_slot": 4,
+			"hero_id": 121,
+			"kills": 1,
+			"deaths": 9,
+			"assists": 25
+		},
+		{
+			"player_slot": 128,
+			"hero_id": 28,
+			"kills": 2,
+			"deaths": 7,
+			"assists": 13
+		},
+		{
+			"player_slot": 129,
+			"hero_id": 12,
+			"kills": 10,
+			"deaths": 7,
+			"assists": 2
+		},
+		{
+			"player_slot": 130,
+			"hero_id": 87,
+			"kills": 3,
+			"deaths": 6,
+			"assists": 17
+		},
+		{
+			"player_slot": 131,
+			"hero_id": 31,
+			"kills": 1,
+			"deaths": 6,
+			"assists": 15
+		},
+		{ "player_slot": 132, "hero_id": 47, "kills": 8, "deaths": 8, "assists": 7 }
+	],
+	"roshan_times": [1248, 1842],
+	"chat": { "time": 591, "key": "掉了", "unit": "Trouble I'm In" }
+}

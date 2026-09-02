@@ -1,0 +1,1834 @@
+\restrict dbmate
+
+-- Dumped from database version 16.15
+-- Dumped by pg_dump version 18.6
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: graphile_worker; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA graphile_worker;
+
+
+--
+-- Name: job_spec; Type: TYPE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TYPE graphile_worker.job_spec AS (
+	identifier text,
+	payload json,
+	queue_name text,
+	run_at timestamp with time zone,
+	max_attempts smallint,
+	job_key text,
+	priority smallint,
+	flags text[]
+);
+
+
+--
+-- Name: ingest_run_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.ingest_run_status AS ENUM (
+    'queued',
+    'running',
+    'succeeded',
+    'failed'
+);
+
+
+--
+-- Name: league_lifecycle; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.league_lifecycle AS ENUM (
+    'UPCOMING',
+    'LIVE',
+    'FINISHED'
+);
+
+
+--
+-- Name: match_phase; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.match_phase AS ENUM (
+    'discovered',
+    'live',
+    'awaiting_details',
+    'details_ready',
+    'awaiting_replay',
+    'replay_stored',
+    'replay_unavailable',
+    'failed'
+);
+
+
+--
+-- Name: match_source; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.match_source AS ENUM (
+    'live',
+    'historical'
+);
+
+
+--
+-- Name: proxy_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.proxy_kind AS ENUM (
+    'http',
+    'socks5'
+);
+
+
+--
+-- Name: proxy_purpose; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.proxy_purpose AS ENUM (
+    'api',
+    'gc',
+    'both'
+);
+
+
+--
+-- Name: replay_priority; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.replay_priority AS ENUM (
+    'live',
+    'historical'
+);
+
+
+--
+-- Name: replay_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.replay_status AS ENUM (
+    'pending',
+    'awaiting_gc',
+    'downloading',
+    'stored',
+    'parsing',
+    'parsed',
+    'unavailable',
+    'failed'
+);
+
+
+--
+-- Name: resource_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.resource_status AS ENUM (
+    'ready',
+    'active',
+    'rate_limited',
+    'disabled'
+);
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: _private_jobs; Type: TABLE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TABLE graphile_worker._private_jobs (
+    id bigint NOT NULL,
+    job_queue_id integer,
+    task_id integer NOT NULL,
+    payload json DEFAULT '{}'::json NOT NULL,
+    priority smallint DEFAULT 0 NOT NULL,
+    run_at timestamp with time zone DEFAULT now() NOT NULL,
+    attempts smallint DEFAULT 0 NOT NULL,
+    max_attempts smallint DEFAULT 25 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    key text,
+    locked_at timestamp with time zone,
+    locked_by text,
+    revision integer DEFAULT 0 NOT NULL,
+    flags jsonb,
+    is_available boolean GENERATED ALWAYS AS (((locked_at IS NULL) AND (attempts < max_attempts))) STORED NOT NULL,
+    CONSTRAINT jobs_key_check CHECK (((length(key) > 0) AND (length(key) <= 512))),
+    CONSTRAINT jobs_max_attempts_check CHECK ((max_attempts >= 1))
+);
+
+
+--
+-- Name: add_job(text, json, text, timestamp with time zone, integer, text, integer, text[], text); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.add_job(identifier text, payload json DEFAULT NULL::json, queue_name text DEFAULT NULL::text, run_at timestamp with time zone DEFAULT NULL::timestamp with time zone, max_attempts integer DEFAULT NULL::integer, job_key text DEFAULT NULL::text, priority integer DEFAULT NULL::integer, flags text[] DEFAULT NULL::text[], job_key_mode text DEFAULT 'replace'::text) RETURNS graphile_worker._private_jobs
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_job "graphile_worker"._private_jobs;
+begin
+  if (job_key is null or job_key_mode is null or job_key_mode in ('replace', 'preserve_run_at')) then
+    select * into v_job
+    from "graphile_worker".add_jobs(
+      ARRAY[(
+        identifier,
+        payload,
+        queue_name,
+        run_at,
+        max_attempts::smallint,
+        job_key,
+        priority::smallint,
+        flags
+      )::"graphile_worker".job_spec],
+      (job_key_mode = 'preserve_run_at')
+    )
+    limit 1;
+    return v_job;
+  elsif job_key_mode = 'unsafe_dedupe' then
+    -- Ensure all the tasks exist
+    insert into "graphile_worker"._private_tasks as tasks (identifier)
+    values (add_job.identifier)
+    on conflict do nothing;
+    -- Ensure all the queues exist
+    if add_job.queue_name is not null then
+      insert into "graphile_worker"._private_job_queues as job_queues (queue_name)
+      values (add_job.queue_name)
+      on conflict do nothing;
+    end if;
+    -- Insert job, but if one already exists then do nothing, even if the
+    -- existing job has already started (and thus represents an out-of-date
+    -- world state). This is dangerous because it means that whatever state
+    -- change triggered this add_job may not be acted upon (since it happened
+    -- after the existing job started executing, but no further job is being
+    -- scheduled), but it is useful in very rare circumstances for
+    -- de-duplication. If in doubt, DO NOT USE THIS.
+    insert into "graphile_worker"._private_jobs as jobs (
+      job_queue_id,
+      task_id,
+      payload,
+      run_at,
+      max_attempts,
+      key,
+      priority,
+      flags
+    )
+      select
+        job_queues.id,
+        tasks.id,
+        coalesce(add_job.payload, '{}'::json),
+        coalesce(add_job.run_at, now()),
+        coalesce(add_job.max_attempts::smallint, 25::smallint),
+        add_job.job_key,
+        coalesce(add_job.priority::smallint, 0::smallint),
+        (
+          select jsonb_object_agg(flag, true)
+          from unnest(add_job.flags) as item(flag)
+        )
+      from "graphile_worker"._private_tasks as tasks
+      left join "graphile_worker"._private_job_queues as job_queues
+      on job_queues.queue_name = add_job.queue_name
+      where tasks.identifier = add_job.identifier
+    on conflict (key)
+      -- Bump the updated_at so that there's something to return
+      do update set
+        revision = jobs.revision + 1,
+        updated_at = now()
+      returning *
+      into v_job;
+    if v_job.revision = 0 then
+      perform pg_notify('jobs:insert', '{"r":' || random()::text || ',"count":1}');
+    end if;
+    return v_job;
+  else
+    raise exception 'Invalid job_key_mode value, expected ''replace'', ''preserve_run_at'' or ''unsafe_dedupe''.' using errcode = 'GWBKM';
+  end if;
+end;
+$$;
+
+
+--
+-- Name: add_jobs(graphile_worker.job_spec[], boolean); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.add_jobs(specs graphile_worker.job_spec[], job_key_preserve_run_at boolean DEFAULT false) RETURNS SETOF graphile_worker._private_jobs
+    LANGUAGE plpgsql
+    AS $$
+begin
+  -- Ensure all the tasks exist
+  insert into "graphile_worker"._private_tasks as tasks (identifier)
+  select distinct spec.identifier
+  from unnest(specs) spec
+  on conflict do nothing;
+  -- Ensure all the queues exist
+  insert into "graphile_worker"._private_job_queues as job_queues (queue_name)
+  select distinct spec.queue_name
+  from unnest(specs) spec
+  where spec.queue_name is not null
+  on conflict do nothing;
+  -- Ensure any locked jobs have their key cleared - in the case of locked
+  -- existing job create a new job instead as it must have already started
+  -- executing (i.e. it's world state is out of date, and the fact add_job
+  -- has been called again implies there's new information that needs to be
+  -- acted upon).
+  update "graphile_worker"._private_jobs as jobs
+  set
+    key = null,
+    attempts = jobs.max_attempts,
+    updated_at = now()
+  from unnest(specs) spec
+  where spec.job_key is not null
+  and jobs.key = spec.job_key
+  and is_available is not true;
+
+  -- WARNING: this count is not 100% accurate; 'on conflict' clause will cause it to be an overestimate
+  perform pg_notify('jobs:insert', '{"r":' || random()::text || ',"count":' || array_length(specs, 1)::text || '}');
+
+  -- TODO: is there a risk that a conflict could occur depending on the
+  -- isolation level?
+  return query insert into "graphile_worker"._private_jobs as jobs (
+    job_queue_id,
+    task_id,
+    payload,
+    run_at,
+    max_attempts,
+    key,
+    priority,
+    flags
+  )
+    select
+      job_queues.id,
+      tasks.id,
+      coalesce(spec.payload, '{}'::json),
+      coalesce(spec.run_at, now()),
+      coalesce(spec.max_attempts, 25),
+      spec.job_key,
+      coalesce(spec.priority, 0),
+      (
+        select jsonb_object_agg(flag, true)
+        from unnest(spec.flags) as item(flag)
+      )
+    from unnest(specs) spec
+    inner join "graphile_worker"._private_tasks as tasks
+    on tasks.identifier = spec.identifier
+    left join "graphile_worker"._private_job_queues as job_queues
+    on job_queues.queue_name = spec.queue_name
+  on conflict (key) do update set
+    job_queue_id = excluded.job_queue_id,
+    task_id = excluded.task_id,
+    payload =
+      case
+      when json_typeof(jobs.payload) = 'array' and json_typeof(excluded.payload) = 'array' then
+        (jobs.payload::jsonb || excluded.payload::jsonb)::json
+      else
+        excluded.payload
+      end,
+    max_attempts = excluded.max_attempts,
+    run_at = (case
+      when job_key_preserve_run_at is true and jobs.attempts = 0 then jobs.run_at
+      else excluded.run_at
+    end),
+    priority = excluded.priority,
+    revision = jobs.revision + 1,
+    flags = excluded.flags,
+    -- always reset error/retry state
+    attempts = 0,
+    last_error = null,
+    updated_at = now()
+  where jobs.locked_at is null
+  returning *;
+end;
+$$;
+
+
+--
+-- Name: complete_jobs(bigint[]); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.complete_jobs(job_ids bigint[]) RETURNS SETOF graphile_worker._private_jobs
+    LANGUAGE sql
+    AS $$
+  delete from "graphile_worker"._private_jobs as jobs
+    where id = any(job_ids)
+    and (
+      locked_at is null
+    or
+      locked_at < now() - interval '4 hours'
+    )
+    returning *;
+$$;
+
+
+--
+-- Name: force_unlock_workers(text[]); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.force_unlock_workers(worker_ids text[]) RETURNS void
+    LANGUAGE sql
+    AS $$
+update "graphile_worker"._private_jobs as jobs
+set locked_at = null, locked_by = null
+where locked_by = any(worker_ids);
+update "graphile_worker"._private_job_queues as job_queues
+set locked_at = null, locked_by = null
+where locked_by = any(worker_ids);
+$$;
+
+
+--
+-- Name: permanently_fail_jobs(bigint[], text); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.permanently_fail_jobs(job_ids bigint[], error_message text DEFAULT NULL::text) RETURNS SETOF graphile_worker._private_jobs
+    LANGUAGE sql
+    AS $$
+  update "graphile_worker"._private_jobs as jobs
+    set
+      last_error = coalesce(error_message, 'Manually marked as failed'),
+      attempts = max_attempts,
+      updated_at = now()
+    where id = any(job_ids)
+    and (
+      locked_at is null
+    or
+      locked_at < NOW() - interval '4 hours'
+    )
+    returning *;
+$$;
+
+
+--
+-- Name: remove_job(text); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.remove_job(job_key text) RETURNS graphile_worker._private_jobs
+    LANGUAGE plpgsql STRICT
+    AS $$
+declare
+  v_job "graphile_worker"._private_jobs;
+begin
+  -- Delete job if not locked
+  delete from "graphile_worker"._private_jobs as jobs
+    where key = job_key
+    and (
+      locked_at is null
+    or
+      locked_at < NOW() - interval '4 hours'
+    )
+  returning * into v_job;
+  if not (v_job is null) then
+    perform pg_notify('jobs:insert', '{"r":' || random()::text || ',"count":-1}');
+    return v_job;
+  end if;
+  -- Otherwise prevent job from retrying, and clear the key
+  update "graphile_worker"._private_jobs as jobs
+  set
+    key = null,
+    attempts = jobs.max_attempts,
+    updated_at = now()
+  where key = job_key
+  returning * into v_job;
+  return v_job;
+end;
+$$;
+
+
+--
+-- Name: reschedule_jobs(bigint[], timestamp with time zone, integer, integer, integer); Type: FUNCTION; Schema: graphile_worker; Owner: -
+--
+
+CREATE FUNCTION graphile_worker.reschedule_jobs(job_ids bigint[], run_at timestamp with time zone DEFAULT NULL::timestamp with time zone, priority integer DEFAULT NULL::integer, attempts integer DEFAULT NULL::integer, max_attempts integer DEFAULT NULL::integer) RETURNS SETOF graphile_worker._private_jobs
+    LANGUAGE sql
+    AS $$
+  update "graphile_worker"._private_jobs as jobs
+    set
+      run_at = coalesce(reschedule_jobs.run_at, jobs.run_at),
+      priority = coalesce(reschedule_jobs.priority::smallint, jobs.priority),
+      attempts = coalesce(reschedule_jobs.attempts::smallint, jobs.attempts),
+      max_attempts = coalesce(reschedule_jobs.max_attempts::smallint, jobs.max_attempts),
+      updated_at = now()
+    where id = any(job_ids)
+    and (
+      locked_at is null
+    or
+      locked_at < NOW() - interval '4 hours'
+    )
+    returning *;
+$$;
+
+
+--
+-- Name: _private_job_queues; Type: TABLE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TABLE graphile_worker._private_job_queues (
+    id integer NOT NULL,
+    queue_name text NOT NULL,
+    locked_at timestamp with time zone,
+    locked_by text,
+    is_available boolean GENERATED ALWAYS AS ((locked_at IS NULL)) STORED NOT NULL,
+    CONSTRAINT job_queues_queue_name_check CHECK ((length(queue_name) <= 128))
+);
+
+
+--
+-- Name: _private_known_crontabs; Type: TABLE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TABLE graphile_worker._private_known_crontabs (
+    identifier text NOT NULL,
+    known_since timestamp with time zone NOT NULL,
+    last_execution timestamp with time zone
+);
+
+
+--
+-- Name: _private_tasks; Type: TABLE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TABLE graphile_worker._private_tasks (
+    id integer NOT NULL,
+    identifier text NOT NULL,
+    CONSTRAINT tasks_identifier_check CHECK ((length(identifier) <= 128))
+);
+
+
+--
+-- Name: job_queues_id_seq; Type: SEQUENCE; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_job_queues ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME graphile_worker.job_queues_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: jobs; Type: VIEW; Schema: graphile_worker; Owner: -
+--
+
+CREATE VIEW graphile_worker.jobs AS
+ SELECT jobs.id,
+    job_queues.queue_name,
+    tasks.identifier AS task_identifier,
+    jobs.priority,
+    jobs.run_at,
+    jobs.attempts,
+    jobs.max_attempts,
+    jobs.last_error,
+    jobs.created_at,
+    jobs.updated_at,
+    jobs.key,
+    jobs.locked_at,
+    jobs.locked_by,
+    jobs.revision,
+    jobs.flags
+   FROM ((graphile_worker._private_jobs jobs
+     JOIN graphile_worker._private_tasks tasks ON ((tasks.id = jobs.task_id)))
+     LEFT JOIN graphile_worker._private_job_queues job_queues ON ((job_queues.id = jobs.job_queue_id)));
+
+
+--
+-- Name: jobs_id_seq1; Type: SEQUENCE; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_jobs ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME graphile_worker.jobs_id_seq1
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: migrations; Type: TABLE; Schema: graphile_worker; Owner: -
+--
+
+CREATE TABLE graphile_worker.migrations (
+    id integer NOT NULL,
+    ts timestamp with time zone DEFAULT now() NOT NULL,
+    breaking boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: tasks_id_seq; Type: SEQUENCE; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_tasks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME graphile_worker.tasks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: heroes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.heroes (
+    id integer NOT NULL,
+    name text NOT NULL,
+    localized_name text DEFAULT ''::text NOT NULL,
+    primary_attr text,
+    attack_type text,
+    roles text[] DEFAULT '{}'::text[] NOT NULL
+);
+
+
+--
+-- Name: ingest_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ingest_cursors (
+    key text NOT NULL,
+    value text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.items (
+    id integer NOT NULL,
+    name text NOT NULL,
+    localized_name text DEFAULT ''::text NOT NULL,
+    cost integer
+);
+
+
+--
+-- Name: league_ingest_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.league_ingest_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    league_id integer NOT NULL,
+    matches_limit integer,
+    status public.ingest_run_status DEFAULT 'queued'::public.ingest_run_status NOT NULL,
+    matches_listed integer DEFAULT 0 NOT NULL,
+    matches_detailed integer DEFAULT 0 NOT NULL,
+    replays_enqueued integer DEFAULT 0 NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone
+);
+
+
+--
+-- Name: leagues; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.leagues (
+    league_id integer NOT NULL,
+    name text NOT NULL,
+    tier integer DEFAULT 0 NOT NULL,
+    region integer DEFAULT 0 NOT NULL,
+    total_prize_pool bigint DEFAULT 0 NOT NULL,
+    start_timestamp bigint DEFAULT 0 NOT NULL,
+    end_timestamp bigint DEFAULT 0 NOT NULL,
+    most_recent_activity bigint DEFAULT 0 NOT NULL,
+    valve_status integer DEFAULT 0 NOT NULL,
+    status public.league_lifecycle NOT NULL,
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_match_seq_num bigint,
+    history_head_match_id bigint,
+    history_tail_match_id bigint,
+    history_exhausted boolean DEFAULT false NOT NULL,
+    history_checked_at timestamp with time zone
+);
+
+
+--
+-- Name: match_broadcasters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_broadcasters (
+    match_id bigint NOT NULL,
+    seq integer NOT NULL,
+    country_code text,
+    description text,
+    language_code text,
+    account_id bigint,
+    name text
+);
+
+
+--
+-- Name: match_coaches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_coaches (
+    match_id bigint NOT NULL,
+    account_id bigint NOT NULL,
+    coach_name text,
+    coach_rating integer,
+    coach_team integer,
+    coach_party_id bigint,
+    is_private_coach boolean
+);
+
+
+--
+-- Name: match_draft; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_draft (
+    match_id bigint NOT NULL,
+    ord integer NOT NULL,
+    is_pick boolean NOT NULL,
+    hero_id integer NOT NULL,
+    team smallint NOT NULL,
+    player_slot integer,
+    clock integer
+);
+
+
+--
+-- Name: match_objectives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_objectives (
+    match_id bigint NOT NULL,
+    seq integer NOT NULL,
+    "time" integer NOT NULL,
+    kind text NOT NULL,
+    team smallint,
+    slot integer,
+    key text,
+    value integer
+);
+
+
+--
+-- Name: match_player_ability_upgrades; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_player_ability_upgrades (
+    match_id bigint NOT NULL,
+    player_slot integer NOT NULL,
+    seq integer NOT NULL,
+    ability_id integer NOT NULL,
+    "time" integer,
+    level integer
+);
+
+
+--
+-- Name: match_player_buffs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_player_buffs (
+    match_id bigint NOT NULL,
+    player_slot integer NOT NULL,
+    buff_id integer NOT NULL,
+    stacks integer DEFAULT 1 NOT NULL,
+    grant_time integer
+);
+
+
+--
+-- Name: match_player_damage_breakdown; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_player_damage_breakdown (
+    match_id bigint NOT NULL,
+    player_slot integer NOT NULL,
+    direction text NOT NULL,
+    damage_type integer NOT NULL,
+    pre_reduction integer,
+    post_reduction integer
+);
+
+
+--
+-- Name: match_player_units; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_player_units (
+    match_id bigint NOT NULL,
+    player_slot integer NOT NULL,
+    unit_name text NOT NULL,
+    item_0 integer,
+    item_1 integer,
+    item_2 integer,
+    item_3 integer,
+    item_4 integer,
+    item_5 integer
+);
+
+
+--
+-- Name: match_players; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_players (
+    match_id bigint NOT NULL,
+    account_id bigint NOT NULL,
+    player_slot integer NOT NULL,
+    hero_id integer DEFAULT 0 NOT NULL,
+    player_name text,
+    team_number integer,
+    team_slot integer,
+    side text,
+    kills integer,
+    deaths integer,
+    assists integer,
+    last_hits integer,
+    denies integer,
+    gold integer,
+    level integer,
+    gold_per_min integer,
+    xp_per_min integer,
+    net_worth integer,
+    hero_variant integer,
+    gold_spent integer,
+    hero_damage integer,
+    tower_damage integer,
+    hero_healing integer,
+    scaled_hero_damage integer,
+    scaled_tower_damage integer,
+    scaled_hero_healing integer,
+    item_0 integer,
+    item_1 integer,
+    item_2 integer,
+    item_3 integer,
+    item_4 integer,
+    item_5 integer,
+    item_neutral integer,
+    backpack_0 integer,
+    backpack_1 integer,
+    backpack_2 integer,
+    backpack_3 integer,
+    ability_upgrades integer[],
+    leaver_status integer,
+    party_id bigint,
+    party_size integer,
+    lane integer,
+    lane_role integer,
+    is_roaming boolean,
+    stuns real,
+    teamfight_participation real,
+    towers_killed integer,
+    roshans_killed integer,
+    observers_placed integer,
+    sentries_placed integer,
+    camps_stacked integer,
+    creeps_stacked integer,
+    rune_pickups integer,
+    firstblood_claimed integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    item_neutral2 integer,
+    item_6 integer,
+    item_7 integer,
+    item_8 integer,
+    item_9 integer,
+    item_10 integer,
+    item_10_lvl integer,
+    selected_facet integer,
+    aghanims_scepter integer,
+    aghanims_shard integer,
+    moonshard integer,
+    claimed_farm_gold integer,
+    support_gold integer,
+    claimed_denies integer,
+    claimed_misses integer,
+    misses integer,
+    support_ability_value integer,
+    scaled_kills real,
+    scaled_deaths real,
+    scaled_assists real,
+    hero_pick_order integer,
+    hero_was_randomed boolean,
+    seconds_dead integer,
+    gold_lost_to_death integer,
+    lane_selection_flags integer,
+    bounty_runes integer,
+    outposts_captured integer,
+    disable_duration integer,
+    pro_name text,
+    real_name text
+);
+
+
+--
+-- Name: match_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.match_replays (
+    match_id bigint NOT NULL,
+    status public.replay_status DEFAULT 'pending'::public.replay_status NOT NULL,
+    priority public.replay_priority DEFAULT 'historical'::public.replay_priority NOT NULL,
+    cluster integer,
+    replay_salt bigint,
+    replay_state integer,
+    source_url text,
+    s3_bucket text,
+    s3_key text,
+    bytes bigint,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    last_error_at timestamp with time zone,
+    next_attempt_at timestamp with time zone,
+    steam_account_id bigint,
+    proxy_id bigint,
+    parser_version integer,
+    parsed_at timestamp with time zone,
+    stored_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.matches (
+    match_id bigint NOT NULL,
+    league_id integer,
+    match_seq_num bigint,
+    start_time bigint,
+    duration integer,
+    pre_game_duration integer,
+    radiant_win boolean,
+    lobby_type integer,
+    game_mode integer,
+    cluster integer,
+    replay_salt bigint,
+    series_id bigint,
+    series_type integer,
+    radiant_series_wins integer,
+    dire_series_wins integer,
+    radiant_team_id integer,
+    dire_team_id integer,
+    league_node_id integer,
+    stream_delay_s integer,
+    phase public.match_phase DEFAULT 'discovered'::public.match_phase NOT NULL,
+    source public.match_source DEFAULT 'historical'::public.match_source NOT NULL,
+    live_seen_at timestamp with time zone,
+    live_disappeared_at timestamp with time zone,
+    live_disappeared_count integer DEFAULT 0 NOT NULL,
+    details_fetched_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    replay_available_at timestamp with time zone,
+    radiant_score integer,
+    dire_score integer,
+    tower_status_radiant integer,
+    tower_status_dire integer,
+    barracks_status_radiant integer,
+    barracks_status_dire integer,
+    first_blood_time integer,
+    engine integer,
+    human_players integer,
+    radiant_team_name text,
+    dire_team_name text,
+    radiant_team_complete smallint,
+    dire_team_complete smallint,
+    radiant_captain bigint,
+    dire_captain bigint,
+    positive_votes integer,
+    negative_votes integer,
+    patch text,
+    last_error text,
+    last_error_at timestamp with time zone,
+    last_api_key_id bigint,
+    last_steam_account_id bigint,
+    last_proxy_id bigint,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lobby_id bigint,
+    match_flags integer,
+    match_outcome integer,
+    game_balance real,
+    radiant_team_logo bigint,
+    dire_team_logo bigint,
+    radiant_team_logo_url text,
+    dire_team_logo_url text,
+    radiant_team_tag text,
+    dire_team_tag text,
+    radiant_guild_id integer,
+    dire_guild_id integer,
+    tournament_id integer,
+    tournament_round integer,
+    league_series_id integer,
+    league_game_id integer,
+    game_number integer,
+    stage_name text,
+    league_tier integer
+);
+
+
+--
+-- Name: patches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.patches (
+    patch text NOT NULL,
+    released_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: players; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.players (
+    account_id bigint NOT NULL,
+    steam_id text,
+    persona_name text,
+    is_pro boolean DEFAULT false NOT NULL,
+    current_team_id integer,
+    last_match_id bigint,
+    last_match_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: proxies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.proxies (
+    id bigint NOT NULL,
+    name text NOT NULL,
+    url text NOT NULL,
+    kind public.proxy_kind DEFAULT 'http'::public.proxy_kind NOT NULL,
+    purpose public.proxy_purpose DEFAULT 'both'::public.proxy_purpose NOT NULL,
+    region text,
+    supports_udp boolean DEFAULT false NOT NULL,
+    status public.resource_status DEFAULT 'ready'::public.resource_status NOT NULL,
+    rate_limited_until timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: proxies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.proxies_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: proxies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.proxies_id_seq OWNED BY public.proxies.id;
+
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schema_migrations (
+    version character varying NOT NULL
+);
+
+
+--
+-- Name: series; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.series (
+    series_id bigint NOT NULL,
+    league_id integer,
+    radiant_team_id integer,
+    dire_team_id integer,
+    series_type integer DEFAULT 0 NOT NULL,
+    radiant_wins integer DEFAULT 0 NOT NULL,
+    dire_wins integer DEFAULT 0 NOT NULL,
+    first_match_id bigint,
+    last_match_id bigint,
+    started_at timestamp with time zone,
+    ended_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: steam_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_accounts (
+    id bigint NOT NULL,
+    login text NOT NULL,
+    password text NOT NULL,
+    shared_secret text,
+    identity_secret text,
+    steam_id text,
+    proxy_id bigint,
+    status public.resource_status DEFAULT 'ready'::public.resource_status NOT NULL,
+    rate_limited_until timestamp with time zone,
+    last_login_at timestamp with time zone,
+    last_error text,
+    shared_secret_broken boolean DEFAULT false NOT NULL,
+    email text,
+    email_password text,
+    email_imap_host text,
+    refresh_token text,
+    refresh_token_expires_at timestamp with time zone,
+    machine_auth_token text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: steam_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.steam_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: steam_accounts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.steam_accounts_id_seq OWNED BY public.steam_accounts.id;
+
+
+--
+-- Name: steam_api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_keys (
+    id bigint NOT NULL,
+    account_id bigint NOT NULL,
+    api_key text NOT NULL,
+    proxy_id bigint,
+    status public.resource_status DEFAULT 'ready'::public.resource_status NOT NULL,
+    daily_quota integer,
+    rate_limited_until timestamp with time zone,
+    last_used_at timestamp with time zone,
+    last_called_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: steam_api_keys_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.steam_api_keys_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: steam_api_keys_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.steam_api_keys_id_seq OWNED BY public.steam_api_keys.id;
+
+
+--
+-- Name: teams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.teams (
+    team_id integer NOT NULL,
+    name text NOT NULL,
+    tag text,
+    logo_url text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: proxies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.proxies ALTER COLUMN id SET DEFAULT nextval('public.proxies_id_seq'::regclass);
+
+
+--
+-- Name: steam_accounts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_accounts ALTER COLUMN id SET DEFAULT nextval('public.steam_accounts_id_seq'::regclass);
+
+
+--
+-- Name: steam_api_keys id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_keys ALTER COLUMN id SET DEFAULT nextval('public.steam_api_keys_id_seq'::regclass);
+
+
+--
+-- Name: _private_job_queues job_queues_pkey1; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_job_queues
+    ADD CONSTRAINT job_queues_pkey1 PRIMARY KEY (id);
+
+
+--
+-- Name: _private_job_queues job_queues_queue_name_key; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_job_queues
+    ADD CONSTRAINT job_queues_queue_name_key UNIQUE (queue_name);
+
+
+--
+-- Name: _private_jobs jobs_key_key1; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_jobs
+    ADD CONSTRAINT jobs_key_key1 UNIQUE (key);
+
+
+--
+-- Name: _private_jobs jobs_pkey1; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_jobs
+    ADD CONSTRAINT jobs_pkey1 PRIMARY KEY (id);
+
+
+--
+-- Name: _private_known_crontabs known_crontabs_pkey; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_known_crontabs
+    ADD CONSTRAINT known_crontabs_pkey PRIMARY KEY (identifier);
+
+
+--
+-- Name: migrations migrations_pkey; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker.migrations
+    ADD CONSTRAINT migrations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: _private_tasks tasks_identifier_key; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_tasks
+    ADD CONSTRAINT tasks_identifier_key UNIQUE (identifier);
+
+
+--
+-- Name: _private_tasks tasks_pkey; Type: CONSTRAINT; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE ONLY graphile_worker._private_tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: heroes heroes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.heroes
+    ADD CONSTRAINT heroes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ingest_cursors ingest_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ingest_cursors
+    ADD CONSTRAINT ingest_cursors_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: items items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.items
+    ADD CONSTRAINT items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: league_ingest_runs league_ingest_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.league_ingest_runs
+    ADD CONSTRAINT league_ingest_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: leagues leagues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.leagues
+    ADD CONSTRAINT leagues_pkey PRIMARY KEY (league_id);
+
+
+--
+-- Name: match_broadcasters match_broadcasters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_broadcasters
+    ADD CONSTRAINT match_broadcasters_pkey PRIMARY KEY (match_id, seq);
+
+
+--
+-- Name: match_coaches match_coaches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_coaches
+    ADD CONSTRAINT match_coaches_pkey PRIMARY KEY (match_id, account_id);
+
+
+--
+-- Name: match_draft match_draft_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_draft
+    ADD CONSTRAINT match_draft_pkey PRIMARY KEY (match_id, ord);
+
+
+--
+-- Name: match_objectives match_objectives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_objectives
+    ADD CONSTRAINT match_objectives_pkey PRIMARY KEY (match_id, seq);
+
+
+--
+-- Name: match_player_ability_upgrades match_player_ability_upgrades_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_ability_upgrades
+    ADD CONSTRAINT match_player_ability_upgrades_pkey PRIMARY KEY (match_id, player_slot, seq);
+
+
+--
+-- Name: match_player_buffs match_player_buffs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_buffs
+    ADD CONSTRAINT match_player_buffs_pkey PRIMARY KEY (match_id, player_slot, buff_id);
+
+
+--
+-- Name: match_player_damage_breakdown match_player_damage_breakdown_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_damage_breakdown
+    ADD CONSTRAINT match_player_damage_breakdown_pkey PRIMARY KEY (match_id, player_slot, direction, damage_type);
+
+
+--
+-- Name: match_player_units match_player_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_units
+    ADD CONSTRAINT match_player_units_pkey PRIMARY KEY (match_id, player_slot, unit_name);
+
+
+--
+-- Name: match_players match_players_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_players
+    ADD CONSTRAINT match_players_pkey PRIMARY KEY (match_id, player_slot);
+
+
+--
+-- Name: match_replays match_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays
+    ADD CONSTRAINT match_replays_pkey PRIMARY KEY (match_id);
+
+
+--
+-- Name: matches matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_pkey PRIMARY KEY (match_id);
+
+
+--
+-- Name: patches patches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patches
+    ADD CONSTRAINT patches_pkey PRIMARY KEY (patch);
+
+
+--
+-- Name: players players_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.players
+    ADD CONSTRAINT players_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: proxies proxies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.proxies
+    ADD CONSTRAINT proxies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: proxies proxies_url_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.proxies
+    ADD CONSTRAINT proxies_url_key UNIQUE (url);
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: series series_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series
+    ADD CONSTRAINT series_pkey PRIMARY KEY (series_id);
+
+
+--
+-- Name: steam_accounts steam_accounts_login_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_accounts
+    ADD CONSTRAINT steam_accounts_login_key UNIQUE (login);
+
+
+--
+-- Name: steam_accounts steam_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_accounts
+    ADD CONSTRAINT steam_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: steam_api_keys steam_api_keys_api_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_keys
+    ADD CONSTRAINT steam_api_keys_api_key_key UNIQUE (api_key);
+
+
+--
+-- Name: steam_api_keys steam_api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_keys
+    ADD CONSTRAINT steam_api_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: teams teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.teams
+    ADD CONSTRAINT teams_pkey PRIMARY KEY (team_id);
+
+
+--
+-- Name: jobs_main_index; Type: INDEX; Schema: graphile_worker; Owner: -
+--
+
+CREATE INDEX jobs_main_index ON graphile_worker._private_jobs USING btree (priority, run_at) INCLUDE (id, task_id, job_queue_id) WHERE (is_available = true);
+
+
+--
+-- Name: jobs_no_queue_index; Type: INDEX; Schema: graphile_worker; Owner: -
+--
+
+CREATE INDEX jobs_no_queue_index ON graphile_worker._private_jobs USING btree (priority, run_at) INCLUDE (id, task_id) WHERE ((is_available = true) AND (job_queue_id IS NULL));
+
+
+--
+-- Name: league_ingest_runs_league_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX league_ingest_runs_league_idx ON public.league_ingest_runs USING btree (league_id, created_at DESC);
+
+
+--
+-- Name: leagues_activity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX leagues_activity_idx ON public.leagues USING btree (most_recent_activity DESC);
+
+
+--
+-- Name: leagues_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX leagues_status_idx ON public.leagues USING btree (status);
+
+
+--
+-- Name: match_replays_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX match_replays_status_idx ON public.match_replays USING btree (status);
+
+
+--
+-- Name: matches_league_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_league_idx ON public.matches USING btree (league_id);
+
+
+--
+-- Name: matches_phase_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_phase_idx ON public.matches USING btree (phase);
+
+
+--
+-- Name: matches_replay_available_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_replay_available_idx ON public.matches USING btree (replay_available_at) WHERE (phase = ANY (ARRAY['details_ready'::public.match_phase, 'awaiting_replay'::public.match_phase]));
+
+
+--
+-- Name: matches_seq_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_seq_idx ON public.matches USING btree (match_seq_num);
+
+
+--
+-- Name: matches_source_phase_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_source_phase_idx ON public.matches USING btree (source, phase);
+
+
+--
+-- Name: matches_start_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_start_time_idx ON public.matches USING btree (league_id, start_time DESC);
+
+
+--
+-- Name: series_league_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX series_league_idx ON public.series USING btree (league_id);
+
+
+--
+-- Name: match_broadcasters match_broadcasters_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_broadcasters
+    ADD CONSTRAINT match_broadcasters_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_coaches match_coaches_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_coaches
+    ADD CONSTRAINT match_coaches_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_draft match_draft_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_draft
+    ADD CONSTRAINT match_draft_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_objectives match_objectives_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_objectives
+    ADD CONSTRAINT match_objectives_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_player_ability_upgrades match_player_ability_upgrades_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_ability_upgrades
+    ADD CONSTRAINT match_player_ability_upgrades_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_player_buffs match_player_buffs_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_buffs
+    ADD CONSTRAINT match_player_buffs_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_player_damage_breakdown match_player_damage_breakdown_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_damage_breakdown
+    ADD CONSTRAINT match_player_damage_breakdown_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_player_units match_player_units_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_units
+    ADD CONSTRAINT match_player_units_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_players match_players_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_players
+    ADD CONSTRAINT match_players_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_replays match_replays_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays
+    ADD CONSTRAINT match_replays_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id) ON DELETE CASCADE;
+
+
+--
+-- Name: match_replays match_replays_proxy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays
+    ADD CONSTRAINT match_replays_proxy_id_fkey FOREIGN KEY (proxy_id) REFERENCES public.proxies(id) ON DELETE SET NULL;
+
+
+--
+-- Name: match_replays match_replays_steam_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays
+    ADD CONSTRAINT match_replays_steam_account_id_fkey FOREIGN KEY (steam_account_id) REFERENCES public.steam_accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_dire_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_dire_team_id_fkey FOREIGN KEY (dire_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_last_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_last_api_key_id_fkey FOREIGN KEY (last_api_key_id) REFERENCES public.steam_api_keys(id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_last_proxy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_last_proxy_id_fkey FOREIGN KEY (last_proxy_id) REFERENCES public.proxies(id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_last_steam_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_last_steam_account_id_fkey FOREIGN KEY (last_steam_account_id) REFERENCES public.steam_accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_league_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_league_id_fkey FOREIGN KEY (league_id) REFERENCES public.leagues(league_id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_patch_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_patch_fkey FOREIGN KEY (patch) REFERENCES public.patches(patch) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_radiant_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_radiant_team_id_fkey FOREIGN KEY (radiant_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
+
+
+--
+-- Name: matches matches_series_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_series_id_fkey FOREIGN KEY (series_id) REFERENCES public.series(series_id) ON DELETE SET NULL;
+
+
+--
+-- Name: players players_current_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.players
+    ADD CONSTRAINT players_current_team_id_fkey FOREIGN KEY (current_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
+
+
+--
+-- Name: series series_dire_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series
+    ADD CONSTRAINT series_dire_team_id_fkey FOREIGN KEY (dire_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
+
+
+--
+-- Name: series series_league_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series
+    ADD CONSTRAINT series_league_id_fkey FOREIGN KEY (league_id) REFERENCES public.leagues(league_id) ON DELETE SET NULL;
+
+
+--
+-- Name: series series_radiant_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series
+    ADD CONSTRAINT series_radiant_team_id_fkey FOREIGN KEY (radiant_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
+
+
+--
+-- Name: steam_accounts steam_accounts_proxy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_accounts
+    ADD CONSTRAINT steam_accounts_proxy_id_fkey FOREIGN KEY (proxy_id) REFERENCES public.proxies(id) ON DELETE SET NULL;
+
+
+--
+-- Name: steam_api_keys steam_api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_keys
+    ADD CONSTRAINT steam_api_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.steam_accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: steam_api_keys steam_api_keys_proxy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_keys
+    ADD CONSTRAINT steam_api_keys_proxy_id_fkey FOREIGN KEY (proxy_id) REFERENCES public.proxies(id) ON DELETE SET NULL;
+
+
+--
+-- Name: _private_job_queues; Type: ROW SECURITY; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_job_queues ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: _private_jobs; Type: ROW SECURITY; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_jobs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: _private_known_crontabs; Type: ROW SECURITY; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_known_crontabs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: _private_tasks; Type: ROW SECURITY; Schema: graphile_worker; Owner: -
+--
+
+ALTER TABLE graphile_worker._private_tasks ENABLE ROW LEVEL SECURITY;
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict dbmate
+
+
+--
+-- Dbmate schema migrations
+--
+
+INSERT INTO public.schema_migrations (version) VALUES
+    ('20260830000000'),
+    ('20260830000001');
