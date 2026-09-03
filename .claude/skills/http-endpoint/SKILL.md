@@ -60,7 +60,8 @@ POST /api/echo/:id   { "message": "..." }
 `http.ts`). При `noUncheckedIndexedAccess` поле — `string | undefined`.
 
 Ошибка с понятным статусом — `throw new HttpError(404, 'not found')` внутри
-`try/catch`, который зовёт `handleError`.
+`try/catch`, который зовёт `handleError`. Timestamps из SQL — `asIso` из
+`@app/shared/src/store/coerce`, не локальный `function asIso`.
 
 `.test.ts` в `routes.ts` не кладут.
 

@@ -54,6 +54,8 @@ export const baseEnv = z.object({
 	STEAM_SEED_API_KEY: z.string().default(''),
 	STEAM_SEED_SHARED_SECRET: z.string().default(''),
 	STEAM_SEED_IDENTITY_SECRET: z.string().default(''),
+	DARK_SHOPPING_BASE_URL: z.string().default('https://dark.shopping'),
+	DARK_SHOPPING_API_KEY: z.string().default(''),
 })
 
 export default baseEnv.parse(process.env)

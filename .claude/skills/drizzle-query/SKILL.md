@@ -57,7 +57,8 @@ const [match] = await db
 `select()` идёт через схему: `bigint({ mode: 'number' })` даёт `number`.
 `execute(sql\`…\`)` — сырой драйвер: int8 вне i32 приходит строкой
 (у bun.sql `bigint: false` по умолчанию). Там, где нужен number, —
-`Number(row.match_id)` или query builder.
+`asNumber(row.match_id)` из `#src/store/coerce` (`asText` / `asDate` /
+`asIso` для text/timestamptz). Не копировать `function asText` в store-файл.
 
 Транзакция:
 

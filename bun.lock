@@ -33,6 +33,8 @@
         "drizzle-orm": "catalog:",
         "pino": "catalog:",
         "snappy": "^7.4.2",
+        "steam-session": "catalog:",
+        "steam-user": "catalog:",
         "zod": "catalog:",
       },
     },

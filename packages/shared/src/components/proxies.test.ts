@@ -83,4 +83,22 @@ describe('proxy pool against live db', () => {
 		expect(picked.id).not.toBe(a.id)
 		expect(b.id).toBeGreaterThan(0)
 	})
+
+	test('preferKind http wins over socks5 for a GC pick', async () => {
+		await upsertProxy({
+			name: `${PREFIX}-gc-socks`,
+			url: `socks5://test:${PREFIX}@127.0.0.1:19011`,
+			kind: 'socks5',
+			purpose: 'gc',
+		})
+		const http = await upsertProxy({
+			name: `${PREFIX}-gc-http`,
+			url: `http://test:${PREFIX}@127.0.0.1:19012`,
+			kind: 'http',
+			purpose: 'gc',
+		})
+		const picked = await pickReadyProxy('gc', { preferKind: 'http' })
+		expect(picked.kind).toBe('http')
+		expect(http.id).toBeGreaterThan(0)
+	})
 })

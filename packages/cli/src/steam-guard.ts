@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import {
+	ensureAccountProxy,
 	pickReadyProxy,
 	proxyHostPort,
 } from '@app/shared/src/components/proxies'
@@ -16,6 +17,10 @@ import {
 	upsertSteamAccount,
 } from '@app/shared/src/components/resources'
 import {
+	buyAccounts,
+	parseBuyAccountCliInput,
+} from '@app/shared/src/marketplace/buy-account'
+import {
 	addAuthenticator,
 	confirmChannel,
 	describeAddAuthenticatorFailure,
@@ -28,7 +33,6 @@ import {
 	confirmationsToAccept,
 	confirmationTimeOffset,
 	describeConfirmation,
-	issueWebApiKey,
 	listConfirmations,
 	mobileAccessCookies,
 } from '@app/shared/src/steam/confirmations'
@@ -37,6 +41,7 @@ import {
 	latestSteamGuardMails,
 	type SteamMailbox,
 } from '@app/shared/src/steam/email-guard'
+import { loginGcAndMaybeTest } from '@app/shared/src/steam/gc-probe'
 import type { SteamGuardMailKind } from '@app/shared/src/steam/guard-code'
 import {
 	runWithProxy,
@@ -54,12 +59,14 @@ import {
 	setAccountPhoneNumber,
 	verifyAccountPhoneWithCode,
 } from '@app/shared/src/steam/phone'
+import { issueApiKeyForLogin } from '@app/shared/src/steam/provision-api-key'
 import {
 	assertSharedSecretShape,
 	generateAuthCode,
 	querySteamTimeOffset,
 } from '@app/shared/src/steam/totp'
-import { errorMessage } from '@app/shared/src/store/coerce'
+import { asNumber, errorMessage } from '@app/shared/src/store/coerce'
+import { withStatus } from '@app/shared/src/utils/status'
 import {
 	EAuthSessionGuardType,
 	EAuthTokenPlatformType,
@@ -81,8 +88,15 @@ const USAGE = `steam-guard <command>
   confirm        --login <login> [--list]   accept pending mobile confirmations
   issue-api-key  --login <login> [--domain <host>]
                                             register a Steam Web API key
+  scrape-match   --login <login> --match-id <match>
+                                            GC login this account and fetch match details
+  gc-login       --login <login> [--test-on-match-id <match>]
+                                            password-login this account into Dota GC
   save           --login <login> --secret <shared_secret> [--identity <identity_secret>]
                                             write secrets into steam_accounts
+  buy-account    --product-id <id> --type api_key|gc [--store dark_shopping]
+                 [--count 1] [--test-on-match-id <match>] [--imap-host <host>]
+                                            buy from a marketplace, same as POST /api/buy-account
 
 add writes login + password (+ optional API key / shared_secret) to Postgres.
 setup logs in as the Steam mobile client and calls ITwoFactorService.
@@ -103,6 +117,9 @@ then POSTs requestkey again with the pending request_id. It does not open
 
 If the account has no shared_secret yet but has an IMAP mailbox, issue-api-key
 enrolls the authenticator from email (no SMS) before registering the key.
+shared_secret, identity_secret, and the mobile refresh token are written only
+after FinalizeAddAuthenticator succeeds. GC password logins still persist a
+refresh token on their own.
 
 Password is never taken from argv. setup only reuses STEAM_SEED_PASSWORD
 when --login matches STEAM_SEED_LOGIN; otherwise it prompts. confirm and
@@ -112,6 +129,15 @@ are used for email Guard / authenticator activation when stored.
 get-last-code only talks to the stored IMAP host (no Steam login).
 Login Guard and authenticator-setup are different mails; --kind picks one,
 otherwise both are printed. Already-seen UIDs are not reused in setup.
+
+buy-account creates one Dark Shopping order per --count (max 10), waits up
+to 2 minutes for delivery, then provisions. --store defaults to
+dark_shopping. --imap-host skips auto-detect and LOGINs that host (still
+refuses Outlook/Hotmail for type=api_key).
+
+scrape-match password-logins a stored GC account (sticky proxy, Guard/IMAP
+as needed) and sends CMsgGCMatchDetailsRequest for --match-id. Prints the
+replay URL on stdout. gc-login is the same without a required match.
 `
 
 async function question(prompt: string, silent = false): Promise<string> {
@@ -538,20 +564,8 @@ async function enrollMobileAuthenticator(
 	console.log('revocation_code=', enabled.revocation_code)
 	console.error(
 		'Copy those three now. revocation_code is the only recovery key.',
+		'They are not written to Postgres until FinalizeAddAuthenticator succeeds.',
 	)
-
-	await saveSharedSecret({
-		login,
-		password,
-		sharedSecret: enabled.shared_secret,
-		identitySecret: enabled.identity_secret,
-	})
-	account = await getGcAccountByLogin(login)
-	if (account == null) {
-		throw new Error(`failed to reload steam_accounts row for ${login}`)
-	}
-	await persistMobileSession(account.id, session)
-	console.error('wrote secrets and refresh token to steam_accounts')
 
 	const channel = confirmChannel(enabled)
 	if (enabled.phone_number_hint !== undefined) {
@@ -610,7 +624,19 @@ async function enrollMobileAuthenticator(
 			`FinalizeAddAuthenticator failed: status=${String(last.status)}`,
 		)
 	}
-	console.error('authenticator finalized')
+
+	await saveSharedSecret({
+		login,
+		password,
+		sharedSecret: enabled.shared_secret,
+		identitySecret: enabled.identity_secret,
+	})
+	account = await getGcAccountByLogin(login)
+	if (account == null) {
+		throw new Error(`failed to reload steam_accounts row for ${login}`)
+	}
+	await persistMobileSession(account.id, session)
+	console.error('authenticator finalized; wrote secrets and refresh token')
 	console.log(generateAuthCode(enabled.shared_secret))
 	const saved = await getGcAccountByLogin(login)
 	if (saved == null) {
@@ -847,30 +873,113 @@ async function cmdIssueApiKey(values: {
 	domain: string
 }): Promise<void> {
 	const login = values.login ?? (await question('Steam login: '))
-	let account = await getGcAccountByLogin(login)
-	if (account === null) {
-		throw new Error(`no steam_accounts row for login=${login}`)
-	}
-	if (!accountHasUsableTotp(account) || account.sharedSecret === null) {
-		console.error(
-			`issue-api-key: ${login} has no Guard secret — enrolling via email`,
-		)
-		account = await enrollMobileAuthenticator(login, { interactive: false })
-	}
-	const { auth } = await communityGuardContext('issue-api-key', login, {
-		webCookies: true,
-	})
-	console.error(
-		`logged in ${auth.steamId}, registering Web API key for ${values.domain}…`,
+	const issued = await withApiProxy(() =>
+		withStatus(
+			(line) => {
+				console.error(line)
+			},
+			() => issueApiKeyForLogin({ login, domain: values.domain }),
+		),
 	)
-	const issued = await issueWebApiKey({
-		auth,
-		domain: values.domain,
-		onStatus: (line) => console.error(`issue-api-key: ${line}`),
-	})
-	await saveApiKey({ accountId: account.id, apiKey: issued.apiKey })
 	console.error(`saved Web API key for ${login}`)
 	console.log(issued.apiKey)
+}
+
+async function runGcAccount(input: {
+	login: string
+	matchId: number | null
+	label: string
+}): Promise<{ replayUrl: string | null }> {
+	const account = await getGcAccountByLogin(input.login)
+	if (account === null) {
+		throw new Error(`no steam_accounts row for login=${input.login}`)
+	}
+	const bound = await ensureAccountProxy({
+		accountId: account.id,
+		proxyId: account.proxyId,
+	})
+	console.error(
+		`${input.label} ${input.login} via proxy id=${String(bound.id)} ${proxyHostPort(bound.url)}`,
+	)
+	return await withStatus(
+		(line) => {
+			console.error(line)
+		},
+		() =>
+			loginGcAndMaybeTest({
+				login: input.login,
+				testOnMatchId: input.matchId,
+			}),
+	)
+}
+
+async function cmdGcLogin(flags: {
+	login?: string
+	testOnMatchId?: string
+}): Promise<void> {
+	const login = flags.login ?? (await question('Steam login: '))
+	const testOnMatchId = asNumber(flags.testOnMatchId)
+	const probed = await runGcAccount({
+		login,
+		matchId: testOnMatchId != null && testOnMatchId > 0 ? testOnMatchId : null,
+		label: 'gc-login',
+	})
+	if (probed.replayUrl != null) {
+		console.log(probed.replayUrl)
+		return
+	}
+	console.error(`gc-login ${login}: Dota welcome ok`)
+}
+
+async function cmdScrapeMatch(flags: {
+	login?: string
+	matchId?: string
+}): Promise<void> {
+	const login = flags.login ?? (await question('Steam login: '))
+	const matchId = asNumber(flags.matchId)
+	if (matchId === null || matchId <= 0) {
+		throw new Error('--match-id is required (positive integer)')
+	}
+	const probed = await runGcAccount({
+		login,
+		matchId,
+		label: 'scrape-match',
+	})
+	if (probed.replayUrl == null) {
+		throw new Error(
+			`GC match ${String(matchId)} returned no replay URL for ${login}`,
+		)
+	}
+	console.log(probed.replayUrl)
+}
+
+async function cmdBuyAccount(flags: {
+	productId?: string
+	type?: string
+	store?: string
+	count?: string
+	testOnMatchId?: string
+	imapHost?: string
+}): Promise<number> {
+	const input = parseBuyAccountCliInput(flags)
+	console.error(
+		`buy-account product=${String(input.productId)} type=${input.type} count=${String(input.count)} store=${input.store}`,
+	)
+	const result = await buyAccounts({
+		...input,
+		onStatus: (line) => {
+			console.error(line)
+		},
+	})
+	const orders = result.orders.map((order) => ({
+		status: order.status,
+		productId: order.productId,
+		store: order.store,
+		errorMessage: order.errorMessage,
+		testResult: order.testResult,
+	}))
+	console.log(JSON.stringify({ orders }, null, 2))
+	return orders.every((order) => order.status === 'success') ? 0 : 1
 }
 
 async function communityGuardContext(
@@ -978,6 +1087,13 @@ async function main(argv: string[]): Promise<number> {
 			domain: { type: 'string' },
 			phone: { type: 'string' },
 			country: { type: 'string' },
+			'product-id': { type: 'string' },
+			type: { type: 'string' },
+			store: { type: 'string' },
+			count: { type: 'string' },
+			'test-on-match-id': { type: 'string' },
+			'match-id': { type: 'string' },
+			'imap-host': { type: 'string' },
 		},
 		allowPositionals: true,
 	})
@@ -1030,6 +1146,20 @@ async function main(argv: string[]): Promise<number> {
 		)
 		return 0
 	}
+	if (command === 'gc-login') {
+		await cmdGcLogin({
+			login: values.login,
+			testOnMatchId: values['test-on-match-id'],
+		})
+		return 0
+	}
+	if (command === 'scrape-match') {
+		await cmdScrapeMatch({
+			login: values.login,
+			matchId: values['match-id'] ?? values['test-on-match-id'],
+		})
+		return 0
+	}
 	if (command === 'save') {
 		await cmdSave({
 			login: values.login,
@@ -1037,6 +1167,16 @@ async function main(argv: string[]): Promise<number> {
 			identity: values.identity,
 		})
 		return 0
+	}
+	if (command === 'buy-account') {
+		return await cmdBuyAccount({
+			productId: values['product-id'],
+			type: values.type,
+			store: values.store,
+			count: values.count,
+			testOnMatchId: values['test-on-match-id'],
+			imapHost: values['imap-host'],
+		})
 	}
 	console.error(`unknown command ${command}\n\n${USAGE}`)
 	return 1

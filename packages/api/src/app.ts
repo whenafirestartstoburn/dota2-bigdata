@@ -14,6 +14,7 @@ await seedSteamResources()
 // </template:init>
 
 const server = Bun.serve({
+	idleTimeout: 0,
 	routes: {
 		'/': () => new Response(null, { status: 200 }),
 		'/healthz': () => Response.json({ status: 'ok' }),

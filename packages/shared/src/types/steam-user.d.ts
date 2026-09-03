@@ -25,7 +25,11 @@ declare module 'steam-user' {
 			event: 'receivedFromGC',
 			listener: (appId: number, msgType: number, body: Buffer) => void,
 		): this
-		on(event: 'disconnected', listener: () => void): this
+		on(
+			event: 'disconnected',
+			listener: (eresult: number, msg: string) => void,
+		): this
+		on(event: 'debug', listener: (message: string) => void): this
 		on(event: 'refreshToken', listener: (token: string) => void): this
 		on(event: 'machineAuthToken', listener: (token: string) => void): this
 		on(event: string, listener: SteamEventFn): this

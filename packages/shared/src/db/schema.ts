@@ -7,6 +7,7 @@ import {
 	boolean,
 	index,
 	integer,
+	jsonb,
 	pgEnum,
 	pgTable,
 	primaryKey,
@@ -57,6 +58,16 @@ export const ingest_run_status = pgEnum('ingest_run_status', [
 	'queued',
 	'running',
 	'succeeded',
+	'failed',
+])
+export const marketplace_store = pgEnum('marketplace_store', ['dark_shopping'])
+export const account_purchase_kind = pgEnum('account_purchase_kind', [
+	'api_key',
+	'gc',
+])
+export const marketplace_order_status = pgEnum('marketplace_order_status', [
+	'pending',
+	'success',
 	'failed',
 ])
 
@@ -133,6 +144,37 @@ export const leagues = pgTable(
 			table.most_recent_activity.desc().nullsFirst(),
 		),
 		index('leagues_status_idx').using('btree', table.status.asc().nullsLast()),
+	],
+)
+
+export const marketplace_orders = pgTable(
+	'marketplace_orders',
+	{
+		id: uuid().defaultRandom().primaryKey(),
+		store: marketplace_store().notNull(),
+		kind: account_purchase_kind().notNull(),
+		product_id: integer().notNull(),
+		status: marketplace_order_status().default('pending').notNull(),
+		idempotence_id: text().notNull(),
+		external_order_id: text(),
+		steam_account_id: bigint({ mode: 'number' }).references(
+			() => steam_accounts.id,
+			{ onDelete: 'set null' },
+		),
+		test_on_match_id: bigint({ mode: 'number' }),
+		error_message: text(),
+		test_result: jsonb(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		completed_at: timestamp({ withTimezone: true }),
+	},
+	(table) => [
+		index('marketplace_orders_store_status_idx').using(
+			'btree',
+			table.store.asc().nullsLast(),
+			table.status.asc().nullsLast(),
+		),
+		unique('marketplace_orders_idempotence_id_key').on(table.idempotence_id),
 	],
 )
 

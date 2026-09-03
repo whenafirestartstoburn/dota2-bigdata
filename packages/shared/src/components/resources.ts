@@ -1,5 +1,6 @@
 import { ensureApiKeyProxy } from '#src/components/proxies'
 import { jwtExpiresAt, jwtSteamId } from '#src/steam/jwt'
+import { asDate, asNumber, asText } from '#src/store/coerce'
 import { db, sql } from '#src/utils/db'
 import { selectGcPool } from './account-role'
 
@@ -63,24 +64,9 @@ export function accountCanReadEmailGuard(account: {
 	)
 }
 
-function asText(value: unknown): string | null {
-	if (value == null) return null
-	const text = String(value)
-	return text === '' ? null : text
-}
-
-function asDate(value: unknown): Date | null {
-	if (value == null) return null
-	if (value instanceof Date) {
-		return Number.isNaN(value.getTime()) ? null : value
-	}
-	const parsed = new Date(String(value))
-	return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
 function mapGcAccount(row: Record<string, unknown>): GcAccount {
 	return {
-		id: Number(row.id),
+		id: asNumber(row.id) ?? 0,
 		login: String(row.login),
 		password: String(row.password),
 		sharedSecret: asText(row.shared_secret),
@@ -93,7 +79,7 @@ function mapGcAccount(row: Record<string, unknown>): GcAccount {
 		refreshTokenExpiresAt: asDate(row.refresh_token_expires_at),
 		machineAuthToken: asText(row.machine_auth_token),
 		steamId: asText(row.steam_id),
-		proxyId: row.proxy_id == null ? null : Number(row.proxy_id),
+		proxyId: asNumber(row.proxy_id),
 		proxyUrl: asText(row.proxy_url),
 		proxyKind:
 			row.proxy_kind === 'socks5' || row.proxy_kind === 'http'
@@ -131,6 +117,31 @@ export async function pickApiCredential(): Promise<ApiCredential> {
 		SET last_used_at = now(), status = 'active', updated_at = now()
 		WHERE id = ${keyId}
 	`)
+	return {
+		keyId,
+		accountId: Number(row.account_id),
+		apiKey: String(row.api_key),
+		proxyId: proxy.id,
+		proxyUrl: proxy.url,
+	}
+}
+
+export async function apiCredentialForAccount(
+	accountId: number,
+): Promise<ApiCredential> {
+	const [row] = await db.execute(sql`
+		SELECT k.id AS key_id, k.account_id, k.api_key
+		FROM steam_api_keys k
+		WHERE k.account_id = ${accountId}
+			AND k.status IN ('ready', 'active')
+		ORDER BY k.updated_at DESC
+		LIMIT 1
+	`)
+	if (row === undefined) {
+		throw new Error(`no steam_api_keys row for account ${String(accountId)}`)
+	}
+	const keyId = Number(row.key_id)
+	const proxy = await ensureApiKeyProxy(keyId)
 	return {
 		keyId,
 		accountId: Number(row.account_id),

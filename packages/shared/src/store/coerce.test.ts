@@ -2,11 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import {
 	asBool,
 	asComplete,
+	asDate,
 	asIntArray,
+	asIso,
 	asNumber,
 	asNumeric,
 	asPgInt8,
+	asRecord,
 	asString,
+	asText,
+	asTrimmedString,
 	asUInt32,
 	errorMessage,
 } from './coerce'
@@ -76,6 +81,53 @@ describe('asString', () => {
 		expect(asString('axe')).toBe('axe')
 		expect(asString('')).toBeNull()
 		expect(asString(1)).toBeNull()
+	})
+})
+
+describe('asText', () => {
+	test('stringifies non-null values and drops empty', () => {
+		expect(asText('axe')).toBe('axe')
+		expect(asText(1)).toBe('1')
+		expect(asText('')).toBeNull()
+		expect(asText(null)).toBeNull()
+	})
+})
+
+describe('asRecord', () => {
+	test('keeps objects and drops null/primitives', () => {
+		expect(asRecord({ a: 1 })).toEqual({ a: 1 })
+		expect(asRecord(null)).toBeNull()
+		expect(asRecord('x')).toBeNull()
+	})
+})
+
+describe('asDate', () => {
+	test('accepts Date and parseable strings', () => {
+		const d = new Date('2026-01-02T03:04:05.000Z')
+		expect(asDate(d)?.toISOString()).toBe(d.toISOString())
+		expect(asDate('2026-01-02T03:04:05.000Z')?.toISOString()).toBe(
+			d.toISOString(),
+		)
+		expect(asDate('nope')).toBeNull()
+		expect(asDate(null)).toBeNull()
+	})
+})
+
+describe('asIso', () => {
+	test('ISO from Date, pass-through non-empty strings', () => {
+		const d = new Date('2026-01-02T03:04:05.000Z')
+		expect(asIso(d)).toBe('2026-01-02T03:04:05.000Z')
+		expect(asIso('already-iso')).toBe('already-iso')
+		expect(asIso('')).toBeNull()
+		expect(asIso(null)).toBeNull()
+	})
+})
+
+describe('asTrimmedString', () => {
+	test('trims strings and drops non-strings', () => {
+		expect(asTrimmedString('  RU  ')).toBe('RU')
+		expect(asTrimmedString('   ')).toBeNull()
+		expect(asTrimmedString(1)).toBeNull()
 	})
 })
 

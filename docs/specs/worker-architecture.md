@@ -2,7 +2,7 @@
 
 Companions: [`data-schema.md`](./data-schema.md), [`adr-technology.md`](./adr-technology.md).
 
-One worker process, one Postgres, one ClickHouse, one S3. Jobs share that process and run at their own frequencies (live poll ~3 s, league list hourly, history walk every 2 min, plus on-demand GC / download / parse). The HTTP API stays a thin test harness. Collection must work if the API is down.
+One worker process, one Postgres, one ClickHouse, one S3. Jobs share that process and run at their own frequencies (live poll ~3 s, league list hourly, history walk every 2 min, plus on-demand GC / download / parse). The HTTP API stays a thin test harness plus admin purchase (`POST /api/buy-account`, [`marketplace-buy-account.md`](./marketplace-buy-account.md)). Collection must work if the API is down.
 
 ```
                     ┌──────────────────┐

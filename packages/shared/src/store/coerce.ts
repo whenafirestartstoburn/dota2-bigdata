@@ -55,6 +55,38 @@ export function asString(value: unknown): string | null {
 	return value === '' ? null : value
 }
 
+/** Coerce via `String()` (driver UUIDs, numeric ids in JSON). Empty → null. */
+export function asText(value: unknown): string | null {
+	if (value == null) return null
+	const text = String(value)
+	return text === '' ? null : text
+}
+
+export function asRecord(value: unknown): Record<string, unknown> | null {
+	if (typeof value !== 'object' || value === null) return null
+	return value as Record<string, unknown>
+}
+
+export function asDate(value: unknown): Date | null {
+	if (value == null) return null
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? null : value
+	}
+	const parsed = new Date(String(value))
+	return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+export function asIso(value: unknown): string | null {
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? null : value.toISOString()
+	}
+	return asString(value)
+}
+
+export function asTrimmedString(value: unknown): string | null {
+	return typeof value === 'string' ? asString(value.trim()) : null
+}
+
 export function asBool(value: unknown): boolean | null {
 	if (typeof value === 'boolean') return value
 	return null

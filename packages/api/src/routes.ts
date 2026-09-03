@@ -1,4 +1,7 @@
 import { enqueueJob, PRIORITY, QUEUE } from '@app/shared/src/components/jobs'
+import { buyAccounts } from '@app/shared/src/marketplace/buy-account'
+import { DarkShoppingError } from '@app/shared/src/marketplace/store'
+import { asIso } from '@app/shared/src/store/coerce'
 import { createIngestRun, getIngestRun } from '@app/shared/src/store/ingest'
 import {
 	ensureLeagueStub,
@@ -21,11 +24,14 @@ const processFinishedBody = z.object({
 
 const ingestRunId = z.string().uuid()
 
-function asIso(value: unknown): string | null {
-	if (value instanceof Date) return value.toISOString()
-	if (typeof value === 'string') return value
-	return null
-}
+const buyAccountBody = z.object({
+	productId: z.number().int().positive(),
+	store: z.literal('dark_shopping'),
+	type: z.enum(['api_key', 'gc']),
+	count: z.number().int().min(1).max(10).default(1),
+	testOnMatchId: z.number().int().positive().optional(),
+	imapHost: z.string().trim().min(1).optional(),
+})
 
 export const routes = {
 	'/api/health': methods({
@@ -101,6 +107,32 @@ export const routes = {
 					finished_at: asIso(row.finished_at),
 				})
 			} catch (error) {
+				return handleError(request, error)
+			}
+		},
+	}),
+
+	'/api/buy-account': methods({
+		POST: async (request) => {
+			try {
+				const parsed = buyAccountBody.safeParse(await readJson(request))
+				if (!parsed.success) {
+					return json(request, { error: z.prettifyError(parsed.error) }, 400)
+				}
+				const result = await buyAccounts(parsed.data)
+				return json(request, {
+					orders: result.orders.map((order) => ({
+						status: order.status,
+						productId: order.productId,
+						store: order.store,
+						errorMessage: order.errorMessage,
+						testResult: order.testResult,
+					})),
+				})
+			} catch (error) {
+				if (error instanceof DarkShoppingError && error.status === 503) {
+					return handleError(request, new HttpError(503, error.message))
+				}
 				return handleError(request, error)
 			}
 		},

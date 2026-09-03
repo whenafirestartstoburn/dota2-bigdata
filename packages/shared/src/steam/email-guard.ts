@@ -6,6 +6,7 @@ import {
 import { ImapClient, imapHostname, recentMailStartUid } from '#src/steam/imap'
 import { errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
+import { status } from '#src/utils/status'
 
 export type SteamMailbox = {
 	email: string
@@ -53,8 +54,8 @@ async function recentUids(
 	} catch (error) {
 		logger.debug({ err: errorMessage(error) }, 'IMAP NOOP failed')
 	}
-	const status = await client.statusInbox()
-	const uidNext = status.uidNext
+	const inbox = await client.statusInbox()
+	const uidNext = inbox.uidNext
 	if (uidNext == null || uidNext <= 1) return []
 	const start = recentMailStartUid(uidNext, excludeUids, window)
 	try {
@@ -117,9 +118,8 @@ export async function fetchSteamGuardFromMailbox(input: {
 	const timeoutMs = input.timeoutMs ?? 90_000
 	const pollMs = input.pollMs ?? 3_000
 	const { client, host } = await openMailbox(input.mailbox)
-	logger.info(
-		{ host, email: input.mailbox.email, kind: input.kind },
-		'IMAP inbox open',
+	status(
+		`imap: inbox open host=${host} email=${input.mailbox.email} kind=${input.kind}`,
 	)
 	const deadline = Date.now() + timeoutMs
 	try {
@@ -144,9 +144,8 @@ export async function fetchSteamGuardFromMailbox(input: {
 					excludeCodes: input.excludeCodes,
 				})
 				if (found === null) continue
-				logger.info(
-					{ host, uid, kind: found.kind, template: found.template },
-					'extracted Steam Guard code from email',
+				status(
+					`imap: extracted Steam Guard uid=${String(uid)} kind=${found.kind} template=${found.template ?? '-'}`,
 				)
 				return found
 			}
@@ -171,7 +170,7 @@ export async function latestSteamGuardMails(
 	mailbox: SteamMailbox,
 ): Promise<LatestSteamGuardMails> {
 	const { client, host } = await openMailbox(mailbox)
-	logger.info({ host, email: mailbox.email }, 'IMAP inbox open')
+	status(`imap: inbox open host=${host} email=${mailbox.email}`)
 	try {
 		const uids = await recentUids(client, [], 150)
 		let login: SteamGuardMail | null = null
@@ -213,7 +212,7 @@ export async function probeImapInbox(mailbox: SteamMailbox): Promise<{
 }> {
 	const { client, host } = await openMailbox(mailbox)
 	try {
-		const status = await client.statusInbox()
+		const inbox = await client.statusInbox()
 		const uids = await recentUids(client, [], 150)
 		const newest = uids.slice(-5).reverse()
 		const samples: ImapProbeSample[] = []
@@ -230,7 +229,7 @@ export async function probeImapInbox(mailbox: SteamMailbox): Promise<{
 				snippet,
 			})
 		}
-		return { host, uidNext: status.uidNext, samples }
+		return { host, uidNext: inbox.uidNext, samples }
 	} finally {
 		await client.logout()
 	}

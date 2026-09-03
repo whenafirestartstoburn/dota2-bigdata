@@ -38,3 +38,8 @@ Cancelable timers (`setTimeout` + `clearTimeout`), `node:tls`, `node:net`,
 
 If the next function is a one-liner over `Bun.*` or `fetch`, do not add a file
 for it. Import and call the builtin.
+
+If it is `unknown` → string/number/Date (`asText`, `asString`, `asNumber`,
+`asDate`, `asIso`, `asRecord`, `errorMessage`), import from
+`packages/shared/src/store/coerce.ts`. Do not copy the helper into the new
+file. See the `shared-utils` skill.

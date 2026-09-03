@@ -2,6 +2,27 @@ import { defineRelations } from 'drizzle-orm'
 import * as schema from './schema'
 
 export const relations = defineRelations(schema, (r) => ({
+	marketplace_orders: {
+		steam_account: r.one.steam_accounts({
+			from: r.marketplace_orders.steam_account_id,
+			to: r.steam_accounts.id,
+		}),
+	},
+	steam_accounts: {
+		marketplace_orders: r.many.marketplace_orders(),
+		match_replays: r.many.match_replays(),
+		matches: r.many.matches(),
+		proxy: r.one.proxies({
+			from: r.steam_accounts.proxy_id,
+			to: r.proxies.id,
+			alias: 'steam_accounts_proxy_id_proxies_id',
+		}),
+		proxies: r.many.proxies({
+			from: r.steam_accounts.id.through(r.steam_api_keys.account_id),
+			to: r.proxies.id.through(r.steam_api_keys.proxy_id),
+			alias: 'steam_accounts_id_proxies_id_via_steam_api_keys',
+		}),
+	},
 	match_broadcasters: {
 		match: r.one.matches({
 			from: r.match_broadcasters.match_id,
@@ -123,20 +144,6 @@ export const relations = defineRelations(schema, (r) => ({
 			alias: 'steam_accounts_proxy_id_proxies_id',
 		}),
 		steam_accounts_via_steam_api_keys: r.many.steam_accounts({
-			alias: 'steam_accounts_id_proxies_id_via_steam_api_keys',
-		}),
-	},
-	steam_accounts: {
-		match_replays: r.many.match_replays(),
-		matches: r.many.matches(),
-		proxy: r.one.proxies({
-			from: r.steam_accounts.proxy_id,
-			to: r.proxies.id,
-			alias: 'steam_accounts_proxy_id_proxies_id',
-		}),
-		proxies: r.many.proxies({
-			from: r.steam_accounts.id.through(r.steam_api_keys.account_id),
-			to: r.proxies.id.through(r.steam_api_keys.proxy_id),
 			alias: 'steam_accounts_id_proxies_id_via_steam_api_keys',
 		}),
 	},

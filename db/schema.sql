@@ -1,7 +1,7 @@
 \restrict dbmate
 
 -- Dumped from database version 16.15
--- Dumped by pg_dump version 18.6
+-- Dumped by pg_dump version 18.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -39,6 +39,16 @@ CREATE TYPE graphile_worker.job_spec AS (
 
 
 --
+-- Name: account_purchase_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.account_purchase_kind AS ENUM (
+    'api_key',
+    'gc'
+);
+
+
+--
 -- Name: ingest_run_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -58,6 +68,26 @@ CREATE TYPE public.league_lifecycle AS ENUM (
     'UPCOMING',
     'LIVE',
     'FINISHED'
+);
+
+
+--
+-- Name: marketplace_order_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.marketplace_order_status AS ENUM (
+    'pending',
+    'success',
+    'failed'
+);
+
+
+--
+-- Name: marketplace_store; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.marketplace_store AS ENUM (
+    'dark_shopping'
 );
 
 
@@ -668,6 +698,28 @@ CREATE TABLE public.leagues (
     history_tail_match_id bigint,
     history_exhausted boolean DEFAULT false NOT NULL,
     history_checked_at timestamp with time zone
+);
+
+
+--
+-- Name: marketplace_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.marketplace_orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store public.marketplace_store NOT NULL,
+    kind public.account_purchase_kind NOT NULL,
+    product_id integer NOT NULL,
+    status public.marketplace_order_status DEFAULT 'pending'::public.marketplace_order_status NOT NULL,
+    idempotence_id text NOT NULL,
+    external_order_id text,
+    steam_account_id bigint,
+    test_on_match_id bigint,
+    error_message text,
+    test_result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone
 );
 
 
@@ -1312,6 +1364,22 @@ ALTER TABLE ONLY public.leagues
 
 
 --
+-- Name: marketplace_orders marketplace_orders_idempotence_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_orders
+    ADD CONSTRAINT marketplace_orders_idempotence_id_key UNIQUE (idempotence_id);
+
+
+--
+-- Name: marketplace_orders marketplace_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_orders
+    ADD CONSTRAINT marketplace_orders_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: match_broadcasters match_broadcasters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1523,6 +1591,13 @@ CREATE INDEX leagues_status_idx ON public.leagues USING btree (status);
 
 
 --
+-- Name: marketplace_orders_store_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX marketplace_orders_store_status_idx ON public.marketplace_orders USING btree (store, status);
+
+
+--
 -- Name: match_replays_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1576,6 +1651,14 @@ CREATE INDEX matches_start_time_idx ON public.matches USING btree (league_id, st
 --
 
 CREATE INDEX series_league_idx ON public.series USING btree (league_id);
+
+
+--
+-- Name: marketplace_orders marketplace_orders_steam_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_orders
+    ADD CONSTRAINT marketplace_orders_steam_account_id_fkey FOREIGN KEY (steam_account_id) REFERENCES public.steam_accounts(id) ON DELETE SET NULL;
 
 
 --
@@ -1831,4 +1914,5 @@ ALTER TABLE graphile_worker._private_tasks ENABLE ROW LEVEL SECURITY;
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260830000000'),
-    ('20260830000001');
+    ('20260830000001'),
+    ('20260903000000');

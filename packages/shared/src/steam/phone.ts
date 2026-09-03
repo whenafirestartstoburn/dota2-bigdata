@@ -1,4 +1,5 @@
 import { steamFetch, unwrapSteamResponse } from '#src/steam/http'
+import { asTrimmedString } from '#src/store/coerce'
 
 const PHONE = 'https://api.steampowered.com/IPhoneService'
 const USER = 'https://api.steampowered.com/IUserAccountService'
@@ -94,8 +95,8 @@ export function parseAccountPhoneStatus(body: unknown): AccountPhoneStatus {
 export function parseSetPhoneResponse(body: unknown): SetPhoneResult {
 	const inner = unwrapSteamResponse(body)
 	return {
-		confirmationEmail: asOptionalString(inner.confirmation_email_address),
-		phoneFormatted: asOptionalString(inner.phone_number_formatted),
+		confirmationEmail: asTrimmedString(inner.confirmation_email_address),
+		phoneFormatted: asTrimmedString(inner.phone_number_formatted),
 	}
 }
 
@@ -125,7 +126,7 @@ export async function getUserCountry(
 		steamid: steamId,
 	})
 	const inner = unwrapSteamResponse(wrapped)
-	const country = asOptionalString(inner.country)
+	const country = asTrimmedString(inner.country)
 	return country === null ? null : country.toUpperCase()
 }
 
@@ -217,10 +218,4 @@ async function postNamed(
 			`${method} returned non-JSON: ${text.slice(0, 200)}`,
 		)
 	}
-}
-
-function asOptionalString(value: unknown): string | null {
-	if (typeof value !== 'string') return null
-	const text = value.trim()
-	return text === '' ? null : text
 }

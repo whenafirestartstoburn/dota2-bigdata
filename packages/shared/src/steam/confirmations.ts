@@ -5,7 +5,7 @@ import {
 	querySteamTimeOffset,
 	unixTime,
 } from '#src/steam/totp'
-import { asNumber, errorMessage } from '#src/store/coerce'
+import { asNumber, asText, errorMessage } from '#src/store/coerce'
 
 const CONF_BASE = 'https://steamcommunity.com/mobileconf'
 const REQUEST_KEY_URL = 'https://steamcommunity.com/dev/requestkey'
@@ -155,9 +155,9 @@ export function parseConfirmationList(body: unknown): SteamConfirmation[] {
 			id,
 			nonce,
 			type: asNumber(item.type),
-			typeName: asOptionalString(item.type_name),
-			headline: asOptionalString(item.headline),
-			creatorId: asOptionalString(item.creator_id ?? item.creator),
+			typeName: asText(item.type_name),
+			headline: asText(item.headline),
+			creatorId: asText(item.creator_id ?? item.creator),
 			creationTime: asNumber(item.creation_time),
 		}
 	})
@@ -543,12 +543,6 @@ function asRequiredId(value: unknown, index: number, field: string): string {
 	throw new SteamConfirmationError(
 		`confirmation[${String(index)}] missing ${field}`,
 	)
-}
-
-function asOptionalString(value: unknown): string | null {
-	if (value == null) return null
-	const text = String(value)
-	return text === '' ? null : text
 }
 
 function asUint64String(value: unknown): string | null {

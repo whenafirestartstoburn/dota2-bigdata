@@ -182,14 +182,18 @@ export async function isProxyUsable(
 
 export async function pickReadyProxy(
 	need: ProxyNeed,
-	opts?: { excludeIds?: number[] },
+	opts?: { excludeIds?: number[]; preferKind?: ProxyKind },
 ): Promise<BoundProxy> {
 	const purposes = purposeList(need)
 	const excludeIds =
 		opts?.excludeIds != null && opts.excludeIds.length > 0
 			? opts.excludeIds
 			: [0]
-	const preferSocks = need === 'gc'
+	const preferKind = opts?.preferKind
+	const preferSocks =
+		preferKind === 'socks5' || (preferKind == null && need === 'gc')
+	const preferHttp =
+		preferKind === 'http' || (preferKind == null && need === 'api')
 	const rows = await db.execute(sql`
 		SELECT p.id, p.url, p.kind, p.purpose
 		FROM proxies p
@@ -200,7 +204,7 @@ export async function pickReadyProxy(
 		ORDER BY
 			CASE
 				WHEN ${preferSocks} AND p.kind = 'socks5' THEN 0
-				WHEN NOT ${preferSocks} AND p.kind = 'http' THEN 0
+				WHEN ${preferHttp} AND p.kind = 'http' THEN 0
 				ELSE 1
 			END,
 			(
@@ -298,6 +302,31 @@ export async function rotateDeadApiKeyProxy(
 ): Promise<BoundProxy> {
 	await markProxyUnavailable(deadProxyId, error)
 	return await ensureApiKeyProxy(keyId)
+}
+
+export async function rotateAccountProxy(input: {
+	accountId: number
+	deadProxyId: number
+	error: string
+	preferKind?: ProxyKind
+}): Promise<BoundProxy> {
+	await markProxyUnavailable(input.deadProxyId, input.error)
+	const next = await pickReadyProxy('gc', {
+		excludeIds: [input.deadProxyId],
+		preferKind: input.preferKind,
+	})
+	await bindAccountProxy(input.accountId, next.id)
+	await markProxyActive(next.id)
+	logger.info(
+		{
+			accountId: input.accountId,
+			fromProxyId: input.deadProxyId,
+			proxyId: next.id,
+			kind: next.kind,
+		},
+		'rotated sticky GC proxy',
+	)
+	return next
 }
 
 export async function listProxies(): Promise<
