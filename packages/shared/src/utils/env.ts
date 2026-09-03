@@ -23,32 +23,6 @@ export const baseEnv = z.object({
 		.string()
 		.default('false')
 		.transform((value) => value !== 'false'),
-	LIVE_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(3_000),
-	LIVE_MISSING_THRESHOLD: z.coerce.number().int().positive().default(2),
-	HISTORY_PAGE_SIZE: z.coerce.number().int().positive().max(100).default(100),
-	HISTORY_DETAILS_ENQUEUE_LIMIT: z.coerce
-		.number()
-		.int()
-		.positive()
-		.default(500),
-	HISTORY_REPLAY_ENQUEUE_LIMIT: z.coerce.number().int().positive().default(50),
-	SEQ_BATCH_SIZE: z.coerce.number().int().positive().max(100).default(100),
-	STEAM_API_MIN_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
-	HISTORY_NEWEST_REFRESH_MS: z.coerce
-		.number()
-		.int()
-		.positive()
-		.default(60 * 60_000),
-	HISTORY_EXHAUSTED_REFRESH_MS: z.coerce
-		.number()
-		.int()
-		.positive()
-		.default(24 * 60 * 60_000),
-	REPLAY_LIVE_DELAY_MS: z.coerce
-		.number()
-		.int()
-		.positive()
-		.default(30 * 60_000),
 	STEAM_SEED_LOGIN: z.string().default(''),
 	STEAM_SEED_PASSWORD: z.string().default(''),
 	STEAM_SEED_API_KEY: z.string().default(''),

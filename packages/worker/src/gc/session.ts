@@ -3,10 +3,14 @@ import {
 	isNoUsableProxy,
 	isProxyTransportError,
 	isProxyUsable,
-	markProxyUnavailable,
 	NoUsableProxyError,
 	pickReadyProxy,
+	rotateAccountProxy,
 } from '@app/shared/src/components/proxies'
+import {
+	disableResource,
+	recordResourceAttempt,
+} from '@app/shared/src/components/resource-health'
 import {
 	accountCanReadEmailGuard,
 	accountHasUsableTotp,
@@ -20,6 +24,7 @@ import {
 	saveSteamSession,
 	selectGcPool,
 } from '@app/shared/src/components/resources'
+import { getAppSettings } from '@app/shared/src/components/settings'
 import {
 	DOTA_APP_ID,
 	decodeFields,
@@ -108,7 +113,12 @@ async function totpOffset(account: GcAccount): Promise<number> {
 	} catch (error) {
 		if (probe != null && isProxyTransportError(error)) {
 			const message = errorMessage(error)
-			await markProxyUnavailable(probe.id, message)
+			await recordResourceAttempt({
+				kind: 'proxy',
+				resourceId: probe.id,
+				ok: false,
+				error: message,
+			})
 			if (account.proxyId === probe.id) throw error
 		}
 		return 0
@@ -254,7 +264,6 @@ async function connect(
 		})
 		client.on('receivedFromGC', (appId: number, msgType: number, body) => {
 			if (appId !== DOTA_APP_ID) return
-			logger.info({ login: account.login, msgType }, 'dota GC message')
 			if (msgType === GC_MSG.clientWelcome) {
 				finish()
 				return
@@ -262,10 +271,6 @@ async function connect(
 			if (msgType === GC_MSG.connectionStatus) {
 				const status = Number(
 					decodeFields(body).find((f) => f.field === 1)?.varint ?? -1n,
-				)
-				logger.info(
-					{ login: account.login, status },
-					'dota GC connection status',
 				)
 				if (status === 0) finish()
 				if (status === 3) arm(120_000)
@@ -278,7 +283,12 @@ async function connect(
 	})
 	client.on('error', (error: Error) => {
 		if (isProxyTransportError(error) && account.proxyId != null) {
-			void markProxyUnavailable(account.proxyId, error.message)
+			void recordResourceAttempt({
+				kind: 'proxy',
+				resourceId: account.proxyId,
+				ok: false,
+				error: error.message,
+			})
 		}
 		if (session?.client === client) session = null
 	})
@@ -312,6 +322,18 @@ async function connect(
 		await ready
 		await markAccountLogin(account.id, {
 			totpOk: accountHasUsableTotp(account) && !usedEmailGuard,
+		})
+		if (account.proxyId != null) {
+			await recordResourceAttempt({
+				kind: 'proxy',
+				resourceId: account.proxyId,
+				ok: true,
+			})
+		}
+		await recordResourceAttempt({
+			kind: 'gc_account',
+			resourceId: account.id,
+			ok: true,
 		})
 		if (usedEmailGuard && account.sharedSecret !== null) {
 			await markSharedSecretBroken(
@@ -368,14 +390,18 @@ async function connectAccount(account: GcAccount): Promise<BoundSession> {
 		} catch (error) {
 			if (isProxyTransportError(error) && current.proxyId != null) {
 				const message = errorMessage(error)
-				await markProxyUnavailable(current.proxyId, message)
+				const next = await rotateAccountProxy({
+					accountId: current.id,
+					deadProxyId: current.proxyId,
+					error: message,
+					preferKind: current.proxyKind === 'socks5' ? 'http' : undefined,
+				})
 				current = {
 					...current,
-					proxyId: null,
-					proxyUrl: null,
-					proxyKind: null,
+					proxyId: next.id,
+					proxyUrl: next.url,
+					proxyKind: next.kind,
 				}
-				current = await bindStickyProxy(current)
 				continue
 			}
 			throw error
@@ -393,16 +419,27 @@ async function recordConnectFailure(
 		return
 	}
 	if (/InvalidPassword/i.test(message)) {
-		await markAccountError(account.id, message, { disable: true })
-		return
-	}
-	if (/rate.?limit/i.test(message)) {
-		await markAccountError(account.id, message, {
-			rateLimitMs: 5 * 60_000,
+		await disableResource({
+			kind: 'gc_account',
+			resourceId: account.id,
+			error: message,
+			giveUp: true,
 		})
 		return
 	}
-	await markAccountError(account.id, message)
+	if (/rate.?limit/i.test(message)) {
+		const settings = await getAppSettings()
+		await markAccountError(account.id, message, {
+			rateLimitMs: settings.gcAccountRateLimitMs,
+		})
+		return
+	}
+	await recordResourceAttempt({
+		kind: 'gc_account',
+		resourceId: account.id,
+		ok: false,
+		error: message,
+	})
 }
 
 export async function getGcSession(): Promise<BoundSession> {

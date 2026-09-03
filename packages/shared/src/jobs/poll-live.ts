@@ -1,6 +1,7 @@
 import { insertJsonEachRow } from '#src/components/clickhouse'
 import { setCursor } from '#src/components/rate-limit'
 import { pickApiCredential, steamCtx } from '#src/components/resources'
+import { getAppSettings } from '#src/components/settings'
 import { enqueueFetchMatchDetails } from '#src/jobs/fetch-match-details'
 import type { LiveLeagueGame } from '#src/steam/schemas'
 import { getLiveLeagueGames } from '#src/steam/web-api'
@@ -17,7 +18,6 @@ import {
 	upsertTeam,
 } from '#src/store/matches'
 import { db } from '#src/utils/db'
-import env from '#src/utils/env'
 import { logger } from '#src/utils/logger'
 import { chNow } from './time'
 
@@ -34,13 +34,14 @@ export async function runPollLiveGames(): Promise<{
 	games: number
 	wrote: number
 }> {
+	const settings = await getAppSettings()
 	const cred = await pickApiCredential()
 	const ctx = steamCtx(cred, 'live')
 	const { games } = await getLiveLeagueGames(ctx)
 
 	await setCursor(
 		'next_live_poll_at',
-		new Date(Date.now() + env.LIVE_POLL_INTERVAL_MS).toISOString(),
+		new Date(Date.now() + settings.livePollIntervalMs).toISOString(),
 	)
 
 	const byId = new Map(games.map((game) => [game.match_id, game]))
@@ -196,11 +197,11 @@ export async function runPollLiveGames(): Promise<{
 				if (currentIds.has(matchId)) continue
 				const count = (missingTicks.get(matchId) ?? 0) + 1
 				missingTicks.set(matchId, count)
-				if (count >= env.LIVE_MISSING_THRESHOLD) finished.push(matchId)
+				if (count >= settings.liveMissingThreshold) finished.push(matchId)
 			}
 		}
 		if (finished.length > 0) {
-			await markMatchesFinishedLive(tx, finished, env.REPLAY_LIVE_DELAY_MS)
+			await markMatchesFinishedLive(tx, finished, settings.replayLiveDelayMs)
 			for (const matchId of finished) {
 				hashes.delete(matchId)
 				missingTicks.delete(matchId)
@@ -211,7 +212,7 @@ export async function runPollLiveGames(): Promise<{
 	await insertJsonEachRow('live_match_ticks', tickRows)
 	await insertJsonEachRow('live_player_ticks', playerTickRows)
 
-	const detailsAt = new Date(Date.now() + env.REPLAY_LIVE_DELAY_MS)
+	const detailsAt = new Date(Date.now() + settings.replayLiveDelayMs)
 	for (const matchId of finished) {
 		await enqueueFetchMatchDetails(matchId, 'live', detailsAt)
 	}

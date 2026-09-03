@@ -1,5 +1,6 @@
 import { enqueueJob, PRIORITY, QUEUE } from '@app/shared/src/components/jobs'
 import { buyAccounts } from '@app/shared/src/marketplace/buy-account'
+import { UnknownProductError } from '@app/shared/src/marketplace/products'
 import { DarkShoppingError } from '@app/shared/src/marketplace/store'
 import { asIso } from '@app/shared/src/store/coerce'
 import { createIngestRun, getIngestRun } from '@app/shared/src/store/ingest'
@@ -22,13 +23,13 @@ const processFinishedBody = z.object({
 	matches_limit: z.number().int().positive().max(10_000).optional(),
 })
 
-const ingestRunId = z.string().uuid()
+const ingestRunId = z.coerce.number().int().positive()
 
 const buyAccountBody = z.object({
 	productId: z.number().int().positive(),
 	store: z.literal('dark_shopping'),
 	type: z.enum(['api_key', 'gc']),
-	count: z.number().int().min(1).max(10).default(1),
+	count: z.number().int().min(1).max(100).default(1),
 	testOnMatchId: z.number().int().positive().optional(),
 	imapHost: z.string().trim().min(1).optional(),
 })
@@ -68,7 +69,7 @@ export const routes = {
 					jobKey: `walk:${input.league_id}`,
 				})
 				return json(request, {
-					run_id: run.id,
+					id: run.id,
 					job_id: jobId,
 					league_id: input.league_id,
 					matches_limit: input.matches_limit ?? null,
@@ -93,7 +94,7 @@ export const routes = {
 				const created = asIso(row.created_at)
 				if (created === null) throw new HttpError(404, 'not found')
 				return json(request, {
-					id: String(row.id),
+					id: Number(row.id),
 					league_id: Number(row.league_id),
 					matches_limit:
 						row.matches_limit === null ? null : Number(row.matches_limit),
@@ -130,6 +131,9 @@ export const routes = {
 					})),
 				})
 			} catch (error) {
+				if (error instanceof UnknownProductError) {
+					return handleError(request, new HttpError(400, error.message))
+				}
 				if (error instanceof DarkShoppingError && error.status === 503) {
 					return handleError(request, new HttpError(503, error.message))
 				}

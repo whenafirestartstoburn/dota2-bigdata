@@ -39,7 +39,7 @@ export const relations = defineRelations(schema, (r) => ({
 		match_player_damage_breakdowns: r.many.match_player_damage_breakdown(),
 		match_player_units: r.many.match_player_units(),
 		match_players: r.many.match_players(),
-		match_replays: r.many.match_replays(),
+		match_replays: r.one.match_replays(),
 		team_dire_team_id: r.one.teams({
 			from: r.matches.dire_team_id,
 			to: r.teams.team_id,

@@ -1,6 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: регион <template:imports> собирает генератор — сортировка biome вынесла бы из него чужие импорты и утащила бы внутрь свои
 import { parseCrontab, run } from 'graphile-worker'
 import { seedSteamResources } from '@app/shared/src/components/seed'
+import { PRIORITY } from '@app/shared/src/components/jobs'
 import { pingClickhouse } from '@app/shared/src/components/clickhouse'
 import { db, sql } from '@app/shared/src/utils/db'
 import { logger } from '@app/shared/src/utils/logger'
@@ -31,6 +32,16 @@ await runner.addJob(
 	'walk_league_history',
 	{},
 	{ jobKey: 'walk_league_history_startup' },
+)
+await runner.addJob(
+	'replenish_accounts',
+	{},
+	{ jobKey: 'replenish_accounts', priority: PRIORITY.replenish },
+)
+await runner.addJob(
+	'retest_disabled_resources',
+	{},
+	{ jobKey: 'retest_disabled_resources', priority: PRIORITY.retest },
 )
 
 const health = Bun.serve({

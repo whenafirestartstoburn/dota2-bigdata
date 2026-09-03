@@ -10,7 +10,6 @@ import {
 	jsonb,
 	pgEnum,
 	pgTable,
-	primaryKey,
 	real,
 	smallint,
 	text,
@@ -70,33 +69,58 @@ export const marketplace_order_status = pgEnum('marketplace_order_status', [
 	'success',
 	'failed',
 ])
+export const resource_kind = pgEnum('resource_kind', [
+	'proxy',
+	'gc_account',
+	'api_key',
+])
 
-export const heroes = pgTable('heroes', {
-	id: integer().primaryKey(),
-	name: text().notNull(),
-	localized_name: text().default('').notNull(),
-	primary_attr: text(),
-	attack_type: text(),
-	roles: text().array().default([]).notNull(),
-})
+export const heroes = pgTable(
+	'heroes',
+	{
+		hero_id: integer().notNull(),
+		name: text().notNull(),
+		localized_name: text().default('').notNull(),
+		primary_attr: text(),
+		attack_type: text(),
+		roles: text().array().default([]).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('heroes_hero_id_key').on(table.hero_id)],
+)
 
-export const ingest_cursors = pgTable('ingest_cursors', {
-	key: text().primaryKey(),
-	value: text().notNull(),
-	updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
-})
+export const ingest_cursors = pgTable(
+	'ingest_cursors',
+	{
+		key: text().notNull(),
+		value: text().notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('ingest_cursors_key_key').on(table.key)],
+)
 
-export const items = pgTable('items', {
-	id: integer().primaryKey(),
-	name: text().notNull(),
-	localized_name: text().default('').notNull(),
-	cost: integer(),
-})
+export const items = pgTable(
+	'items',
+	{
+		item_id: integer().notNull(),
+		name: text().notNull(),
+		localized_name: text().default('').notNull(),
+		cost: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('items_item_id_key').on(table.item_id)],
+)
 
 export const league_ingest_runs = pgTable(
 	'league_ingest_runs',
 	{
-		id: uuid().defaultRandom().primaryKey(),
+		run_id: uuid().defaultRandom().notNull(),
 		league_id: integer().notNull(),
 		matches_limit: integer(),
 		status: ingest_run_status().default('queued').notNull(),
@@ -107,6 +131,8 @@ export const league_ingest_runs = pgTable(
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		started_at: timestamp({ withTimezone: true }),
 		finished_at: timestamp({ withTimezone: true }),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('league_ingest_runs_league_idx').using(
@@ -114,13 +140,14 @@ export const league_ingest_runs = pgTable(
 			table.league_id.asc().nullsLast(),
 			table.created_at.desc().nullsFirst(),
 		),
+		unique('league_ingest_runs_run_id_key').on(table.run_id),
 	],
 )
 
 export const leagues = pgTable(
 	'leagues',
 	{
-		league_id: integer().primaryKey(),
+		league_id: integer().notNull(),
 		name: text().notNull(),
 		tier: integer().default(0).notNull(),
 		region: integer().default(0).notNull(),
@@ -137,6 +164,8 @@ export const leagues = pgTable(
 		history_tail_match_id: bigint({ mode: 'number' }),
 		history_exhausted: boolean().default(false).notNull(),
 		history_checked_at: timestamp({ withTimezone: true }),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('leagues_activity_idx').using(
@@ -144,13 +173,14 @@ export const leagues = pgTable(
 			table.most_recent_activity.desc().nullsFirst(),
 		),
 		index('leagues_status_idx').using('btree', table.status.asc().nullsLast()),
+		unique('leagues_league_id_key').on(table.league_id),
 	],
 )
 
 export const marketplace_orders = pgTable(
 	'marketplace_orders',
 	{
-		id: uuid().defaultRandom().primaryKey(),
+		order_id: uuid().defaultRandom().notNull(),
 		store: marketplace_store().notNull(),
 		kind: account_purchase_kind().notNull(),
 		product_id: integer().notNull(),
@@ -167,6 +197,7 @@ export const marketplace_orders = pgTable(
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		completed_at: timestamp({ withTimezone: true }),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('marketplace_orders_store_status_idx').using(
@@ -175,6 +206,26 @@ export const marketplace_orders = pgTable(
 			table.status.asc().nullsLast(),
 		),
 		unique('marketplace_orders_idempotence_id_key').on(table.idempotence_id),
+		unique('marketplace_orders_order_id_key').on(table.order_id),
+	],
+)
+
+export const marketplace_products = pgTable(
+	'marketplace_products',
+	{
+		id: bigserial({ mode: 'number' }).primaryKey(),
+		store: marketplace_store().notNull(),
+		kind: account_purchase_kind().notNull(),
+		product_id: integer().notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+	},
+	(table) => [
+		unique('marketplace_products_store_kind_key').on(table.store, table.kind),
+		unique('marketplace_products_store_product_id_key').on(
+			table.store,
+			table.product_id,
+		),
 	],
 )
 
@@ -190,12 +241,12 @@ export const match_broadcasters = pgTable(
 		language_code: text(),
 		account_id: bigint({ mode: 'number' }),
 		name: text(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.seq],
-			name: 'match_broadcasters_pkey',
-		}),
+		unique('match_broadcasters_match_id_seq_key').on(table.match_id, table.seq),
 	],
 )
 
@@ -211,12 +262,15 @@ export const match_coaches = pgTable(
 		coach_team: integer(),
 		coach_party_id: bigint({ mode: 'number' }),
 		is_private_coach: boolean(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.account_id],
-			name: 'match_coaches_pkey',
-		}),
+		unique('match_coaches_match_id_account_id_key').on(
+			table.match_id,
+			table.account_id,
+		),
 	],
 )
 
@@ -232,12 +286,12 @@ export const match_draft = pgTable(
 		team: smallint().notNull(),
 		player_slot: integer(),
 		clock: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.ord],
-			name: 'match_draft_pkey',
-		}),
+		unique('match_draft_match_id_ord_key').on(table.match_id, table.ord),
 	],
 )
 
@@ -254,12 +308,12 @@ export const match_objectives = pgTable(
 		slot: integer(),
 		key: text(),
 		value: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.seq],
-			name: 'match_objectives_pkey',
-		}),
+		unique('match_objectives_match_id_seq_key').on(table.match_id, table.seq),
 	],
 )
 
@@ -274,12 +328,16 @@ export const match_player_ability_upgrades = pgTable(
 		ability_id: integer().notNull(),
 		time: integer(),
 		level: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.player_slot, table.seq],
-			name: 'match_player_ability_upgrades_pkey',
-		}),
+		unique('match_player_ability_upgrades_match_slot_seq_key').on(
+			table.match_id,
+			table.player_slot,
+			table.seq,
+		),
 	],
 )
 
@@ -293,12 +351,16 @@ export const match_player_buffs = pgTable(
 		buff_id: integer().notNull(),
 		stacks: integer().default(1).notNull(),
 		grant_time: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.player_slot, table.buff_id],
-			name: 'match_player_buffs_pkey',
-		}),
+		unique('match_player_buffs_match_slot_buff_key').on(
+			table.match_id,
+			table.player_slot,
+			table.buff_id,
+		),
 	],
 )
 
@@ -313,17 +375,17 @@ export const match_player_damage_breakdown = pgTable(
 		damage_type: integer().notNull(),
 		pre_reduction: integer(),
 		post_reduction: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [
-				table.match_id,
-				table.player_slot,
-				table.direction,
-				table.damage_type,
-			],
-			name: 'match_player_damage_breakdown_pkey',
-		}),
+		unique('match_player_damage_breakdown_natural_key').on(
+			table.match_id,
+			table.player_slot,
+			table.direction,
+			table.damage_type,
+		),
 	],
 )
 
@@ -341,12 +403,16 @@ export const match_player_units = pgTable(
 		item_3: integer(),
 		item_4: integer(),
 		item_5: integer(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.player_slot, table.unit_name],
-			name: 'match_player_units_pkey',
-		}),
+		unique('match_player_units_match_slot_unit_key').on(
+			table.match_id,
+			table.player_slot,
+			table.unit_name,
+		),
 	],
 )
 
@@ -440,12 +506,14 @@ export const match_players = pgTable(
 		disable_duration: integer(),
 		pro_name: text(),
 		real_name: text(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
-		primaryKey({
-			columns: [table.match_id, table.player_slot],
-			name: 'match_players_pkey',
-		}),
+		unique('match_players_match_id_player_slot_key').on(
+			table.match_id,
+			table.player_slot,
+		),
 	],
 )
 
@@ -453,7 +521,7 @@ export const match_replays = pgTable(
 	'match_replays',
 	{
 		match_id: bigint({ mode: 'number' })
-			.primaryKey()
+			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		status: replay_status().default('pending').notNull(),
 		priority: replay_priority().default('historical').notNull(),
@@ -480,19 +548,21 @@ export const match_replays = pgTable(
 		stored_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('match_replays_status_idx').using(
 			'btree',
 			table.status.asc().nullsLast(),
 		),
+		unique('match_replays_match_id_key').on(table.match_id),
 	],
 )
 
 export const matches = pgTable(
 	'matches',
 	{
-		match_id: bigint({ mode: 'number' }).primaryKey(),
+		match_id: bigint({ mode: 'number' }).notNull(),
 		league_id: integer().references(() => leagues.league_id, {
 			onDelete: 'set null',
 		}),
@@ -581,6 +651,7 @@ export const matches = pgTable(
 		game_number: integer(),
 		stage_name: text(),
 		league_tier: integer(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('matches_league_idx').using(
@@ -607,26 +678,40 @@ export const matches = pgTable(
 			table.league_id.asc().nullsLast(),
 			table.start_time.desc().nullsFirst(),
 		),
+		unique('matches_match_id_key').on(table.match_id),
 	],
 )
 
-export const patches = pgTable('patches', {
-	patch: text().primaryKey(),
-	released_at: timestamp({ withTimezone: true }).notNull(),
-})
+export const patches = pgTable(
+	'patches',
+	{
+		patch: text().notNull(),
+		released_at: timestamp({ withTimezone: true }).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('patches_patch_key').on(table.patch)],
+)
 
-export const players = pgTable('players', {
-	account_id: bigint({ mode: 'number' }).primaryKey(),
-	steam_id: text(),
-	persona_name: text(),
-	is_pro: boolean().default(false).notNull(),
-	current_team_id: integer().references(() => teams.team_id, {
-		onDelete: 'set null',
-	}),
-	last_match_id: bigint({ mode: 'number' }),
-	last_match_at: timestamp({ withTimezone: true }),
-	updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
-})
+export const players = pgTable(
+	'players',
+	{
+		account_id: bigint({ mode: 'number' }).notNull(),
+		steam_id: text(),
+		persona_name: text(),
+		is_pro: boolean().default(false).notNull(),
+		current_team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
+		last_match_id: bigint({ mode: 'number' }),
+		last_match_at: timestamp({ withTimezone: true }),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('players_account_id_key').on(table.account_id)],
+)
 
 export const proxies = pgTable(
 	'proxies',
@@ -643,14 +728,36 @@ export const proxies = pgTable(
 		last_error: text(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		retest_count: integer().default(0).notNull(),
 	},
 	(table) => [unique('proxies_url_key').on(table.url)],
+)
+
+export const resource_attempts = pgTable(
+	'resource_attempts',
+	{
+		id: bigserial({ mode: 'number' }).primaryKey(),
+		kind: resource_kind().notNull(),
+		resource_id: bigint({ mode: 'number' }).notNull(),
+		ok: boolean().notNull(),
+		error: text(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+	},
+	(table) => [
+		index('resource_attempts_kind_id_idx').using(
+			'btree',
+			table.kind.asc().nullsLast(),
+			table.resource_id.asc().nullsLast(),
+			table.id.desc().nullsFirst(),
+		),
+	],
 )
 
 export const series = pgTable(
 	'series',
 	{
-		series_id: bigint({ mode: 'number' }).primaryKey(),
+		series_id: bigint({ mode: 'number' }).notNull(),
 		league_id: integer().references(() => leagues.league_id, {
 			onDelete: 'set null',
 		}),
@@ -668,13 +775,29 @@ export const series = pgTable(
 		started_at: timestamp({ withTimezone: true }),
 		ended_at: timestamp({ withTimezone: true }),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
 		index('series_league_idx').using(
 			'btree',
 			table.league_id.asc().nullsLast(),
 		),
+		unique('series_series_id_key').on(table.series_id),
 	],
+)
+
+export const settings = pgTable(
+	'settings',
+	{
+		key: text().notNull(),
+		value: text().notNull(),
+		description: text().notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('settings_key_key').on(table.key)],
 )
 
 export const steam_accounts = pgTable(
@@ -702,6 +825,7 @@ export const steam_accounts = pgTable(
 		machine_auth_token: text(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		retest_count: integer().default(0).notNull(),
 	},
 	(table) => [unique('steam_accounts_login_key').on(table.login)],
 )
@@ -725,14 +849,21 @@ export const steam_api_keys = pgTable(
 		last_error: text(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		retest_count: integer().default(0).notNull(),
 	},
 	(table) => [unique('steam_api_keys_api_key_key').on(table.api_key)],
 )
 
-export const teams = pgTable('teams', {
-	team_id: integer().primaryKey(),
-	name: text().notNull(),
-	tag: text(),
-	logo_url: text(),
-	updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
-})
+export const teams = pgTable(
+	'teams',
+	{
+		team_id: integer().notNull(),
+		name: text().notNull(),
+		tag: text(),
+		logo_url: text(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		id: bigserial({ mode: 'number' }).primaryKey(),
+	},
+	(table) => [unique('teams_team_id_key').on(table.team_id)],
+)

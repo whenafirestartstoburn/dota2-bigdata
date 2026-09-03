@@ -230,5 +230,5 @@ docker build -f packages/api/Dockerfile -t api .
 - `GET /api/health` — uptime.
 - `POST /api/leagues/process-finished` — тело `{ league_id, matches_limit? }`.
 - `GET /api/leagues/ingest-runs/:id` — статус ingest-прогона.
-- `POST /api/buy-account` — покупка Steam-аккаунта на dark.shopping (`productId`, `store`, `type`, `count`, `testOnMatchId?`, `imapHost?`). CLI: `bun run steam:guard buy-account`. Спека: `docs/specs/marketplace-buy-account.md`.
+- `POST /api/buy-account` — покупка Steam-аккаунта на dark.shopping (`productId` из `marketplace_products`, `store`, `type`, `count`, `testOnMatchId?`, `imapHost?`). CLI: `bun run steam:guard buy-account`. Спека: `docs/specs/marketplace-buy-account.md`. Worker replenish читает `settings`.
 

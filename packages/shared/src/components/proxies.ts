@@ -1,3 +1,4 @@
+import { recordResourceAttempt } from '#src/components/resource-health'
 import { MissingProxyError } from '#src/steam/http'
 import { errorMessage } from '#src/store/coerce'
 import { db, sql, sqlIn } from '#src/utils/db'
@@ -300,8 +301,36 @@ export async function rotateDeadApiKeyProxy(
 	deadProxyId: number,
 	error: string,
 ): Promise<BoundProxy> {
-	await markProxyUnavailable(deadProxyId, error)
-	return await ensureApiKeyProxy(keyId)
+	await recordResourceAttempt({
+		kind: 'proxy',
+		resourceId: deadProxyId,
+		ok: false,
+		error,
+	})
+	let next: BoundProxy
+	try {
+		next = await pickReadyProxy('api', { excludeIds: [deadProxyId] })
+	} catch (caught) {
+		if (
+			caught instanceof NoUsableProxyError &&
+			(await isProxyUsable(deadProxyId, 'api'))
+		) {
+			const [row] = await db.execute(sql`
+				SELECT id, url, kind, purpose FROM proxies WHERE id = ${deadProxyId}
+			`)
+			if (row !== undefined) {
+				return mapProxy(row as Record<string, unknown>)
+			}
+		}
+		throw caught
+	}
+	await bindApiKeyProxy(keyId, next.id)
+	await markProxyActive(next.id)
+	logger.info(
+		{ keyId, fromProxyId: deadProxyId, proxyId: next.id, kind: next.kind },
+		'rotated sticky API proxy',
+	)
+	return next
 }
 
 export async function rotateAccountProxy(input: {
@@ -310,11 +339,32 @@ export async function rotateAccountProxy(input: {
 	error: string
 	preferKind?: ProxyKind
 }): Promise<BoundProxy> {
-	await markProxyUnavailable(input.deadProxyId, input.error)
-	const next = await pickReadyProxy('gc', {
-		excludeIds: [input.deadProxyId],
-		preferKind: input.preferKind,
+	await recordResourceAttempt({
+		kind: 'proxy',
+		resourceId: input.deadProxyId,
+		ok: false,
+		error: input.error,
 	})
+	let next: BoundProxy
+	try {
+		next = await pickReadyProxy('gc', {
+			excludeIds: [input.deadProxyId],
+			preferKind: input.preferKind,
+		})
+	} catch (caught) {
+		if (
+			caught instanceof NoUsableProxyError &&
+			(await isProxyUsable(input.deadProxyId, 'gc'))
+		) {
+			const [row] = await db.execute(sql`
+				SELECT id, url, kind, purpose FROM proxies WHERE id = ${input.deadProxyId}
+			`)
+			if (row !== undefined) {
+				return mapProxy(row as Record<string, unknown>)
+			}
+		}
+		throw caught
+	}
 	await bindAccountProxy(input.accountId, next.id)
 	await markProxyActive(next.id)
 	logger.info(

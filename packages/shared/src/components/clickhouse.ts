@@ -32,27 +32,3 @@ export async function pingClickhouse(): Promise<boolean> {
 		return false
 	}
 }
-
-const replayTables = [
-	'replay_combat_log',
-	'replay_intervals',
-	'replay_actions',
-	'replay_pings',
-	'replay_wards',
-	'replay_chat',
-	'replay_announcements',
-	'replay_draft',
-	'replay_ability_levels',
-	'replay_inventory',
-	'replay_neutrals',
-	'replay_cosmetics',
-	'replay_epilogue',
-] as const
-
-export async function deleteReplayRows(matchId: number): Promise<void> {
-	for (const table of replayTables) {
-		await clickhouse.command({
-			query: `ALTER TABLE ${env.CLICKHOUSE_DATABASE}.${table} DELETE WHERE match_id = ${matchId}`,
-		})
-	}
-}

@@ -1,5 +1,5 @@
+import { getAppSettings } from '#src/components/settings'
 import { db, sql } from '#src/utils/db'
-import env from '#src/utils/env'
 
 export type ApiCallPurpose = 'live' | 'historical'
 
@@ -23,7 +23,8 @@ export async function acquireSteamApiSlot(
 	keyId: number,
 	purpose: ApiCallPurpose,
 ): Promise<void> {
-	const minInterval = env.STEAM_API_MIN_INTERVAL_MS
+	const settings = await getAppSettings()
+	const minInterval = settings.steamApiMinIntervalMs
 	for (;;) {
 		const waitMs = await db.transaction(async (tx) => {
 			await tx.execute(sql`
@@ -71,13 +72,14 @@ export async function acquireSteamApiSlot(
 export async function markApiKeyRateLimited(
 	keyId: number,
 	error: string,
-	ms = 60_000,
+	ms?: number,
 ): Promise<void> {
+	const delay = ms ?? (await getAppSettings()).apiKeyRateLimitMs
 	await db.execute(sql`
 		UPDATE steam_api_keys
 		SET
 			status = 'rate_limited',
-			rate_limited_until = now() + ${ms} * interval '1 millisecond',
+			rate_limited_until = now() + ${delay} * interval '1 millisecond',
 			last_error = ${error},
 			updated_at = now()
 		WHERE id = ${keyId}

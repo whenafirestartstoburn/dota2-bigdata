@@ -5,7 +5,6 @@ import {
 } from '@app/shared/src/components/s3'
 import {
 	enqueueDownloadReplay,
-	enqueueParseReplay,
 	matchOrigin,
 } from '@app/shared/src/jobs/fetch-match-details'
 import { asNumber, asString } from '@app/shared/src/store/coerce'
@@ -30,7 +29,6 @@ export async function runDownloadReplay(matchId: number): Promise<{
 	const existing = await getReplay(matchId)
 	if (existing?.status === 'stored' && typeof existing.s3_key === 'string') {
 		if (await objectExists(existing.s3_key)) {
-			await enqueueParseReplay(matchId, origin)
 			return { status: 'stored', key: existing.s3_key }
 		}
 	}
@@ -54,7 +52,6 @@ export async function runDownloadReplay(matchId: number): Promise<{
 			storedAt: new Date(),
 		})
 		await markMatchReplayPhase(matchId, 'replay_stored')
-		await enqueueParseReplay(matchId, origin)
 		return { status: 'stored', key }
 	}
 
@@ -98,7 +95,6 @@ export async function runDownloadReplay(matchId: number): Promise<{
 		error: null,
 	})
 	await markMatchReplayPhase(matchId, 'replay_stored')
-	await enqueueParseReplay(matchId, origin)
 	logger.info({ matchId, key, bytes: stat.size }, 'stored replay')
 	return { status: 'stored', key }
 }

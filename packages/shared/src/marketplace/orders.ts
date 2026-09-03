@@ -6,7 +6,8 @@ export type AccountPurchaseKind = 'api_key' | 'gc'
 export type MarketplaceOrderStatus = 'pending' | 'success' | 'failed'
 
 export type MarketplaceOrder = {
-	id: string
+	id: number
+	orderId: string
 	store: MarketplaceStore
 	kind: AccountPurchaseKind
 	productId: number
@@ -32,8 +33,11 @@ function mapOrder(row: Record<string, unknown>): MarketplaceOrder {
 	if (status !== 'pending' && status !== 'success' && status !== 'failed') {
 		throw new Error(`unexpected order status ${String(status)}`)
 	}
+	const id = asNumber(row.id)
+	if (id === null) throw new Error('marketplace_orders.id is missing')
 	return {
-		id: String(row.id),
+		id,
+		orderId: String(row.order_id),
 		store,
 		kind,
 		productId: asNumber(row.product_id) ?? 0,
@@ -71,7 +75,7 @@ export async function insertMarketplaceOrder(input: {
 }
 
 export async function setMarketplaceExternalId(
-	id: string,
+	id: number,
 	externalOrderId: string,
 ): Promise<void> {
 	await db.execute(sql`
@@ -79,12 +83,12 @@ export async function setMarketplaceExternalId(
 		SET
 			external_order_id = ${externalOrderId},
 			updated_at = now()
-		WHERE id = ${id}::uuid
+		WHERE id = ${id}
 	`)
 }
 
 export async function markMarketplaceOrderPending(input: {
-	id: string
+	id: number
 	errorMessage: string
 }): Promise<void> {
 	await db.execute(sql`
@@ -92,12 +96,12 @@ export async function markMarketplaceOrderPending(input: {
 		SET
 			error_message = ${input.errorMessage},
 			updated_at = now()
-		WHERE id = ${input.id}::uuid
+		WHERE id = ${input.id}
 	`)
 }
 
 export async function finishMarketplaceOrder(input: {
-	id: string
+	id: number
 	status: MarketplaceOrderStatus
 	steamAccountId?: number | null
 	errorMessage?: string | null
@@ -114,6 +118,6 @@ export async function finishMarketplaceOrder(input: {
 			test_result = ${testJson}::jsonb,
 			completed_at = now(),
 			updated_at = now()
-		WHERE id = ${input.id}::uuid
+		WHERE id = ${input.id}
 	`)
 }

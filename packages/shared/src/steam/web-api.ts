@@ -9,9 +9,13 @@ import {
 	acquireSteamApiSlot,
 	markApiKeyRateLimited,
 } from '#src/components/rate-limit'
+import {
+	disableResource,
+	recordResourceAttempt,
+} from '#src/components/resource-health'
+import { getAppSettings } from '#src/components/settings'
 import { MissingProxyError, steamFetch } from '#src/steam/http'
 import { errorMessage } from '#src/store/coerce'
-import env from '#src/utils/env'
 import { logger } from '#src/utils/logger'
 import {
 	type HistoryMatch,
@@ -83,6 +87,11 @@ async function getJsonOnce(
 		throw new Error(`proxy HTTP 407 for ${proxyHostPort(ctx.proxyUrl)}`)
 	}
 	if (response.status === 429) {
+		await recordResourceAttempt({
+			kind: 'proxy',
+			resourceId: ctx.proxyId,
+			ok: true,
+		})
 		await markApiKeyRateLimited(ctx.keyId, `steam HTTP 429 ${url}`)
 	}
 	if (!response.ok) {
@@ -93,7 +102,18 @@ async function getJsonOnce(
 		})
 	}
 	try {
-		return await response.json()
+		const body = await response.json()
+		await recordResourceAttempt({
+			kind: 'proxy',
+			resourceId: ctx.proxyId,
+			ok: true,
+		})
+		await recordResourceAttempt({
+			kind: 'api_key',
+			resourceId: ctx.keyId,
+			ok: true,
+		})
+		return body
 	} catch (error) {
 		throw toSteamApiError(error, url)
 	}
@@ -110,6 +130,12 @@ async function getJson(
 			return await getJsonOnce(url, ctx)
 		} catch (error) {
 			if (error instanceof SteamApiError && error.status === 403) {
+				await disableResource({
+					kind: 'api_key',
+					resourceId: ctx.keyId,
+					error: error.message,
+					giveUp: true,
+				})
 				throw error
 			}
 			if (
@@ -127,6 +153,13 @@ async function getJson(
 				)
 				ctx.proxyId = next.id
 				ctx.proxyUrl = next.url
+			} else if (!(error instanceof SteamApiError && error.status === 429)) {
+				await recordResourceAttempt({
+					kind: 'api_key',
+					resourceId: ctx.keyId,
+					ok: false,
+					error: errorMessage(error),
+				})
 			}
 			lastError = toSteamApiError(error, url)
 			const retryableHttp =
@@ -190,10 +223,11 @@ export async function getMatchHistoryPage(
 	resultsRemaining: number
 	totalResults: number
 }> {
+	const settings = await getAppSettings()
 	const url = withQuery(`${STEAM_API}/IDOTA2Match_570/GetMatchHistory/v1/`, {
 		key: ctx.apiKey,
 		league_id: input.leagueId,
-		matches_requested: env.HISTORY_PAGE_SIZE,
+		matches_requested: settings.historyPageSize,
 		start_at_match_id: input.startAtMatchId,
 	})
 	const body = await getJson(url, ctx)

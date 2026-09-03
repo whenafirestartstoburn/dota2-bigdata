@@ -67,7 +67,7 @@ export async function getLeague(leagueId: number) {
 	return rows[0] ?? null
 }
 
-export async function pickNextHistoryLeague() {
+export async function pickNextHistoryLeague(exhaustedRefreshMs: number) {
 	const rows = await db.execute(sql`
 		SELECT *
 		FROM leagues
@@ -77,7 +77,8 @@ export async function pickNextHistoryLeague() {
 				OR history_checked_at IS NULL
 				OR (
 					history_exhausted
-					AND history_checked_at < now() - interval '1 day'
+					AND history_checked_at < now()
+						- ${exhaustedRefreshMs} * interval '1 millisecond'
 				)
 			)
 		ORDER BY

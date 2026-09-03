@@ -1,5 +1,6 @@
 import { countJobs, enqueueJob, PRIORITY, QUEUE } from '#src/components/jobs'
 import { bumpGlobalMatchSeq } from '#src/components/rate-limit'
+import { getAppSettings } from '#src/components/settings'
 import type { SteamRequestContext } from '#src/steam/web-api'
 import { getMatchHistoryBySequenceNum } from '#src/steam/web-api'
 import { asNumber } from '#src/store/coerce'
@@ -7,7 +8,6 @@ import { listKnownLeagueIds } from '#src/store/matches'
 import { persistMatchRecord } from '#src/store/persist-match'
 import { copyReplayLocatorFromMatch, ensureReplayRow } from '#src/store/replays'
 import { db } from '#src/utils/db'
-import env from '#src/utils/env'
 
 export function matchOrigin(source: unknown): 'live' | 'historical' {
 	return source === 'live' ? 'live' : 'historical'
@@ -17,9 +17,10 @@ export async function persistSeqMatches(
 	ctx: SteamRequestContext,
 	startAtMatchSeqNum: number,
 ): Promise<{ saved: number }> {
+	const settings = await getAppSettings()
 	const window = await getMatchHistoryBySequenceNum(ctx, {
 		startAtMatchSeqNum,
-		matchesRequested: env.SEQ_BATCH_SIZE,
+		matchesRequested: settings.seqBatchSize,
 	})
 	const knownLeagues = await listKnownLeagueIds()
 	let saved = 0
@@ -63,11 +64,12 @@ export async function enqueueDownloadReplay(
 	opts?: { jobKeyMode?: 'replace' | 'preserve_run_at'; ignoreLimit?: boolean },
 ): Promise<void> {
 	if (origin === 'historical' && opts?.ignoreLimit !== true) {
+		const settings = await getAppSettings()
 		const inflight = await countJobs(
 			'download_replay',
 			PRIORITY.replayHistorical,
 		)
-		if (inflight >= env.HISTORY_REPLAY_ENQUEUE_LIMIT) return
+		if (inflight >= settings.historyReplayEnqueueLimit) return
 	}
 	await ensureReplayRow(matchId, origin)
 	await copyReplayLocatorFromMatch(matchId)
@@ -80,19 +82,5 @@ export async function enqueueDownloadReplay(
 		runAt,
 		jobKey: `replay:${matchId}`,
 		jobKeyMode: opts?.jobKeyMode ?? 'preserve_run_at',
-	})
-}
-
-export async function enqueueParseReplay(
-	matchId: number,
-	origin: 'live' | 'historical',
-): Promise<void> {
-	await enqueueJob({
-		identifier: 'parse_replay',
-		payload: { match_id: matchId },
-		queueName: QUEUE.parse,
-		priority:
-			origin === 'live' ? PRIORITY.replayLive : PRIORITY.replayHistorical,
-		jobKey: `parse:${matchId}`,
 	})
 }

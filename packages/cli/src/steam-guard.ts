@@ -130,10 +130,11 @@ get-last-code only talks to the stored IMAP host (no Steam login).
 Login Guard and authenticator-setup are different mails; --kind picks one,
 otherwise both are printed. Already-seen UIDs are not reused in setup.
 
-buy-account creates one Dark Shopping order per --count (max 10), waits up
-to 2 minutes for delivery, then provisions. --store defaults to
-dark_shopping. --imap-host skips auto-detect and LOGINs that host (still
-refuses Outlook/Hotmail for type=api_key).
+buy-account creates one Dark Shopping order per --count (capped by
+settings.marketplace_buy_max), waits up to settings.marketplace_wait_ms
+for delivery, then provisions. --store defaults to dark_shopping.
+--imap-host skips auto-detect and LOGINs that host (still refuses
+Outlook/Hotmail for type=api_key).
 
 scrape-match password-logins a stored GC account (sticky proxy, Guard/IMAP
 as needed) and sends CMsgGCMatchDetailsRequest for --match-id. Prints the

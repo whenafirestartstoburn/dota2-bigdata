@@ -21,10 +21,10 @@ Bought Steam accounts land in `steam_accounts` (and `steam_api_keys` when we iss
 }
 ```
 
-- `count` 1–10. Each unit is a **separate** local row and a separate Dark Shopping `order/create` with `quantity=1` and `idempotence_id` = our order UUID.
-- The handler waits **up to 2 minutes** for Dark Shopping `completed`/`ok`, then provisions. Bun `idleTimeout` is 0 so the request is not cut at 10s.
+- `count` 1–`marketplace_buy_max` (seed 10). Each unit is a **separate** local row and a separate Dark Shopping `order/create` with `quantity=1` and `idempotence_id` = our order UUID.
+- The handler waits **up to `marketplace_wait_ms`** (seed 2 minutes) for Dark Shopping `completed`/`ok`, then provisions. Bun `idleTimeout` is 0 so the request is not cut at 10s.
 - Missing `DARK_SHOPPING_API_KEY` → 503.
-- Rate limit: **≤ 2 req/s** to Dark Shopping (shared slot, 500 ms). 429 retries with backoff.
+- Rate limit: **≤ 2 req/s** to Dark Shopping (`marketplace_min_interval_ms`, seed 500 ms). 429 retries with backoff.
 - `imapHost` optional: skip auto-detect / probe and LOGIN that host. Outlook/Hotmail still fails for `type=api_key`.
 
 ## CLI
@@ -33,11 +33,11 @@ Same orchestrator as the HTTP handler:
 
 ```bash
 bun run steam:guard buy-account --count 1 --product-id 80841 --type api_key --store dark_shopping
-bun run steam:guard buy-account --count 1 --product-id 160810 --type gc --test-on-match-id 8979241530
+bun run steam:guard buy-account --count 1 --product-id 160811 --type gc --test-on-match-id 8979241530
 bun run steam:guard buy-account --product-id 80841 --type api_key --imap-host imap.firstmail.ltd
 ```
 
-`--store` defaults to `dark_shopping`. Prints the same `{ orders: [...] }` JSON on stdout. Progress goes to stderr: Dark Shopping method/path/params (API key redacted) and a truncated response body, then `login` + `email` of the bought account (passwords never logged), then IMAP / Steam Guard / `/dev/requestkey` / GC steps. Exit 1 if any order is not `success`.
+`--store` defaults to `dark_shopping`. Prints the same `{ orders: [...] }` JSON on stdout. Progress goes to stderr: order id, bought `login` + `email` (passwords never logged), IMAP / Guard / `/dev/requestkey` / GC welcome. Steam-user websocket debug is not printed. Exit 1 if any order is not `success`. Product id must be on `marketplace_products`.
 
 Response:
 
@@ -58,11 +58,61 @@ Response:
 }
 ```
 
-`pending` means Dark Shopping had not finished within 2 minutes; the local row stays `pending`. Provision (IMAP / Guard / GC) is **not** bounded by those 2 minutes.
+`pending` means Dark Shopping had not finished within `marketplace_wait_ms`; the local row stays `pending`. Provision (IMAP / Guard / GC) is **not** bounded by that wait.
 
 ## Postgres
 
-`marketplace_orders`: store, kind (`api_key` | `gc`), product, status, idempotence id, external order id, optional `steam_account_id`, `test_on_match_id`, `error_message`, `test_result` jsonb.
+`marketplace_orders`: surrogate `id`, unique `order_id` (uuid), store, kind (`api_key` | `gc`), product, status, idempotence id, external order id, optional `steam_account_id`, `test_on_match_id`, `error_message`, `test_result` jsonb.
+
+`marketplace_products`: whitelist of buyable goods. Unique `(store, kind)` so replenish knows which product to order. Seed: Dark Shopping `80841` (`api_key`), `160811` (`gc`). CLI/HTTP reject a product id that is not on this list.
+
+`settings`: app-wide key/value with an admin `description`. Worker reads these on each job tick (no env copies). Secrets and connection URLs stay in `.env`.
+
+Inventory and health:
+
+| key | seed | meaning |
+|---|---|---|
+| `desired_api_keys` | 3 | buy when ready Web API keys fall below this |
+| `desired_gc_accounts` | 10 | buy when ready dedicated GC accounts fall below this |
+| `proxy_error_threshold` | 80 | percent of failures in the window that disables a proxy |
+| `proxy_error_window` | 20 | last N proxy attempts counted |
+| `proxy_retest_max` | 20 | disabled-proxy probes, then give up |
+| `gc_account_error_threshold` | 80 | same for dedicated GC accounts |
+| `gc_account_error_window` | 20 | |
+| `gc_account_retest_max` | 20 | |
+| `api_key_error_threshold` | 80 | same for `steam_api_keys` |
+| `api_key_error_window` | 20 | |
+| `api_key_retest_max` | 20 | |
+
+Collector cadence (was env):
+
+| key | seed | meaning |
+|---|---|---|
+| `live_poll_interval_ms` | 3000 | `poll_live_games` period |
+| `live_missing_threshold` | 2 | missing live ticks before finish |
+| `replay_live_delay_ms` | 1800000 | wait after live finish before details/replay |
+| `history_page_size` | 100 | GetMatchHistory page (Valve max 100) |
+| `history_details_enqueue_limit` | 500 | in-flight historical details jobs |
+| `history_replay_enqueue_limit` | 50 | in-flight historical download jobs |
+| `seq_batch_size` | 100 | GetMatchHistoryBySequenceNum window |
+| `steam_api_min_interval_ms` | 1000 | 1 rps mutex per Web API key |
+| `history_newest_refresh_ms` | 3600000 | re-fetch newest history page |
+| `history_exhausted_refresh_ms` | 86400000 | retry exhausted leagues |
+| `replenish_interval_ms` | 60000 | inventory buy check |
+| `retest_interval_ms` | 300000 | disabled-resource probe |
+
+Marketplace / GC:
+
+| key | seed | meaning |
+|---|---|---|
+| `marketplace_buy_max` | 10 | max units per buy-account call |
+| `marketplace_wait_ms` | 120000 | wait for Dark Shopping completed/ok |
+| `marketplace_min_interval_ms` | 500 | Dark Shopping HTTP slot (≤ 2 req/s) |
+| `gc_logon_attempts` | 4 | password logOn tries when probing GC |
+| `api_key_rate_limit_ms` | 60000 | cooldown after Web API 429 |
+| `gc_account_rate_limit_ms` | 300000 | cooldown after GC rate-limit logon |
+
+Pending `marketplace_orders` count toward the desired pool so two workers do not over-buy. Credential deaths (`InvalidPassword`, Web API 403) disable immediately and skip retest.
 
 ## After delivery
 

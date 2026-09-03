@@ -9,6 +9,7 @@ import {
 	steamCtx,
 	upsertSteamAccount,
 } from '#src/components/resources'
+import { getAppSettings } from '#src/components/settings'
 import {
 	isOutlookMailer,
 	OutlookImapError,
@@ -25,6 +26,7 @@ import {
 	describeBoughtAccount,
 	parseBoughtSteamAccounts,
 } from '#src/marketplace/parse-account'
+import { assertBuyableProduct } from '#src/marketplace/products'
 import {
 	DarkShoppingError,
 	type MarketplaceStoreId,
@@ -38,9 +40,6 @@ import { getLiveLeagueGames } from '#src/steam/web-api'
 import { asNumber, errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
 import { type StatusFn, status, withStatus } from '#src/utils/status'
-
-const MARKET_WAIT_MS = 120_000
-const MAX_COUNT = 10
 
 export type BuyAccountInput = {
 	productId: number
@@ -73,8 +72,8 @@ export function parseBuyAccountCliInput(flags: {
 		throw new Error(`unsupported --store ${store}`)
 	}
 	const count = asNumber(flags.count) ?? 1
-	if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT) {
-		throw new Error(`--count must be 1..${String(MAX_COUNT)}`)
+	if (!Number.isInteger(count) || count < 1) {
+		throw new Error('--count must be a positive integer')
 	}
 	const testOnMatchId = asNumber(flags.testOnMatchId)
 	if (
@@ -101,7 +100,7 @@ export type BuyAccountTestResult = {
 }
 
 export type BuyAccountOrderResult = {
-	id: string
+	id: number
 	status: 'success' | 'failed' | 'pending'
 	productId: number
 	store: MarketplaceStoreId
@@ -230,7 +229,9 @@ async function provisionOrder(input: {
 	return testResult
 }
 
-async function buyOne(input: BuyAccountInput): Promise<BuyAccountOrderResult> {
+async function buyOne(
+	input: BuyAccountInput & { timeoutMs: number },
+): Promise<BuyAccountOrderResult> {
 	const testOnMatchId = input.testOnMatchId ?? null
 	const order = await insertMarketplaceOrder({
 		store: input.store,
@@ -247,7 +248,7 @@ async function buyOne(input: BuyAccountInput): Promise<BuyAccountOrderResult> {
 			store: input.store,
 			productId: input.productId,
 			idempotenceId: order.idempotenceId,
-			timeoutMs: MARKET_WAIT_MS,
+			timeoutMs: input.timeoutMs,
 		})
 		await setMarketplaceExternalId(order.id, purchased.externalOrderId)
 		const accounts = parseBoughtSteamAccounts(purchased.deliveryText)
@@ -346,14 +347,29 @@ export async function buyAccounts(
 			`marketplace ${input.store} is not configured (missing API key)`,
 		)
 	}
-	const count = Math.min(Math.max(input.count, 1), MAX_COUNT)
+	await assertBuyableProduct({
+		store: input.store,
+		productId: input.productId,
+		type: input.type,
+	})
+	const settings = await getAppSettings()
+	if (
+		!Number.isInteger(input.count) ||
+		input.count < 1 ||
+		input.count > settings.marketplaceBuyMax
+	) {
+		throw new Error(`count must be 1..${String(settings.marketplaceBuyMax)}`)
+	}
+	const count = input.count
 	return withStatus(input.onStatus, async () => {
 		const orders: BuyAccountOrderResult[] = []
 		for (let i = 0; i < count; i++) {
 			if (count > 1) {
 				status(`buy-account: purchasing ${String(i + 1)}/${String(count)}`)
 			}
-			orders.push(await buyOne(input))
+			orders.push(
+				await buyOne({ ...input, timeoutMs: settings.marketplaceWaitMs }),
+			)
 		}
 		return { orders }
 	})

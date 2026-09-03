@@ -61,7 +61,7 @@ curl -s http://localhost:3000/api/leagues/process-finished \
 Then poll:
 
 ```bash
-curl -s http://localhost:3000/api/leagues/ingest-runs/<run_id>
+curl -s http://localhost:3000/api/leagues/ingest-runs/<id>
 ```
 
 `matches_limit` caps how many matches get seq details **and** replay jobs (newest `start_time` first). The full history list is still stored.

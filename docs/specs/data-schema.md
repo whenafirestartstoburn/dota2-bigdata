@@ -16,7 +16,9 @@ Postgres holds **entities and match-level facts**. ClickHouse holds **ticks and 
 
 **Dropped from Postgres:** `leagues.payload`, `matches.history_payload` / `details_payload` / `live_payload`, `match_players.payload`. Same rule.
 
-Operational tables (`steam_accounts`, `steam_api_keys`, `proxies`, graphile-worker) stay operational. This spec is the domain model.
+Operational tables (`steam_accounts`, `steam_api_keys`, `proxies`, `settings`, `marketplace_products`, `marketplace_orders`, `resource_attempts`, graphile-worker) stay operational. This spec is the domain model.
+
+Every public table (except dbmate `schema_migrations`) has a surrogate **`id bigserial` primary key** (sequence-backed, backfilled on add) and `created_at` / `updated_at` (before-update trigger `set_updated_at`, which also refuses to change `created_at`). Natural identifiers (`match_id`, `league_id`, `account_id`, `order_id`, `hero_id`, …) are **UNIQUE**, not the PK. FKs still point at those natural keys.
 
 ---
 
@@ -38,7 +40,7 @@ Names (vs the list in the request):
 
 | Requested | Here | Why |
 |---|---|---|
-| `players_matches` | `match_players` | “a player in a match”; PK `(match_id, player_slot)` |
+| `players_matches` | `match_players` | “a player in a match”; unique `(match_id, player_slot)` |
 | `picks` + `bans` | `match_draft` | One `ord` sequence; two tables split draft order |
 | — | `series` | First-class Bo1/Bo3/Bo5 |
 | — | `match_objectives` | Story of the game without querying ClickHouse |
@@ -54,7 +56,7 @@ Valve `GetLeagueInfoList` plus our lifecycle.
 
 | Column | Notes |
 |---|---|
-| `league_id` PK | |
+| `league_id` unique (Valve) | |
 | `name`, `tier`, `region` | `tier`: 1 amateur … 4 international (Valve) |
 | `total_prize_pool` | |
 | `start_timestamp`, `end_timestamp`, `most_recent_activity` | Unix seconds from Valve |
@@ -77,7 +79,7 @@ Valve `series_id` is often 0 on live games. Analysts still need a grouping key.
 
 | Column | Notes |
 |---|---|
-| `series_id` PK | Valve id when `> 0`; otherwise synthetic (below) |
+| `series_id` unique | Valve id when `> 0`; otherwise synthetic (below) |
 | `league_id` | |
 | `radiant_team_id`, `dire_team_id` | First-game orientation; do not swap the row when sides flip later |
 | `series_type` | 0 none, 1 Bo3, 2 Bo5, … |
@@ -93,7 +95,7 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 
 | Column | Source |
 |---|---|
-| `match_id` PK | all |
+| `match_id` unique | all |
 | `league_id` | history / live / details |
 | `series_id`, `series_type` | live / history |
 | `radiant_series_wins`, `dire_series_wins` | live (score in the series) |
@@ -129,7 +131,7 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `live_seen_at`, `live_disappeared_at`, `live_disappeared_count` | finish detection |
 | `details_fetched_at` | |
 | `finished_at` | `live_disappeared_at`, else `to_timestamp(start_time + duration)` |
-| `replay_available_at` | live: `finished_at + 30 minutes`; historical: `now()` |
+| `replay_available_at` | live: `finished_at + settings.replay_live_delay_ms`; historical: `now()` |
 | `last_error`, `last_error_at`, `attempts`, `next_attempt_at` | |
 | `created_at`, `updated_at` | |
 
@@ -137,7 +139,7 @@ Indexes: `(league_id, start_time DESC)`, `(phase)`, `(match_seq_num)`, `(source,
 
 ### `match_players`
 
-PK `(match_id, player_slot)`. Slot 0–4 radiant, 128–132 dire.
+Unique `(match_id, player_slot)`. Slot 0–4 radiant, 128–132 dire.
 
 Box score from **GetMatchHistoryBySequenceNum / GC `CMsgDOTAMatch.Player`**, overwritten when a richer source arrives. Live scoreboard updates the same row while `phase = live`.
 
@@ -157,29 +159,29 @@ Time series (`gold_t`, `lh_t`, purchase log, damage maps) **do not** live here �
 
 ### `match_player_buffs`
 
-PK `(match_id, player_slot, buff_id)`. Stack counts of permanent buffs (Aghs, Moonshard, …). `grant_time` from GC when present.
+Unique `(match_id, player_slot, buff_id)`. Stack counts of permanent buffs (Aghs, Moonshard, …). `grant_time` from GC when present.
 
 ### `match_player_ability_upgrades`
 
-PK `(match_id, player_slot, seq)`. Seq-num / GC `{ability, time, level}` (`CMatchPlayerAbilityUpgrade`). The `integer[]` on `match_players` is the ability-id list only.
+Unique `(match_id, player_slot, seq)`. Seq-num / GC `{ability, time, level}` (`CMatchPlayerAbilityUpgrade`). The `integer[]` on `match_players` is the ability-id list only.
 
 ### `match_player_damage_breakdown`
 
-PK `(match_id, player_slot, direction, damage_type)`. GC `hero_damage_received` / `hero_damage_dealt` (`pre_reduction`, `post_reduction`). `direction` is `received` or `dealt`.
+Unique `(match_id, player_slot, direction, damage_type)`. GC `hero_damage_received` / `hero_damage_dealt` (`pre_reduction`, `post_reduction`). `direction` is `received` or `dealt`.
 
 ### `match_coaches`
 
-PK `(match_id, account_id)`. `CMsgDOTAMatch.Coach` on the match proto — public lobby coaches, **not** the private coaching proto.
+Unique `(match_id, account_id)`. `CMsgDOTAMatch.Coach` on the match proto — public lobby coaches, **not** the private coaching proto.
 
 ### `match_broadcasters`
 
-PK `(match_id, seq)`. GC broadcaster channels (country, language, caster account).
+Unique `(match_id, seq)`. GC broadcaster channels (country, language, caster account).
 
 ### `players`
 
 | Column | Notes |
 |---|---|
-| `account_id` PK | 32-bit Steam account id |
+| `account_id` unique | 32-bit Steam account id |
 | `steam_id` | 64-bit, optional |
 | `persona_name` | last seen |
 | `is_pro` | true once seen in a league match |
@@ -189,19 +191,19 @@ PK `(match_id, seq)`. GC broadcaster channels (country, language, caster account
 
 ### `teams`
 
-`team_id`, `name`, `tag`, `logo_url`, `updated_at`. Names on `matches` are the snapshot; this row is “current”.
+`team_id` unique, `name`, `tag`, `logo_url`, `updated_at`. Names on `matches` are the snapshot; this row is “current”.
 
 ### `heroes` / `items` / `patches`
 
 Static catalogs, refreshed on patch. Events store **ids only**.
 
-- `heroes`: `id`, `name`, `localized_name`, `primary_attr`, `attack_type`, `roles[]`
-- `items`: `id`, `name`, `localized_name`, `cost`
-- `patches`: `patch` text PK, `released_at` — stamps `matches.patch`
+- `heroes`: `hero_id` (Valve) unique, `name`, `localized_name`, `primary_attr`, `attack_type`, `roles[]`
+- `items`: `item_id` (Valve) unique, `name`, `localized_name`, `cost`
+- `patches`: `patch` text unique, `released_at` — stamps `matches.patch`
 
 ### `match_draft`
 
-PK `(match_id, ord)`.
+Unique `(match_id, ord)`.
 
 | Column | Notes |
 |---|---|
@@ -221,7 +223,7 @@ Filled from details (`first_blood_time`) before parse, then from parser `CHAT_ME
 
 | Column | Notes |
 |---|---|
-| `match_id`, `seq` | PK |
+| `match_id`, `seq` | unique |
 | `time` | game clock seconds |
 | `kind` | see below |
 | `team` | 0 / 1 / null |
@@ -241,7 +243,7 @@ Pipeline, not analytics. Enum grows vs today: add `parsing`, `parsed`.
 
 | Column | Notes |
 |---|---|
-| `match_id` PK | |
+| `match_id` unique | |
 | `priority` | `live` / `historical` |
 | `status` | `pending` → `awaiting_gc` → `downloading` → `stored` → `parsing` → `parsed` / `unavailable` / `failed` |
 | `cluster`, `replay_salt`, `replay_state` | |
@@ -333,7 +335,7 @@ Default live source is GetLiveLeagueGames only. GetTopLiveGame + GetRealtimeStat
 
 ### Replay tables
 
-Parser: in-process Source 2 demo parse → NDJSON (`type` per combat-log / interval / chat / …). We do not collapse into one JSON document. `parse_replay` always runs after a replay is stored in S3.
+Parser is not in the worker yet. Tables below are the target schema for the next parse job. Replays sit in S3 as `.dem.bz2`.
 
 Shared prefix on every replay table:
 
@@ -457,9 +459,9 @@ Live **metrics** come from Web API scoreboards first. GC is the replay locator *
 ## What “not losing data” means
 
 1. Every scalar on `CMsgDOTAMatch` / seq-num has a Postgres column or a child table.
-2. Every combat-log enum value and interval snapshot from the demo parser is a ClickHouse row.
+2. Combat-log enum values and interval snapshots from a future demo parser land as ClickHouse rows.
 3. Parser announcement types that describe the story of the game are also in Postgres `match_objectives`.
-4. The replay file stays in S3 so we can re-parse with a new `parser_version`.
+4. The replay file stays in S3 so we can parse (and re-parse) with a `parser_version`.
 5. We do **not** keep a second copy of those payloads as JSON — that is what `match_details_raw` was, and it is how useful fields stay unqueryable.
 
 Out of scope on purpose (product/community, not match facts): community profiles, mmr / rank_tier, public_matches, scenarios, webhooks, notable_players as a separate crawl.

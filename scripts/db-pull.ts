@@ -41,6 +41,7 @@ if (biomeCode !== 0) process.exit(biomeCode)
 const schemaPath = join(root, 'packages/shared/src/db/schema.ts')
 let schema = await Bun.file(schemaPath).text()
 schema = schema.replace(/\n\tforeignKey,\n/, '\n')
+schema = schema.replace(/\n\tprimaryKey,\n/, '\n')
 const header =
 	'// Снято с Postgres `bun run db:pull`. DDL — db/migrations, не этот файл.\n\n'
 if (!schema.startsWith('// Снято')) schema = header + schema

@@ -1,23 +1,24 @@
+import { asNumber } from '#src/store/coerce'
 import { db, sql } from '#src/utils/db'
 
 export async function createIngestRun(input: {
 	leagueId: number
 	matchesLimit: number | null
-}): Promise<{ id: string }> {
+}): Promise<{ id: number }> {
 	const rows = await db.execute(sql`
 		INSERT INTO league_ingest_runs (league_id, matches_limit, status)
 		VALUES (${input.leagueId}, ${input.matchesLimit}, 'queued')
-		RETURNING id::text AS id
+		RETURNING id
 	`)
-	const id = rows[0]?.id
-	if (typeof id !== 'string') throw new Error('failed to create ingest run')
+	const id = asNumber(rows[0]?.id)
+	if (id === null) throw new Error('failed to create ingest run')
 	return { id }
 }
 
-export async function getIngestRun(id: string) {
+export async function getIngestRun(id: number) {
 	const rows = await db.execute(sql`
 		SELECT
-			id::text AS id,
+			id,
 			league_id,
 			matches_limit,
 			status,
@@ -29,13 +30,13 @@ export async function getIngestRun(id: string) {
 			started_at,
 			finished_at
 		FROM league_ingest_runs
-		WHERE id = ${id}::uuid
+		WHERE id = ${id}
 	`)
 	return rows[0] ?? null
 }
 
 export async function patchIngestRun(
-	id: string,
+	id: number,
 	patch: {
 		status?: string
 		matchesListed?: number
@@ -55,6 +56,6 @@ export async function patchIngestRun(
 			error = COALESCE(${patch.error ?? null}, error),
 			started_at = CASE WHEN ${patch.started === true} THEN now() ELSE started_at END,
 			finished_at = CASE WHEN ${patch.finished === true} THEN now() ELSE finished_at END
-		WHERE id = ${id}::uuid
+		WHERE id = ${id}
 	`)
 }

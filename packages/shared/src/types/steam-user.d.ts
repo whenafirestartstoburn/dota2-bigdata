@@ -43,6 +43,7 @@ declare module 'steam-user' {
 			twoFactorCode?: string
 			authCode?: string
 			machineAuthToken?: string
+			anonymous?: boolean
 		}): void
 		logOff(): void
 		setPersona(state: number): void

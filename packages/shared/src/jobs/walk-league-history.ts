@@ -1,5 +1,6 @@
 import { countJobs, enqueueJob, PRIORITY, QUEUE } from '#src/components/jobs'
 import { pickApiCredential, steamCtx } from '#src/components/resources'
+import { getAppSettings } from '#src/components/settings'
 import {
 	enqueueFetchMatchDetails,
 	persistSeqMatches,
@@ -23,7 +24,6 @@ import {
 	upsertTeam,
 } from '#src/store/matches'
 import { db, sql } from '#src/utils/db'
-import env from '#src/utils/env'
 import { logger } from '#src/utils/logger'
 
 export type WalkLeagueInput = {
@@ -32,16 +32,19 @@ export type WalkLeagueInput = {
 	reset?: boolean
 }
 
-function newestRefreshDue(checkedAt: unknown, exhausted: boolean): boolean {
+function newestRefreshDue(
+	checkedAt: unknown,
+	exhausted: boolean,
+	newestMs: number,
+	exhaustedMs: number,
+): boolean {
 	if (checkedAt == null) return true
 	const at =
 		checkedAt instanceof Date
 			? checkedAt.getTime()
 			: Date.parse(String(checkedAt))
 	if (!Number.isFinite(at)) return true
-	const window = exhausted
-		? env.HISTORY_EXHAUSTED_REFRESH_MS
-		: env.HISTORY_NEWEST_REFRESH_MS
+	const window = exhausted ? exhaustedMs : newestMs
 	return Date.now() - at >= window
 }
 
@@ -52,10 +55,11 @@ export async function runWalkLeagueHistory(
 		await resetLeagueHistory(input.leagueId)
 	}
 
+	const settings = await getAppSettings()
 	const league =
 		input.leagueId != null
 			? await getLeague(input.leagueId)
-			: await pickNextHistoryLeague()
+			: await pickNextHistoryLeague(settings.historyExhaustedRefreshMs)
 	if (league == null) return { skipped: true }
 
 	const leagueId = Number(league.league_id)
@@ -64,7 +68,12 @@ export async function runWalkLeagueHistory(
 	const exhausted = league.history_exhausted === true
 	const head = asNumber(league.history_head_match_id)
 	const tail = asNumber(league.history_tail_match_id)
-	const refreshNewest = newestRefreshDue(league.history_checked_at, exhausted)
+	const refreshNewest = newestRefreshDue(
+		league.history_checked_at,
+		exhausted,
+		settings.historyNewestRefreshMs,
+		settings.historyExhaustedRefreshMs,
+	)
 
 	const cred = await pickApiCredential()
 	const ctx = steamCtx(cred, 'historical')
@@ -107,7 +116,7 @@ export async function runWalkLeagueHistory(
 		})
 	}
 
-	const detailsLimit = input.matchesLimit ?? env.HISTORY_DETAILS_ENQUEUE_LIMIT
+	const detailsLimit = input.matchesLimit ?? settings.historyDetailsEnqueueLimit
 	const inflightDetails = await countJobs(
 		'fetch_match_details',
 		PRIORITY.detailsHistorical,

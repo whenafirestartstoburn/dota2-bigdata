@@ -8,16 +8,17 @@ export const QUEUE = {
 	replayLive: 'replay-live',
 	replayHistorical: 'replay-historical',
 	gc: 'dota-gc',
-	parse: 'parse',
 } as const
 
 export const PRIORITY = {
 	live: 0,
 	detailsLive: 0,
 	detailsHistorical: 10,
+	replenish: 15,
 	replayLive: 0,
 	walkHistory: 20,
 	replayHistorical: 20,
+	retest: 25,
 } as const
 
 export function readJobPayload(payload: unknown): Record<string, unknown> {

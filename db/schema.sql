@@ -165,6 +165,17 @@ CREATE TYPE public.replay_status AS ENUM (
 
 
 --
+-- Name: resource_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.resource_kind AS ENUM (
+    'proxy',
+    'gc_account',
+    'api_key'
+);
+
+
+--
 -- Name: resource_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -507,6 +518,21 @@ $$;
 
 
 --
+-- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+	NEW.created_at = OLD.created_at;
+	NEW.updated_at = now();
+	RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: _private_job_queues; Type: TABLE; Schema: graphile_worker; Owner: -
 --
 
@@ -625,13 +651,35 @@ ALTER TABLE graphile_worker._private_tasks ALTER COLUMN id ADD GENERATED ALWAYS 
 --
 
 CREATE TABLE public.heroes (
-    id integer NOT NULL,
+    hero_id integer NOT NULL,
     name text NOT NULL,
     localized_name text DEFAULT ''::text NOT NULL,
     primary_attr text,
     attack_type text,
-    roles text[] DEFAULT '{}'::text[] NOT NULL
+    roles text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: heroes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.heroes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: heroes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.heroes_id_seq OWNED BY public.heroes.id;
 
 
 --
@@ -641,8 +689,29 @@ CREATE TABLE public.heroes (
 CREATE TABLE public.ingest_cursors (
     key text NOT NULL,
     value text NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: ingest_cursors_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ingest_cursors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ingest_cursors_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ingest_cursors_id_seq OWNED BY public.ingest_cursors.id;
 
 
 --
@@ -650,11 +719,33 @@ CREATE TABLE public.ingest_cursors (
 --
 
 CREATE TABLE public.items (
-    id integer NOT NULL,
+    item_id integer NOT NULL,
     name text NOT NULL,
     localized_name text DEFAULT ''::text NOT NULL,
-    cost integer
+    cost integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.items_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.items_id_seq OWNED BY public.items.id;
 
 
 --
@@ -662,7 +753,7 @@ CREATE TABLE public.items (
 --
 
 CREATE TABLE public.league_ingest_runs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid DEFAULT gen_random_uuid() NOT NULL,
     league_id integer NOT NULL,
     matches_limit integer,
     status public.ingest_run_status DEFAULT 'queued'::public.ingest_run_status NOT NULL,
@@ -672,8 +763,29 @@ CREATE TABLE public.league_ingest_runs (
     error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
-    finished_at timestamp with time zone
+    finished_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: league_ingest_runs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.league_ingest_runs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: league_ingest_runs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.league_ingest_runs_id_seq OWNED BY public.league_ingest_runs.id;
 
 
 --
@@ -697,8 +809,29 @@ CREATE TABLE public.leagues (
     history_head_match_id bigint,
     history_tail_match_id bigint,
     history_exhausted boolean DEFAULT false NOT NULL,
-    history_checked_at timestamp with time zone
+    history_checked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: leagues_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.leagues_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: leagues_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.leagues_id_seq OWNED BY public.leagues.id;
 
 
 --
@@ -706,7 +839,7 @@ CREATE TABLE public.leagues (
 --
 
 CREATE TABLE public.marketplace_orders (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid DEFAULT gen_random_uuid() NOT NULL,
     store public.marketplace_store NOT NULL,
     kind public.account_purchase_kind NOT NULL,
     product_id integer NOT NULL,
@@ -719,8 +852,61 @@ CREATE TABLE public.marketplace_orders (
     test_result jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone
+    completed_at timestamp with time zone,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: marketplace_orders_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.marketplace_orders_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: marketplace_orders_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.marketplace_orders_id_seq OWNED BY public.marketplace_orders.id;
+
+
+--
+-- Name: marketplace_products; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.marketplace_products (
+    id bigint NOT NULL,
+    store public.marketplace_store NOT NULL,
+    kind public.account_purchase_kind NOT NULL,
+    product_id integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: marketplace_products_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.marketplace_products_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: marketplace_products_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.marketplace_products_id_seq OWNED BY public.marketplace_products.id;
 
 
 --
@@ -734,8 +920,30 @@ CREATE TABLE public.match_broadcasters (
     description text,
     language_code text,
     account_id bigint,
-    name text
+    name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_broadcasters_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_broadcasters_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_broadcasters_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_broadcasters_id_seq OWNED BY public.match_broadcasters.id;
 
 
 --
@@ -749,8 +957,30 @@ CREATE TABLE public.match_coaches (
     coach_rating integer,
     coach_team integer,
     coach_party_id bigint,
-    is_private_coach boolean
+    is_private_coach boolean,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_coaches_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_coaches_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_coaches_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_coaches_id_seq OWNED BY public.match_coaches.id;
 
 
 --
@@ -764,8 +994,30 @@ CREATE TABLE public.match_draft (
     hero_id integer NOT NULL,
     team smallint NOT NULL,
     player_slot integer,
-    clock integer
+    clock integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_draft_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_draft_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_draft_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_draft_id_seq OWNED BY public.match_draft.id;
 
 
 --
@@ -780,8 +1032,30 @@ CREATE TABLE public.match_objectives (
     team smallint,
     slot integer,
     key text,
-    value integer
+    value integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_objectives_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_objectives_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_objectives_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_objectives_id_seq OWNED BY public.match_objectives.id;
 
 
 --
@@ -794,8 +1068,30 @@ CREATE TABLE public.match_player_ability_upgrades (
     seq integer NOT NULL,
     ability_id integer NOT NULL,
     "time" integer,
-    level integer
+    level integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_player_ability_upgrades_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_player_ability_upgrades_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_player_ability_upgrades_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_player_ability_upgrades_id_seq OWNED BY public.match_player_ability_upgrades.id;
 
 
 --
@@ -807,8 +1103,30 @@ CREATE TABLE public.match_player_buffs (
     player_slot integer NOT NULL,
     buff_id integer NOT NULL,
     stacks integer DEFAULT 1 NOT NULL,
-    grant_time integer
+    grant_time integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_player_buffs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_player_buffs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_player_buffs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_player_buffs_id_seq OWNED BY public.match_player_buffs.id;
 
 
 --
@@ -821,8 +1139,30 @@ CREATE TABLE public.match_player_damage_breakdown (
     direction text NOT NULL,
     damage_type integer NOT NULL,
     pre_reduction integer,
-    post_reduction integer
+    post_reduction integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_player_damage_breakdown_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_player_damage_breakdown_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_player_damage_breakdown_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_player_damage_breakdown_id_seq OWNED BY public.match_player_damage_breakdown.id;
 
 
 --
@@ -838,8 +1178,30 @@ CREATE TABLE public.match_player_units (
     item_2 integer,
     item_3 integer,
     item_4 integer,
-    item_5 integer
+    item_5 integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_player_units_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_player_units_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_player_units_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_player_units_id_seq OWNED BY public.match_player_units.id;
 
 
 --
@@ -931,8 +1293,29 @@ CREATE TABLE public.match_players (
     outposts_captured integer,
     disable_duration integer,
     pro_name text,
-    real_name text
+    real_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_players_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_players_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_players_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_players_id_seq OWNED BY public.match_players.id;
 
 
 --
@@ -960,8 +1343,28 @@ CREATE TABLE public.match_replays (
     parsed_at timestamp with time zone,
     stored_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: match_replays_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.match_replays_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: match_replays_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.match_replays_id_seq OWNED BY public.match_replays.id;
 
 
 --
@@ -1041,8 +1444,28 @@ CREATE TABLE public.matches (
     league_game_id integer,
     game_number integer,
     stage_name text,
-    league_tier integer
+    league_tier integer,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: matches_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.matches_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: matches_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.matches_id_seq OWNED BY public.matches.id;
 
 
 --
@@ -1051,8 +1474,30 @@ CREATE TABLE public.matches (
 
 CREATE TABLE public.patches (
     patch text NOT NULL,
-    released_at timestamp with time zone NOT NULL
+    released_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: patches_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.patches_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: patches_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.patches_id_seq OWNED BY public.patches.id;
 
 
 --
@@ -1067,8 +1512,29 @@ CREATE TABLE public.players (
     current_team_id integer,
     last_match_id bigint,
     last_match_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: players_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.players_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: players_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.players_id_seq OWNED BY public.players.id;
 
 
 --
@@ -1087,7 +1553,8 @@ CREATE TABLE public.proxies (
     rate_limited_until timestamp with time zone,
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retest_count integer DEFAULT 0 NOT NULL
 );
 
 
@@ -1108,6 +1575,40 @@ CREATE SEQUENCE public.proxies_id_seq
 --
 
 ALTER SEQUENCE public.proxies_id_seq OWNED BY public.proxies.id;
+
+
+--
+-- Name: resource_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.resource_attempts (
+    id bigint NOT NULL,
+    kind public.resource_kind NOT NULL,
+    resource_id bigint NOT NULL,
+    ok boolean NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: resource_attempts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.resource_attempts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: resource_attempts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.resource_attempts_id_seq OWNED BY public.resource_attempts.id;
 
 
 --
@@ -1135,8 +1636,62 @@ CREATE TABLE public.series (
     last_match_id bigint,
     started_at timestamp with time zone,
     ended_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: series_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.series_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: series_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.series_id_seq OWNED BY public.series.id;
+
+
+--
+-- Name: settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.settings (
+    key text NOT NULL,
+    value text NOT NULL,
+    description text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: settings_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.settings_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: settings_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.settings_id_seq OWNED BY public.settings.id;
 
 
 --
@@ -1163,7 +1718,8 @@ CREATE TABLE public.steam_accounts (
     refresh_token_expires_at timestamp with time zone,
     machine_auth_token text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retest_count integer DEFAULT 0 NOT NULL
 );
 
 
@@ -1202,7 +1758,8 @@ CREATE TABLE public.steam_api_keys (
     last_called_at timestamp with time zone,
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retest_count integer DEFAULT 0 NOT NULL
 );
 
 
@@ -1234,8 +1791,169 @@ CREATE TABLE public.teams (
     name text NOT NULL,
     tag text,
     logo_url text,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
 );
+
+
+--
+-- Name: teams_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.teams_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: teams_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.teams_id_seq OWNED BY public.teams.id;
+
+
+--
+-- Name: heroes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.heroes ALTER COLUMN id SET DEFAULT nextval('public.heroes_id_seq'::regclass);
+
+
+--
+-- Name: ingest_cursors id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ingest_cursors ALTER COLUMN id SET DEFAULT nextval('public.ingest_cursors_id_seq'::regclass);
+
+
+--
+-- Name: items id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.items ALTER COLUMN id SET DEFAULT nextval('public.items_id_seq'::regclass);
+
+
+--
+-- Name: league_ingest_runs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.league_ingest_runs ALTER COLUMN id SET DEFAULT nextval('public.league_ingest_runs_id_seq'::regclass);
+
+
+--
+-- Name: leagues id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.leagues ALTER COLUMN id SET DEFAULT nextval('public.leagues_id_seq'::regclass);
+
+
+--
+-- Name: marketplace_orders id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_orders ALTER COLUMN id SET DEFAULT nextval('public.marketplace_orders_id_seq'::regclass);
+
+
+--
+-- Name: marketplace_products id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_products ALTER COLUMN id SET DEFAULT nextval('public.marketplace_products_id_seq'::regclass);
+
+
+--
+-- Name: match_broadcasters id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_broadcasters ALTER COLUMN id SET DEFAULT nextval('public.match_broadcasters_id_seq'::regclass);
+
+
+--
+-- Name: match_coaches id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_coaches ALTER COLUMN id SET DEFAULT nextval('public.match_coaches_id_seq'::regclass);
+
+
+--
+-- Name: match_draft id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_draft ALTER COLUMN id SET DEFAULT nextval('public.match_draft_id_seq'::regclass);
+
+
+--
+-- Name: match_objectives id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_objectives ALTER COLUMN id SET DEFAULT nextval('public.match_objectives_id_seq'::regclass);
+
+
+--
+-- Name: match_player_ability_upgrades id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_ability_upgrades ALTER COLUMN id SET DEFAULT nextval('public.match_player_ability_upgrades_id_seq'::regclass);
+
+
+--
+-- Name: match_player_buffs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_buffs ALTER COLUMN id SET DEFAULT nextval('public.match_player_buffs_id_seq'::regclass);
+
+
+--
+-- Name: match_player_damage_breakdown id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_damage_breakdown ALTER COLUMN id SET DEFAULT nextval('public.match_player_damage_breakdown_id_seq'::regclass);
+
+
+--
+-- Name: match_player_units id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_units ALTER COLUMN id SET DEFAULT nextval('public.match_player_units_id_seq'::regclass);
+
+
+--
+-- Name: match_players id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_players ALTER COLUMN id SET DEFAULT nextval('public.match_players_id_seq'::regclass);
+
+
+--
+-- Name: match_replays id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays ALTER COLUMN id SET DEFAULT nextval('public.match_replays_id_seq'::regclass);
+
+
+--
+-- Name: matches id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches ALTER COLUMN id SET DEFAULT nextval('public.matches_id_seq'::regclass);
+
+
+--
+-- Name: patches id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patches ALTER COLUMN id SET DEFAULT nextval('public.patches_id_seq'::regclass);
+
+
+--
+-- Name: players id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.players ALTER COLUMN id SET DEFAULT nextval('public.players_id_seq'::regclass);
 
 
 --
@@ -1243,6 +1961,27 @@ CREATE TABLE public.teams (
 --
 
 ALTER TABLE ONLY public.proxies ALTER COLUMN id SET DEFAULT nextval('public.proxies_id_seq'::regclass);
+
+
+--
+-- Name: resource_attempts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_attempts ALTER COLUMN id SET DEFAULT nextval('public.resource_attempts_id_seq'::regclass);
+
+
+--
+-- Name: series id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series ALTER COLUMN id SET DEFAULT nextval('public.series_id_seq'::regclass);
+
+
+--
+-- Name: settings id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settings ALTER COLUMN id SET DEFAULT nextval('public.settings_id_seq'::regclass);
 
 
 --
@@ -1257,6 +1996,13 @@ ALTER TABLE ONLY public.steam_accounts ALTER COLUMN id SET DEFAULT nextval('publ
 --
 
 ALTER TABLE ONLY public.steam_api_keys ALTER COLUMN id SET DEFAULT nextval('public.steam_api_keys_id_seq'::regclass);
+
+
+--
+-- Name: teams id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.teams ALTER COLUMN id SET DEFAULT nextval('public.teams_id_seq'::regclass);
 
 
 --
@@ -1324,6 +2070,14 @@ ALTER TABLE ONLY graphile_worker._private_tasks
 
 
 --
+-- Name: heroes heroes_hero_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.heroes
+    ADD CONSTRAINT heroes_hero_id_key UNIQUE (hero_id);
+
+
+--
 -- Name: heroes heroes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1332,11 +2086,27 @@ ALTER TABLE ONLY public.heroes
 
 
 --
+-- Name: ingest_cursors ingest_cursors_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ingest_cursors
+    ADD CONSTRAINT ingest_cursors_key_key UNIQUE (key);
+
+
+--
 -- Name: ingest_cursors ingest_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.ingest_cursors
-    ADD CONSTRAINT ingest_cursors_pkey PRIMARY KEY (key);
+    ADD CONSTRAINT ingest_cursors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: items items_item_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.items
+    ADD CONSTRAINT items_item_id_key UNIQUE (item_id);
 
 
 --
@@ -1356,11 +2126,27 @@ ALTER TABLE ONLY public.league_ingest_runs
 
 
 --
+-- Name: league_ingest_runs league_ingest_runs_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.league_ingest_runs
+    ADD CONSTRAINT league_ingest_runs_run_id_key UNIQUE (run_id);
+
+
+--
+-- Name: leagues leagues_league_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.leagues
+    ADD CONSTRAINT leagues_league_id_key UNIQUE (league_id);
+
+
+--
 -- Name: leagues leagues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.leagues
-    ADD CONSTRAINT leagues_pkey PRIMARY KEY (league_id);
+    ADD CONSTRAINT leagues_pkey PRIMARY KEY (id);
 
 
 --
@@ -1372,6 +2158,14 @@ ALTER TABLE ONLY public.marketplace_orders
 
 
 --
+-- Name: marketplace_orders marketplace_orders_order_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_orders
+    ADD CONSTRAINT marketplace_orders_order_id_key UNIQUE (order_id);
+
+
+--
 -- Name: marketplace_orders marketplace_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1380,11 +2174,51 @@ ALTER TABLE ONLY public.marketplace_orders
 
 
 --
+-- Name: marketplace_products marketplace_products_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_products
+    ADD CONSTRAINT marketplace_products_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: marketplace_products marketplace_products_store_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_products
+    ADD CONSTRAINT marketplace_products_store_kind_key UNIQUE (store, kind);
+
+
+--
+-- Name: marketplace_products marketplace_products_store_product_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.marketplace_products
+    ADD CONSTRAINT marketplace_products_store_product_id_key UNIQUE (store, product_id);
+
+
+--
+-- Name: match_broadcasters match_broadcasters_match_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_broadcasters
+    ADD CONSTRAINT match_broadcasters_match_id_seq_key UNIQUE (match_id, seq);
+
+
+--
 -- Name: match_broadcasters match_broadcasters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.match_broadcasters
-    ADD CONSTRAINT match_broadcasters_pkey PRIMARY KEY (match_id, seq);
+    ADD CONSTRAINT match_broadcasters_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_coaches match_coaches_match_id_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_coaches
+    ADD CONSTRAINT match_coaches_match_id_account_id_key UNIQUE (match_id, account_id);
 
 
 --
@@ -1392,7 +2226,15 @@ ALTER TABLE ONLY public.match_broadcasters
 --
 
 ALTER TABLE ONLY public.match_coaches
-    ADD CONSTRAINT match_coaches_pkey PRIMARY KEY (match_id, account_id);
+    ADD CONSTRAINT match_coaches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_draft match_draft_match_id_ord_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_draft
+    ADD CONSTRAINT match_draft_match_id_ord_key UNIQUE (match_id, ord);
 
 
 --
@@ -1400,7 +2242,15 @@ ALTER TABLE ONLY public.match_coaches
 --
 
 ALTER TABLE ONLY public.match_draft
-    ADD CONSTRAINT match_draft_pkey PRIMARY KEY (match_id, ord);
+    ADD CONSTRAINT match_draft_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_objectives match_objectives_match_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_objectives
+    ADD CONSTRAINT match_objectives_match_id_seq_key UNIQUE (match_id, seq);
 
 
 --
@@ -1408,7 +2258,15 @@ ALTER TABLE ONLY public.match_draft
 --
 
 ALTER TABLE ONLY public.match_objectives
-    ADD CONSTRAINT match_objectives_pkey PRIMARY KEY (match_id, seq);
+    ADD CONSTRAINT match_objectives_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_player_ability_upgrades match_player_ability_upgrades_match_slot_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_ability_upgrades
+    ADD CONSTRAINT match_player_ability_upgrades_match_slot_seq_key UNIQUE (match_id, player_slot, seq);
 
 
 --
@@ -1416,7 +2274,15 @@ ALTER TABLE ONLY public.match_objectives
 --
 
 ALTER TABLE ONLY public.match_player_ability_upgrades
-    ADD CONSTRAINT match_player_ability_upgrades_pkey PRIMARY KEY (match_id, player_slot, seq);
+    ADD CONSTRAINT match_player_ability_upgrades_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_player_buffs match_player_buffs_match_slot_buff_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_buffs
+    ADD CONSTRAINT match_player_buffs_match_slot_buff_key UNIQUE (match_id, player_slot, buff_id);
 
 
 --
@@ -1424,7 +2290,15 @@ ALTER TABLE ONLY public.match_player_ability_upgrades
 --
 
 ALTER TABLE ONLY public.match_player_buffs
-    ADD CONSTRAINT match_player_buffs_pkey PRIMARY KEY (match_id, player_slot, buff_id);
+    ADD CONSTRAINT match_player_buffs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_player_damage_breakdown match_player_damage_breakdown_natural_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_damage_breakdown
+    ADD CONSTRAINT match_player_damage_breakdown_natural_key UNIQUE (match_id, player_slot, direction, damage_type);
 
 
 --
@@ -1432,7 +2306,15 @@ ALTER TABLE ONLY public.match_player_buffs
 --
 
 ALTER TABLE ONLY public.match_player_damage_breakdown
-    ADD CONSTRAINT match_player_damage_breakdown_pkey PRIMARY KEY (match_id, player_slot, direction, damage_type);
+    ADD CONSTRAINT match_player_damage_breakdown_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_player_units match_player_units_match_slot_unit_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_player_units
+    ADD CONSTRAINT match_player_units_match_slot_unit_key UNIQUE (match_id, player_slot, unit_name);
 
 
 --
@@ -1440,7 +2322,15 @@ ALTER TABLE ONLY public.match_player_damage_breakdown
 --
 
 ALTER TABLE ONLY public.match_player_units
-    ADD CONSTRAINT match_player_units_pkey PRIMARY KEY (match_id, player_slot, unit_name);
+    ADD CONSTRAINT match_player_units_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_players match_players_match_id_player_slot_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_players
+    ADD CONSTRAINT match_players_match_id_player_slot_key UNIQUE (match_id, player_slot);
 
 
 --
@@ -1448,7 +2338,15 @@ ALTER TABLE ONLY public.match_player_units
 --
 
 ALTER TABLE ONLY public.match_players
-    ADD CONSTRAINT match_players_pkey PRIMARY KEY (match_id, player_slot);
+    ADD CONSTRAINT match_players_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: match_replays match_replays_match_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.match_replays
+    ADD CONSTRAINT match_replays_match_id_key UNIQUE (match_id);
 
 
 --
@@ -1456,7 +2354,15 @@ ALTER TABLE ONLY public.match_players
 --
 
 ALTER TABLE ONLY public.match_replays
-    ADD CONSTRAINT match_replays_pkey PRIMARY KEY (match_id);
+    ADD CONSTRAINT match_replays_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: matches matches_match_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.matches
+    ADD CONSTRAINT matches_match_id_key UNIQUE (match_id);
 
 
 --
@@ -1464,7 +2370,15 @@ ALTER TABLE ONLY public.match_replays
 --
 
 ALTER TABLE ONLY public.matches
-    ADD CONSTRAINT matches_pkey PRIMARY KEY (match_id);
+    ADD CONSTRAINT matches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: patches patches_patch_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patches
+    ADD CONSTRAINT patches_patch_key UNIQUE (patch);
 
 
 --
@@ -1472,7 +2386,15 @@ ALTER TABLE ONLY public.matches
 --
 
 ALTER TABLE ONLY public.patches
-    ADD CONSTRAINT patches_pkey PRIMARY KEY (patch);
+    ADD CONSTRAINT patches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: players players_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.players
+    ADD CONSTRAINT players_account_id_key UNIQUE (account_id);
 
 
 --
@@ -1480,7 +2402,7 @@ ALTER TABLE ONLY public.patches
 --
 
 ALTER TABLE ONLY public.players
-    ADD CONSTRAINT players_pkey PRIMARY KEY (account_id);
+    ADD CONSTRAINT players_pkey PRIMARY KEY (id);
 
 
 --
@@ -1500,6 +2422,14 @@ ALTER TABLE ONLY public.proxies
 
 
 --
+-- Name: resource_attempts resource_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_attempts
+    ADD CONSTRAINT resource_attempts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1512,7 +2442,31 @@ ALTER TABLE ONLY public.schema_migrations
 --
 
 ALTER TABLE ONLY public.series
-    ADD CONSTRAINT series_pkey PRIMARY KEY (series_id);
+    ADD CONSTRAINT series_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: series series_series_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.series
+    ADD CONSTRAINT series_series_id_key UNIQUE (series_id);
+
+
+--
+-- Name: settings settings_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settings
+    ADD CONSTRAINT settings_key_key UNIQUE (key);
+
+
+--
+-- Name: settings settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settings
+    ADD CONSTRAINT settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -1552,7 +2506,15 @@ ALTER TABLE ONLY public.steam_api_keys
 --
 
 ALTER TABLE ONLY public.teams
-    ADD CONSTRAINT teams_pkey PRIMARY KEY (team_id);
+    ADD CONSTRAINT teams_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: teams teams_team_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.teams
+    ADD CONSTRAINT teams_team_id_key UNIQUE (team_id);
 
 
 --
@@ -1647,10 +2609,206 @@ CREATE INDEX matches_start_time_idx ON public.matches USING btree (league_id, st
 
 
 --
+-- Name: resource_attempts_kind_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX resource_attempts_kind_id_idx ON public.resource_attempts USING btree (kind, resource_id, id DESC);
+
+
+--
 -- Name: series_league_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX series_league_idx ON public.series USING btree (league_id);
+
+
+--
+-- Name: heroes set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.heroes FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: ingest_cursors set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.ingest_cursors FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: items set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.items FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: league_ingest_runs set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.league_ingest_runs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: leagues set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.leagues FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: marketplace_orders set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.marketplace_orders FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: marketplace_products set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.marketplace_products FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_broadcasters set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_broadcasters FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_coaches set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_coaches FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_draft set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_draft FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_objectives set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_objectives FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_player_ability_upgrades set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_player_ability_upgrades FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_player_buffs set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_player_buffs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_player_damage_breakdown set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_player_damage_breakdown FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_player_units set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_player_units FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_players set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_players FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: match_replays set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.match_replays FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: matches set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.matches FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: patches set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.patches FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: players set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.players FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: proxies set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.proxies FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: resource_attempts set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.resource_attempts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: series set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.series FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: settings set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.settings FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: steam_accounts set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: steam_api_keys set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_api_keys FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: teams set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.teams FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -1915,4 +3073,7 @@ ALTER TABLE graphile_worker._private_tasks ENABLE ROW LEVEL SECURITY;
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260830000000'),
     ('20260830000001'),
-    ('20260903000000');
+    ('20260903000000'),
+    ('20260903200000'),
+    ('20260903210000'),
+    ('20260903220000');

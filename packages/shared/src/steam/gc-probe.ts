@@ -1,6 +1,14 @@
 /// <reference path="../types/steam-user.d.ts" />
 import SteamUser from 'steam-user'
-import { proxyHostPort, rotateAccountProxy } from '#src/components/proxies'
+import {
+	isProxyTransportError,
+	proxyHostPort,
+	rotateAccountProxy,
+} from '#src/components/proxies'
+import {
+	disableResource,
+	recordResourceAttempt,
+} from '#src/components/resource-health'
 import {
 	accountCanReadEmailGuard,
 	accountHasUsableTotp,
@@ -8,6 +16,7 @@ import {
 	getGcAccountByLogin,
 	saveSteamSession,
 } from '#src/components/resources'
+import { getAppSettings } from '#src/components/settings'
 import {
 	DOTA_APP_ID,
 	decodeFields,
@@ -19,22 +28,14 @@ import {
 import { fetchSteamGuardFromMailbox } from '#src/steam/email-guard'
 import { generateAuthCode, querySteamTimeOffset } from '#src/steam/totp'
 import { replayUrl } from '#src/steam/web-api'
-import { asError, asNumber, errorMessage } from '#src/store/coerce'
+import { asError, errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
 import { status } from '#src/utils/status'
-
-const GC_LOGON_ATTEMPTS = 4
 
 type GuardBag = {
 	authCode: string | null
 	lastEmailUid: number | null
 	lastEmailCode: string | null
-}
-
-function steamErrorLine(error: Error): string {
-	const eresult = asNumber((error as { eresult?: unknown }).eresult)
-	if (eresult === null) return error.message
-	return `${error.message} (eresult=${String(eresult)})`
 }
 
 /** CM websocket died; steam-user/Bun often surface this as "Socket closed". */
@@ -51,19 +52,6 @@ export function isTransientCmClose(error: unknown): boolean {
 	return /socket closed|noconnection|econnreset|econnrefused|epipe|socket hang up|tryanothercm|serviceunavailable/i.test(
 		message,
 	)
-}
-
-function attachGcDebug(client: SteamUser): void {
-	client.on('debug', (message: unknown) => {
-		if (typeof message !== 'string') return
-		if (/token|password|auth_code|cookie|secret|guard code/i.test(message)) {
-			return
-		}
-		status(`gc: ${message}`)
-	})
-	client.on('disconnected', (eresult: number, msg: string) => {
-		status(`gc: disconnected eresult=${String(eresult)} ${msg}`)
-	})
 }
 
 function createClient(account: GcAccount): SteamUser {
@@ -132,11 +120,7 @@ async function waitGcWelcome(input: {
 		}
 		arm(welcomeMs)
 		client.on('error', (error: Error) => {
-			status(`gc: error ${steamErrorLine(error)}`)
 			if (fetchingGuard && isTransientCmClose(error)) {
-				status(
-					'gc: ignoring CM close while reading Guard email (steam-user disconnects before the code)',
-				)
 				return
 			}
 			finish(error)
@@ -282,7 +266,9 @@ export async function loginGcAndMaybeTest(input: {
 		lastEmailCode: null,
 	}
 	let lastError: unknown
-	for (let attempt = 0; attempt < GC_LOGON_ATTEMPTS; attempt++) {
+	const settings = await getAppSettings()
+	const attempts = settings.gcLogonAttempts
+	for (let attempt = 0; attempt < attempts; attempt++) {
 		const account = await getGcAccountByLogin(input.login)
 		if (account == null) {
 			throw new Error(`no steam_accounts row for login=${input.login}`)
@@ -291,7 +277,6 @@ export async function loginGcAndMaybeTest(input: {
 			throw new Error(`password is required for ${input.login}`)
 		}
 		const client = createClient(account)
-		attachGcDebug(client)
 		client.on('refreshToken', (token) => {
 			void saveSteamSession({ accountId: account.id, refreshToken: token })
 		})
@@ -325,10 +310,22 @@ export async function loginGcAndMaybeTest(input: {
 			status(
 				attempt === 0
 					? `gc: logOn password for ${account.login} via proxy id=${String(account.proxyId ?? '-')} ${account.proxyKind ?? '-'} ${proxyHostPort(account.proxyUrl ?? '')}`
-					: `gc: logOn retry ${String(attempt + 1)}/${String(GC_LOGON_ATTEMPTS)} for ${account.login} via proxy id=${String(account.proxyId ?? '-')} ${account.proxyKind ?? '-'}${bag.authCode != null ? ' with email Guard code' : ''}`,
+					: `gc: logOn retry ${String(attempt + 1)}/${String(attempts)} for ${account.login} via proxy id=${String(account.proxyId ?? '-')} ${account.proxyKind ?? '-'}${bag.authCode != null ? ' with email Guard code' : ''}`,
 			)
 			client.logOn(details)
 			await waitGcWelcome({ account, client, bag })
+			if (account.proxyId != null) {
+				await recordResourceAttempt({
+					kind: 'proxy',
+					resourceId: account.proxyId,
+					ok: true,
+				})
+			}
+			await recordResourceAttempt({
+				kind: 'gc_account',
+				resourceId: account.id,
+				ok: true,
+			})
 			if (input.testOnMatchId == null) {
 				return { replayUrl: null }
 			}
@@ -340,7 +337,7 @@ export async function loginGcAndMaybeTest(input: {
 			return { replayUrl: url }
 		} catch (error) {
 			lastError = error
-			if (isTransientCmClose(error) && attempt < GC_LOGON_ATTEMPTS - 1) {
+			if (isTransientCmClose(error) && attempt < attempts - 1) {
 				if (bag.authCode == null && account.proxyId != null) {
 					const dead = proxyHostPort(account.proxyUrl ?? '')
 					const next = await rotateAccountProxy({
@@ -363,6 +360,22 @@ export async function loginGcAndMaybeTest(input: {
 				{ login: account.login, err: errorMessage(error) },
 				'GC probe failed',
 			)
+			const message = errorMessage(error)
+			if (/InvalidPassword/i.test(message)) {
+				await disableResource({
+					kind: 'gc_account',
+					resourceId: account.id,
+					error: message,
+					giveUp: true,
+				})
+			} else if (!isProxyTransportError(error)) {
+				await recordResourceAttempt({
+					kind: 'gc_account',
+					resourceId: account.id,
+					ok: false,
+					error: message,
+				})
+			}
 			throw error
 		} finally {
 			dropClient(client)

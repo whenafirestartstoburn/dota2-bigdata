@@ -128,11 +128,11 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Replay parser
 
-**Decision:** Parse in-process in the Bun worker. The engine is a TypeScript port of the Source 2 demo format used by [dotabuff/manta](https://github.com/dotabuff/manta) (bitstream, send tables, entities, string tables). Compressed demo messages use [`snappy`](https://www.npmjs.com/package/snappy) (`uncompressSync`, raw block format — the same wire as manta). Processors emit the existing NDJSON event catalog into ClickHouse `replay_*`. `parse_replay` is a separate graphile job after S3 already has the `.dem.bz2`. We do not call a third-party match HTTP API and do not run a Java sidecar.
+**Decision:** Not in this worker yet. `download_replay` stores `.dem.bz2` in S3 and stops. ClickHouse `replay_*` and `match_replays.parser_version` stay in the schema for the next parser. We still do not call a third-party match HTTP API.
 
-**Why.** Download and parse are different units of work (network vs CPU), but they share one worker so ops stays one process. S3 remains the source of truth for re-parse. Native rust-snappy is the fast path for large entity packets; `snappyjs` is a pure-JS fallback we do not need.
+**Why.** Download is its own unit of work (network). S3 remains the source of truth for a later parse job.
 
-**Rejected.** A Java sidecar. An unpublished npm demo engine as a black box. Parsing inside the download job. Depending on someone else’s match API. `snappyjs` as the codec.
+**Rejected.** A Java sidecar. Depending on someone else’s match API. Parsing inside the download job (when parse returns, it should stay a separate graphile task).
 
 ## Logging and formatting
 
@@ -161,7 +161,7 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 | Demos | S3 | bytea, local disk |
 | Queue | graphile-worker in PG | Bull / Kafka / in-process timers |
 | Steam HTTP vs GC | fetch+Zod vs steam-user | one account for both roles |
-| Parse | in-process Source 2 parser (manta-shaped) | third-party match API, Java sidecar |
+| Parse | deferred; S3 is source of truth | third-party match API, Java sidecar |
 | Domain flow | `async`/`await`, `Promise` | Effect, neverthrow, RxJS |
 
 Revisit this ADR if we add a public query API, a second region, or a Steam transport that is not `steam-user`. Until then, schema and worker specs assume this stack.
