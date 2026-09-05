@@ -128,11 +128,11 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Replay parser
 
-**Decision:** Not in this worker yet. `download_replay` stores `.dem.bz2` in S3 and stops. ClickHouse `replay_*` and `match_replays.parser_version` stay in the schema for the next parser. We still do not call a third-party match HTTP API.
+**Decision:** Go service in `packages/parser`. [manta](https://github.com/dotabuff/manta) decodes the demo; extraction and ClickHouse/Postgres commit are ours. The TypeScript worker still only downloads. Spec: [`replay-parser.md`](./replay-parser.md).
 
-**Why.** Download is its own unit of work (network). S3 remains the source of truth for a later parse job.
+**Why.** Parse is CPU-heavy and does not belong on the Steam-session worker. Go is where the maintained Source 2 decoder lives. MergeTree writes stay append-only; `parse_run_id` is the everything-or-nothing token without changing the engine.
 
-**Rejected.** A Java sidecar. Depending on someone else’s match API. Parsing inside the download job (when parse returns, it should stay a separate graphile task).
+**Rejected.** A Java Clarity sidecar. OpenDota HTTP. Parsing inside `download_replay`. Copying `example_projects/*` wholesale.
 
 ## Logging and formatting
 
@@ -161,7 +161,7 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 | Demos | S3 | bytea, local disk |
 | Queue | graphile-worker in PG | Bull / Kafka / in-process timers |
 | Steam HTTP vs GC | fetch+Zod vs steam-user | one account for both roles |
-| Parse | deferred; S3 is source of truth | third-party match API, Java sidecar |
+| Parse | Go `packages/parser` + manta | third-party match API, Java sidecar, parse-in-download |
 | Domain flow | `async`/`await`, `Promise` | Effect, neverthrow, RxJS |
 
 Revisit this ADR if we add a public query API, a second region, or a Steam transport that is not `steam-user`. Until then, schema and worker specs assume this stack.

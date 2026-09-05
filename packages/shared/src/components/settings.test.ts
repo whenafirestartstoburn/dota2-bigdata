@@ -41,5 +41,6 @@ describe('getAppSettings', () => {
 		expect(settings.gcLogonAttempts).toBe(4)
 		expect(settings.apiKeyRateLimitMs).toBe(60_000)
 		expect(settings.gcAccountRateLimitMs).toBe(300_000)
+		expect(settings.parserParallelism).toBe(1)
 	})
 })

@@ -24,6 +24,7 @@ docker compose up --build
 
 - API: http://localhost:3000 (`/healthz`, `/api/health`)
 - Worker health: http://localhost:3001/healthz
+- Parser health: http://localhost:3002/healthz
 - Postgres: `postgres://dota:dota@localhost:5432/dota`
 - ClickHouse HTTP: http://localhost:8123
 
@@ -45,6 +46,7 @@ bun run api       # terminal 2
 | `poll_live_games` | every 3s (self-rescheduling `jobKey`) | `GetLiveLeagueGames`, current state in Postgres, tick history in ClickHouse |
 | `process_league` | via HTTP | full match list, seq details, enqueue replay downloads |
 | `download_replay` | queue `dota-gc` | GC match details → `replay{cluster}.valve.net` → S3 |
+| parser (Go) | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*`, status `parsed` |
 
 League status is **ours**, not Valve's `status` integer (that flag is stored as `valve_status`). A league is `LIVE` if it currently appears in live games, or now is between `start_timestamp` and `end_timestamp`; `UPCOMING` if start is in the future; `FINISHED` if the window ended, Valve marked it concluded (`status=5`), or activity is stale.
 

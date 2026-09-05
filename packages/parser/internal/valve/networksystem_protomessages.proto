@@ -1,0 +1,24 @@
+syntax = "proto2";
+
+package dota;
+option go_package = "dota2-collector/parser/internal/valve;valve";
+
+message NetMessageSplitscreenUserChanged {
+	optional uint32 slot = 1;
+}
+
+message NetMessageConnectionClosed {
+	optional uint32 reason = 1;
+	optional string message = 2;
+}
+
+message NetMessageConnectionCrashed {
+	optional uint32 reason = 1;
+	optional string message = 2;
+}
+
+message NetMessagePacketStart {
+}
+
+message NetMessagePacketEnd {
+}

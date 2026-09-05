@@ -1340,6 +1340,7 @@ CREATE TABLE public.match_replays (
     steam_account_id bigint,
     proxy_id bigint,
     parser_version integer,
+    parse_run_id bigint,
     parsed_at timestamp with time zone,
     stored_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -3076,4 +3077,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260903000000'),
     ('20260903200000'),
     ('20260903210000'),
-    ('20260903220000');
+    ('20260903220000'),
+    ('20260905220000');

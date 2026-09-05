@@ -67,7 +67,7 @@ Requires `source_url` already on `match_replays`. No GC. 404 → backoff. Stops 
 
 ### Replay parse
 
-Not in this worker yet. ClickHouse `replay_*` and `match_replays.parser_version` stay in the schema for the next parser. Replays already in S3 are the source of truth.
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, extracts with manta, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `status = parsed`. Parallelism is `settings.parser_parallelism`. Spec: [`replay-parser.md`](./replay-parser.md).
 
 ---
 

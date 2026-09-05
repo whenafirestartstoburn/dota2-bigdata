@@ -16,6 +16,8 @@
 | `packages/worker` | сервис: свой `app.ts` с graceful shutdown и свой `utils/env.ts` |
 <!-- </template:structure> -->
 
+| `packages/parser` | Go replay parser (manta decoder, ClickHouse `replay_*`) |
+
 ## Запуск
 
 ```bash
@@ -55,6 +57,12 @@ cd packages/cli && bun run test
 cd packages/worker && bun run test
 ```
 <!-- </template:commands> -->
+
+Parser (Go, not Bun):
+
+```bash
+cd packages/parser && go test -count=1 -timeout 15m
+```
 
 ## ClickHouse
 

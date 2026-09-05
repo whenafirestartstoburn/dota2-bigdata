@@ -249,6 +249,7 @@ Pipeline, not analytics. Enum grows vs today: add `parsing`, `parsed`.
 | `cluster`, `replay_salt`, `replay_state` | |
 | `s3_bucket`, `s3_key`, `bytes` | |
 | `parser_version` | CH schema version of the rows |
+| `parse_run_id` | published ClickHouse write; unpublished runs are deleted |
 | `parsed_at` | |
 | `attempts`, `last_error`, `next_attempt_at` | |
 | `steam_account_id`, `proxy_id` | who fetched salt / downloaded |
@@ -335,7 +336,7 @@ Default live source is GetLiveLeagueGames only. GetTopLiveGame + GetRealtimeStat
 
 ### Replay tables
 
-Parser is not in the worker yet. Tables below are the target schema for the next parse job. Replays sit in S3 as `.dem.bz2`.
+Parser is the Go service in `packages/parser`. Tables below are what it fills. Replays sit in S3 as `.dem.bz2`.
 
 Shared prefix on every replay table:
 
@@ -344,8 +345,9 @@ match_id    UInt64   Codec(Delta, ZSTD(1))
 start_time  DateTime('UTC')          -- match start, for partition
 time        Int32    Codec(Delta, ZSTD(1))   -- game clock; negative in pregame
 tick        UInt32   Codec(Delta, ZSTD(1))
-slot        Int8                     -- player slot or -1
+slot        Int8                     -- 0-9 (Int8 cannot hold Valve 128-132); -1 if unknown
 parser_version  UInt16
+parse_run_id    UInt64   -- unpublished until match_replays.parse_run_id matches
 ```
 
 `PARTITION BY toYYYYMM(start_time) ORDER BY (match_id, time, tick)`

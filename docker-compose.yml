@@ -93,6 +93,32 @@ services:
       timeout: 5s
       retries: 20
 
+  parser:
+    build:
+      context: .
+      dockerfile: packages/parser/Dockerfile
+    env_file: .env
+    environment:
+      PGURI: postgres://dota:dota@postgres:5432/dota?sslmode=disable
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_NATIVE: clickhouse:9000
+      CLICKHOUSE_USER: dota
+      CLICKHOUSE_PASSWORD: dota
+      CLICKHOUSE_DATABASE: dota
+      PARSER_PORT: "8080"
+    ports:
+      - "3002:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      clickhouse-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   api:
     build:
       context: .
@@ -111,6 +137,8 @@ services:
       - "3000:8080"
     depends_on:
       worker:
+        condition: service_healthy
+      parser:
         condition: service_healthy
 
 volumes:

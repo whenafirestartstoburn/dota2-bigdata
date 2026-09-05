@@ -33,6 +33,7 @@ export type AppSettings = {
 	gcLogonAttempts: number
 	apiKeyRateLimitMs: number
 	gcAccountRateLimitMs: number
+	parserParallelism: number
 }
 
 const KEYS = {
@@ -65,6 +66,7 @@ const KEYS = {
 	gcLogonAttempts: 'gc_logon_attempts',
 	apiKeyRateLimitMs: 'api_key_rate_limit_ms',
 	gcAccountRateLimitMs: 'gc_account_rate_limit_ms',
+	parserParallelism: 'parser_parallelism',
 } as const
 
 function requiredNumber(rows: Map<string, string>, key: string): number {
@@ -89,6 +91,15 @@ function requiredPositiveInt(rows: Map<string, string>, key: string): number {
 		throw new Error(`settings.${key} must be a positive integer`)
 	}
 	return n
+}
+
+function optionalPositiveInt(
+	rows: Map<string, string>,
+	key: string,
+	fallback: number,
+): number {
+	if (!rows.has(key)) return fallback
+	return requiredPositiveInt(rows, key)
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -144,6 +155,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 		gcLogonAttempts: requiredPositiveInt(map, KEYS.gcLogonAttempts),
 		apiKeyRateLimitMs: requiredPositiveInt(map, KEYS.apiKeyRateLimitMs),
 		gcAccountRateLimitMs: requiredPositiveInt(map, KEYS.gcAccountRateLimitMs),
+		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 1),
 	}
 }
 

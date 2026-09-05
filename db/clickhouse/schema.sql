@@ -78,6 +78,7 @@ CREATE TABLE dota.replay_ability_levels
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `ability_id` String CODEC(ZSTD(1)),
     `ability_level` UInt8,
     `target` String CODEC(ZSTD(1))
@@ -95,7 +96,15 @@ CREATE TABLE dota.replay_actions
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `order_type` UInt16
+    `parse_run_id` UInt64 DEFAULT 0,
+    `order_type` UInt16,
+    `unit_index` Int32 DEFAULT -1,
+    `target_index` Int32 DEFAULT -1,
+    `ability_id` Int32 DEFAULT -1,
+    `pos_x` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
+    `pos_y` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
+    `pos_z` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
+    `queued` UInt8 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -110,6 +119,7 @@ CREATE TABLE dota.replay_announcements
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `player1` Int16,
     `player2` Int16,
@@ -131,6 +141,7 @@ CREATE TABLE dota.replay_chat
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `key` String CODEC(ZSTD(1)),
     `unit` String DEFAULT '' CODEC(ZSTD(1)),
@@ -149,6 +160,7 @@ CREATE TABLE dota.replay_combat_log
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `type` LowCardinality(String),
     `attacker` String CODEC(ZSTD(1)),
     `target` String CODEC(ZSTD(1)),
@@ -250,7 +262,9 @@ CREATE TABLE dota.replay_cosmetics
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `item_id` UInt32
+    `parse_run_id` UInt64 DEFAULT 0,
+    `item_id` UInt32,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -265,6 +279,7 @@ CREATE TABLE dota.replay_draft
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `is_pick` UInt8,
     `hero_id` Int32,
     `team` UInt8,
@@ -286,6 +301,7 @@ CREATE TABLE dota.replay_epilogue
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `key` LowCardinality(String),
     `value` String CODEC(ZSTD(3))
 )
@@ -302,6 +318,7 @@ CREATE TABLE dota.replay_intervals
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `hero_id` Int32,
     `variant` Int16,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
@@ -347,6 +364,7 @@ CREATE TABLE dota.replay_inventory
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `item_id` String CODEC(ZSTD(1)),
     `item_slot` Int8,
     `charges` UInt16,
@@ -365,6 +383,7 @@ CREATE TABLE dota.replay_neutrals
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `key` String CODEC(ZSTD(1)),
     `value` Int32,
@@ -384,8 +403,11 @@ CREATE TABLE dota.replay_pings
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
-    `y` Float32 CODEC(Gorilla, ZSTD(1))
+    `y` Float32 CODEC(Gorilla, ZSTD(1)),
+    `ping_type` UInt16 DEFAULT 0,
+    `target` Int32 DEFAULT -1
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -400,6 +422,7 @@ CREATE TABLE dota.replay_wards
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `is_left` UInt8,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
@@ -431,4 +454,5 @@ SETTINGS index_granularity = 8192;
 INSERT INTO dota.schema_migrations (version) VALUES
     ('20260830000000'),
     ('20260830000001'),
-    ('20260830000002');
+    ('20260830000002'),
+    ('20260905220000');
