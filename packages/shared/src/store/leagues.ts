@@ -84,8 +84,9 @@ export async function pickNextHistoryLeague(exhaustedRefreshMs: number) {
 		ORDER BY
 			(history_checked_at IS NULL) DESC,
 			history_exhausted ASC,
-			most_recent_activity DESC,
-			league_id
+			NULLIF(most_recent_activity, 0) DESC NULLS LAST,
+			NULLIF(start_timestamp, 0) DESC NULLS LAST,
+			league_id DESC
 		LIMIT 1
 	`)
 	return rows[0] ?? null
