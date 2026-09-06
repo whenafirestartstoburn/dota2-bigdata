@@ -25,6 +25,7 @@ export async function persistMatchRecord(
 		apiKeyId?: number | null
 		mustExist: boolean
 		skipStoryObjectives?: boolean
+		fetched?: 'seq' | 'gc'
 	},
 ): Promise<number> {
 	const facts = extractMatchFacts(raw)
@@ -40,7 +41,7 @@ export async function persistMatchRecord(
 		logoUrl: facts.direTeamLogoUrl,
 	})
 	if (!opts.mustExist) {
-		await insertUndiscoveredMatch(tx, facts)
+		await insertUndiscoveredMatch(tx, facts, opts.fetched ?? 'gc')
 	}
 	const seriesId = await upsertSeriesForMatch(tx, {
 		valveSeriesId: facts.seriesId,
@@ -60,7 +61,7 @@ export async function persistMatchRecord(
 			WHERE match_id = ${facts.matchId} AND series_id IS NULL
 		`)
 	}
-	await saveMatchFacts(tx, facts, opts.apiKeyId ?? null)
+	await saveMatchFacts(tx, facts, opts.apiKeyId ?? null, opts.fetched ?? 'gc')
 	const players = extractPlayers(raw)
 	await upsertMatchPlayers(tx, facts.matchId, players)
 	for (const player of players) {

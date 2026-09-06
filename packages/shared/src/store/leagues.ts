@@ -82,6 +82,7 @@ export async function pickNextHistoryLeague(exhaustedRefreshMs: number) {
 				)
 			)
 		ORDER BY
+			(history_checked_at IS NULL) DESC,
 			history_exhausted ASC,
 			most_recent_activity DESC,
 			league_id

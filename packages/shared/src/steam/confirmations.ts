@@ -1,4 +1,5 @@
 import { STEAM_CHROME_UA, STEAM_MOBILE_UA, steamFetch } from '#src/steam/http'
+import { parseSteamJson } from '#src/steam/json'
 import {
 	generateConfirmationKey,
 	getDeviceId,
@@ -6,6 +7,8 @@ import {
 	unixTime,
 } from '#src/steam/totp'
 import { asNumber, asText, errorMessage } from '#src/store/coerce'
+
+export { parseSteamJson }
 
 const CONF_BASE = 'https://steamcommunity.com/mobileconf'
 const REQUEST_KEY_URL = 'https://steamcommunity.com/dev/requestkey'
@@ -77,13 +80,6 @@ export function mobileAccessCookies(input: {
 		`mobileClientVersion=${MOBILE_CLIENT_VERSION}`,
 		'timezoneOffset=10800,0',
 	]
-}
-
-/** Quote 16+ digit integers so uint64 ids (request_id) survive JSON.parse. */
-export function parseSteamJson(text: string): unknown {
-	return JSON.parse(
-		text.replace(/([:[,]\s*)(\d{16,})(\s*[,}\]])/g, '$1"$2"$3'),
-	) as unknown
 }
 
 export function describeEResult(eresult: number): string {

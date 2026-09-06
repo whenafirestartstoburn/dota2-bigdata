@@ -34,6 +34,13 @@ import {
 	GC_MSG,
 	type GcMatchReplayLocator,
 } from '@app/shared/src/gc/protobuf'
+import {
+	classifyGcLogon,
+	classifyGcRequest,
+	observeGcLogon,
+	observeGcRequest,
+	setGcSessionUp,
+} from '@app/shared/src/metrics/observe'
 import { fetchSteamGuardFromMailbox } from '@app/shared/src/steam/email-guard'
 import { refreshTokenUsable } from '@app/shared/src/steam/jwt'
 import {
@@ -454,6 +461,7 @@ export async function getGcSession(): Promise<BoundSession> {
 		)
 		dropClient(session.client)
 		session = null
+		setGcSessionUp(false)
 	}
 	if (connecting !== null) return connecting
 	connecting = openGcSession()
@@ -469,6 +477,7 @@ async function openGcSession(): Promise<BoundSession> {
 	const dedicated = listed.filter((account) => accountIsGcEligible(account))
 	const accounts = selectGcPool(listed)
 	if (accounts.length === 0) {
+		observeGcLogon('no_account')
 		throw new Error(
 			'no usable Steam account for GC — need a ready account with a password and no shared_secret',
 		)
@@ -509,9 +518,12 @@ async function openGcSession(): Promise<BoundSession> {
 		}
 		try {
 			session = await connectAccount(account)
+			observeGcLogon('success')
+			setGcSessionUp(true)
 			return session
 		} catch (error) {
 			lastError = error
+			observeGcLogon(classifyGcLogon(error))
 			if (isNoUsableProxy(error)) throw error
 			await recordConnectFailure(account, error)
 			if (isImapBasicAuthDisabled(error)) imapPasswordAuthDead = true
@@ -528,30 +540,37 @@ export async function requestMatchReplayLocator(
 ): Promise<
 	GcMatchReplayLocator & { accountId: number; proxyId: number | null }
 > {
-	const bound = await getGcSession()
-	const payload = encodeMatchDetailsRequest(matchId)
+	const started = performance.now()
+	try {
+		const bound = await getGcSession()
+		const payload = encodeMatchDetailsRequest(matchId)
 
-	const buffer = await new Promise<Buffer>((resolve, reject) => {
-		const timer = setTimeout(
-			() => reject(new Error(`GC match details timeout for ${matchId}`)),
-			15_000,
-		)
-		bound.client.sendToGC(
-			DOTA_APP_ID,
-			GC_MSG.matchDetailsRequest,
-			{},
-			payload,
-			(_appId, _msgType, body) => {
-				clearTimeout(timer)
-				resolve(Buffer.from(body))
-			},
-		)
-	})
+		const buffer = await new Promise<Buffer>((resolve, reject) => {
+			const timer = setTimeout(
+				() => reject(new Error(`GC match details timeout for ${matchId}`)),
+				15_000,
+			)
+			bound.client.sendToGC(
+				DOTA_APP_ID,
+				GC_MSG.matchDetailsRequest,
+				{},
+				payload,
+				(_appId, _msgType, body) => {
+					clearTimeout(timer)
+					resolve(Buffer.from(body))
+				},
+			)
+		})
 
-	return {
-		...decodeMatchDetailsResponse(buffer),
-		accountId: bound.account.id,
-		proxyId: bound.account.proxyId,
+		observeGcRequest('match_details', 'success', started)
+		return {
+			...decodeMatchDetailsResponse(buffer),
+			accountId: bound.account.id,
+			proxyId: bound.account.proxyId,
+		}
+	} catch (error) {
+		observeGcRequest('match_details', classifyGcRequest(error), started)
+		throw error
 	}
 }
 
@@ -559,5 +578,6 @@ export async function closeGcSession(): Promise<void> {
 	if (session === null) return
 	const current = session
 	session = null
+	setGcSessionUp(false)
 	current.client.logOff()
 }

@@ -25,6 +25,10 @@ export type AppSettings = {
 	steamApiMinIntervalMs: number
 	historyNewestRefreshMs: number
 	historyExhaustedRefreshMs: number
+	historyFastPollMs: number
+	historyFastPollLimit: number
+	historySlowPollMs: number
+	historySlowPollLimit: number
 	replenishIntervalMs: number
 	retestIntervalMs: number
 	marketplaceBuyMax: number
@@ -58,6 +62,10 @@ const KEYS = {
 	steamApiMinIntervalMs: 'steam_api_min_interval_ms',
 	historyNewestRefreshMs: 'history_newest_refresh_ms',
 	historyExhaustedRefreshMs: 'history_exhausted_refresh_ms',
+	historyFastPollMs: 'history_fast_poll_ms',
+	historyFastPollLimit: 'history_fast_poll_limit',
+	historySlowPollMs: 'history_slow_poll_ms',
+	historySlowPollLimit: 'history_slow_poll_limit',
 	replenishIntervalMs: 'replenish_interval_ms',
 	retestIntervalMs: 'retest_interval_ms',
 	marketplaceBuyMax: 'marketplace_buy_max',
@@ -144,6 +152,10 @@ export async function getAppSettings(): Promise<AppSettings> {
 			map,
 			KEYS.historyExhaustedRefreshMs,
 		),
+		historyFastPollMs: requiredPositiveInt(map, KEYS.historyFastPollMs),
+		historyFastPollLimit: requiredPositiveInt(map, KEYS.historyFastPollLimit),
+		historySlowPollMs: requiredPositiveInt(map, KEYS.historySlowPollMs),
+		historySlowPollLimit: requiredPositiveInt(map, KEYS.historySlowPollLimit),
 		replenishIntervalMs: requiredPositiveInt(map, KEYS.replenishIntervalMs),
 		retestIntervalMs: requiredPositiveInt(map, KEYS.retestIntervalMs),
 		marketplaceBuyMax: requiredPositiveInt(map, KEYS.marketplaceBuyMax),
@@ -155,7 +167,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 		gcLogonAttempts: requiredPositiveInt(map, KEYS.gcLogonAttempts),
 		apiKeyRateLimitMs: requiredPositiveInt(map, KEYS.apiKeyRateLimitMs),
 		gcAccountRateLimitMs: requiredPositiveInt(map, KEYS.gcAccountRateLimitMs),
-		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 1),
+		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 10),
 	}
 }
 

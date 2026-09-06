@@ -3,8 +3,9 @@ import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
 import {
 	enqueueFetchMatchDetails,
-	persistSeqMatches,
+	matchOrigin,
 } from '#src/jobs/fetch-match-details'
+import { observeHistoryWalk } from '#src/metrics/observe'
 import type { HistoryMatch } from '#src/steam/schemas'
 import { getMatchHistoryPage } from '#src/steam/web-api'
 import { asNumber } from '#src/store/coerce'
@@ -32,6 +33,13 @@ export type WalkLeagueInput = {
 	reset?: boolean
 }
 
+export const WALK_JOB_KEY = 'walk_league_history'
+
+/** Older pages of this league remain. Empty/newest-only must not pin the walker. */
+export function walkHasOlderPages(empty: boolean, noMore: boolean): boolean {
+	return !empty && !noMore
+}
+
 function newestRefreshDue(
 	checkedAt: unknown,
 	exhausted: boolean,
@@ -56,11 +64,22 @@ export async function runWalkLeagueHistory(
 	}
 
 	const settings = await getAppSettings()
+	const detailsLimit = Math.min(
+		input.matchesLimit ?? settings.historyDetailsEnqueueLimit,
+		settings.historyDetailsEnqueueLimit,
+	)
 	const league =
 		input.leagueId != null
 			? await getLeague(input.leagueId)
 			: await pickNextHistoryLeague(settings.historyExhaustedRefreshMs)
-	if (league == null) return { skipped: true }
+	if (league == null) {
+		observeHistoryWalk({ listed: 0, result: 'skipped' })
+		await scheduleNextWalk({
+			detailsLimit,
+			delayMs: settings.steamApiMinIntervalMs,
+		})
+		return { skipped: true }
+	}
 
 	const leagueId = Number(league.league_id)
 	await ensureLeagueStub(leagueId)
@@ -87,36 +106,27 @@ export async function runWalkLeagueHistory(
 	const listed = page.matches
 	await persistListed(leagueId, listed)
 
-	const seqs = listed
-		.map((row) => row.match_seq_num)
-		.filter((seq): seq is number => typeof seq === 'number' && seq > 0)
-	if (seqs.length > 0) {
-		const seq = await persistSeqMatches(ctx, Math.min(...seqs))
-		logger.info(
-			{ leagueId, startSeq: Math.min(...seqs), saved: seq.saved },
-			'persisted GetMatchHistoryBySequenceNum window',
-		)
-	}
-
 	const newest = listed[0]?.match_id ?? head
 	const oldest = listed.at(-1)?.match_id ?? tail
-	const noMore =
-		page.resultsRemaining <= 0 || listed.length === 0 || oldest === tail
+	const empty = listed.length === 0
+	const noMore = page.resultsRemaining <= 0 || empty || oldest === tail
 
 	if (fetchNewest) {
 		await updateLeagueHistoryCursor(leagueId, {
 			headMatchId: newest ?? null,
 			tailMatchId: oldest ?? tail,
-			exhausted: listed.length === 0 ? exhausted : false,
+			// Empty newest page: Valve has nothing for this league (or hides it).
+			// Leave exhausted=false and we spin forever — head stays null, so
+			// every visit is fetchNewest again and self-requeues the same id.
+			exhausted: empty,
 		})
 	} else {
 		await updateLeagueHistoryCursor(leagueId, {
 			tailMatchId: oldest ?? tail,
-			exhausted: noMore,
+			exhausted: empty || noMore,
 		})
 	}
 
-	const detailsLimit = input.matchesLimit ?? settings.historyDetailsEnqueueLimit
 	const inflightDetails = await countJobs(
 		'fetch_match_details',
 		PRIORITY.detailsHistorical,
@@ -126,34 +136,35 @@ export async function runWalkLeagueHistory(
 		room <= 0
 			? []
 			: await db.execute(sql`
-					SELECT match_id
+					SELECT match_id, source
 					FROM matches
-					WHERE league_id = ${leagueId}
-						AND details_fetched_at IS NULL
-					ORDER BY start_time DESC NULLS LAST
+					WHERE (seq_fetched_at IS NULL OR details_fetched_at IS NULL)
+						AND phase IN (
+							'discovered',
+							'awaiting_details',
+							'details_ready'
+						)
+					ORDER BY
+						CASE WHEN source = 'live' THEN 0 ELSE 1 END,
+						start_time DESC NULLS LAST
 					LIMIT ${room}
 				`)
 
 	for (const row of pending) {
 		const matchId = Number(row.match_id)
-		await enqueueFetchMatchDetails(matchId, 'historical')
+		await enqueueFetchMatchDetails(matchId, matchOrigin(row.source))
 	}
 
 	const detailsQueued = pending.length
-	const atCap = inflightDetails + detailsQueued >= detailsLimit
-	if ((!noMore || fetchNewest) && !atCap) {
-		await enqueueJob({
-			identifier: 'walk_league_history',
-			payload: {
-				league_id: leagueId,
-				matches_limit: detailsLimit,
-			},
-			queueName: QUEUE.historical,
-			priority: PRIORITY.walkHistory,
-			jobKey: `walk:${leagueId}`,
-			jobKeyMode: 'replace',
-		})
-	}
+	observeHistoryWalk({
+		listed: listed.length,
+		result: empty ? 'empty' : 'hits',
+	})
+	await scheduleNextWalk({
+		leagueId: walkHasOlderPages(empty, noMore) ? leagueId : undefined,
+		detailsLimit,
+		delayMs: settings.steamApiMinIntervalMs,
+	})
 
 	logger.info(
 		{
@@ -168,6 +179,25 @@ export async function runWalkLeagueHistory(
 		'walked league history page',
 	)
 	return { leagueId, listed: listed.length }
+}
+
+async function scheduleNextWalk(input: {
+	leagueId?: number
+	detailsLimit: number
+	delayMs: number
+}): Promise<void> {
+	await enqueueJob({
+		identifier: 'walk_league_history',
+		payload: {
+			...(input.leagueId != null ? { league_id: input.leagueId } : {}),
+			matches_limit: input.detailsLimit,
+		},
+		queueName: QUEUE.historical,
+		priority: PRIORITY.walkHistory,
+		jobKey: WALK_JOB_KEY,
+		jobKeyMode: 'replace',
+		runAt: new Date(Date.now() + input.delayMs),
+	})
 }
 
 async function persistListed(

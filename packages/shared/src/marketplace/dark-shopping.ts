@@ -1,3 +1,8 @@
+import {
+	classifyHttpStatus,
+	classifyWebApiError,
+	observeMarketplaceHttp,
+} from '#src/metrics/observe'
 import { asNumber, asRecord, asString } from '#src/store/coerce'
 import env from '#src/utils/env'
 import { status } from '#src/utils/status'
@@ -172,36 +177,62 @@ async function darkFetch(
 			status(`dark.shopping: retry ${String(attempt)} after HTTP 429`)
 			await darkShoppingSlot()
 		}
-		const response = await fetch(url, {
-			method,
-			headers,
-			body,
-			signal: AbortSignal.timeout(30_000),
-		})
-		const text = await response.text()
-		logDarkResponse(response.status, text, key)
-		if (response.status === 429) {
-			lastError = new DarkShoppingError(429, text.slice(0, 240))
-			await Bun.sleep(2_000 * (attempt + 1))
-			continue
-		}
-		let json: unknown
+		const started = performance.now()
 		try {
-			json = JSON.parse(text) as unknown
-		} catch {
-			throw new DarkShoppingError(
-				response.status,
-				`dark.shopping non-JSON: ${text.slice(0, 200)}`,
-			)
+			const response = await fetch(url, {
+				method,
+				headers,
+				body,
+				signal: AbortSignal.timeout(30_000),
+			})
+			const text = await response.text()
+			logDarkResponse(response.status, text, key)
+			if (response.status === 429) {
+				observeMarketplaceHttp('dark_shopping', path, 'http_429', started)
+				lastError = new DarkShoppingError(429, text.slice(0, 240))
+				await Bun.sleep(2_000 * (attempt + 1))
+				continue
+			}
+			let json: unknown
+			try {
+				json = JSON.parse(text) as unknown
+			} catch {
+				observeMarketplaceHttp('dark_shopping', path, 'parse', started)
+				throw new DarkShoppingError(
+					response.status,
+					`dark.shopping non-JSON: ${text.slice(0, 200)}`,
+				)
+			}
+			if (!response.ok) {
+				observeMarketplaceHttp(
+					'dark_shopping',
+					path,
+					classifyHttpStatus(response.status),
+					started,
+				)
+				const parsed = parseDarkEnvelope(json)
+				throw new DarkShoppingError(
+					response.status,
+					asString(parsed.data.message) ?? text.slice(0, 200),
+				)
+			}
+			observeMarketplaceHttp('dark_shopping', path, 'success', started)
+			return json
+		} catch (error) {
+			if (error instanceof DarkShoppingError && error.status !== 429) {
+				throw error
+			}
+			if (!(error instanceof DarkShoppingError)) {
+				observeMarketplaceHttp(
+					'dark_shopping',
+					path,
+					classifyWebApiError(error),
+					started,
+				)
+			}
+			if (!(error instanceof DarkShoppingError)) throw error
+			lastError = error
 		}
-		if (!response.ok) {
-			const parsed = parseDarkEnvelope(json)
-			throw new DarkShoppingError(
-				response.status,
-				asString(parsed.data.message) ?? text.slice(0, 200),
-			)
-		}
-		return json
 	}
 	throw lastError ?? new DarkShoppingError(429, 'dark.shopping rate limited')
 }
@@ -234,18 +265,38 @@ export async function getDarkOrderDownloadLink(
 export async function fetchDarkDeliveryText(link: string): Promise<string> {
 	await darkShoppingSlot()
 	status(`dark.shopping: GET delivery ${truncateForLog(link, 160)}`)
-	const response = await fetch(link, { signal: AbortSignal.timeout(30_000) })
-	const text = await response.text()
-	status(
-		`dark.shopping: delivery HTTP ${String(response.status)} ${String(text.length)} chars`,
-	)
-	if (!response.ok) {
-		throw new DarkShoppingError(
-			response.status,
-			`download ${link}: ${text.slice(0, 160)}`,
+	const started = performance.now()
+	try {
+		const response = await fetch(link, { signal: AbortSignal.timeout(30_000) })
+		const text = await response.text()
+		status(
+			`dark.shopping: delivery HTTP ${String(response.status)} ${String(text.length)} chars`,
 		)
+		if (!response.ok) {
+			observeMarketplaceHttp(
+				'dark_shopping',
+				'delivery',
+				classifyHttpStatus(response.status),
+				started,
+			)
+			throw new DarkShoppingError(
+				response.status,
+				`download ${link}: ${text.slice(0, 160)}`,
+			)
+		}
+		observeMarketplaceHttp('dark_shopping', 'delivery', 'success', started)
+		return text
+	} catch (error) {
+		if (!(error instanceof DarkShoppingError)) {
+			observeMarketplaceHttp(
+				'dark_shopping',
+				'delivery',
+				classifyWebApiError(error),
+				started,
+			)
+		}
+		throw error
 	}
-	return text
 }
 
 export async function waitDarkOrderReady(input: {

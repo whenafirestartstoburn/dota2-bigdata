@@ -1,4 +1,6 @@
 import { errorMessage } from '@app/shared/src/store/coerce'
+import { logger } from '@app/shared/src/utils/logger'
+import { runWithTrace, traceIdFromRequest } from '@app/shared/src/utils/trace'
 import env from '#src/utils/env'
 
 const origins = env.CORS_ORIGINS.split(',')
@@ -77,4 +79,77 @@ export function methods<
 	T extends Record<string, (request: Request) => Response | Promise<Response>>,
 >(handlers: T): T & { OPTIONS: (request: Request) => Response } {
 	return { OPTIONS: corsPreflight, ...handlers }
+}
+
+type RouteHandler = (request: Request) => Response | Promise<Response>
+
+function withTraceHeader(response: Response, traceId: string): Response {
+	const headers = new Headers(response.headers)
+	headers.set('x-trace-id', traceId)
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	})
+}
+
+export function tracedHandler(handler: RouteHandler): RouteHandler {
+	return (request) => {
+		const trace_id = traceIdFromRequest(request)
+		return runWithTrace({ trace_id }, async () => {
+			const started = Date.now()
+			const path = new URL(request.url).pathname
+			try {
+				const response = withTraceHeader(await handler(request), trace_id)
+				if (path !== '/healthz' && path !== '/readyz') {
+					logger.info(
+						{
+							method: request.method,
+							path,
+							status: response.status,
+							duration_ms: Date.now() - started,
+						},
+						'http',
+					)
+				}
+				return response
+			} catch (error) {
+				logger.error(
+					{
+						method: request.method,
+						path,
+						err: errorMessage(error),
+						duration_ms: Date.now() - started,
+					},
+					'http',
+				)
+				throw error
+			}
+		})
+	}
+}
+
+export function tracedRoutes<T extends Record<string, unknown>>(routes: T): T {
+	const out: Record<string, unknown> = {}
+	for (const [path, value] of Object.entries(routes)) {
+		if (typeof value === 'function') {
+			out[path] = tracedHandler(value as RouteHandler)
+			continue
+		}
+		if (value != null && typeof value === 'object') {
+			const methodsOut: Record<string, unknown> = {}
+			for (const [method, handler] of Object.entries(
+				value as Record<string, unknown>,
+			)) {
+				methodsOut[method] =
+					typeof handler === 'function'
+						? tracedHandler(handler as RouteHandler)
+						: handler
+			}
+			out[path] = methodsOut
+			continue
+		}
+		out[path] = value
+	}
+	return out as T
 }

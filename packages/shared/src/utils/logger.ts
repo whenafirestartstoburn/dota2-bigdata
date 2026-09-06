@@ -1,5 +1,6 @@
 import pino from 'pino'
 import env from '#src/utils/env'
+import { currentTrace } from '#src/utils/trace'
 
 const redact = {
 	paths: [
@@ -27,11 +28,32 @@ const redact = {
 	censor: '[redacted]',
 }
 
-export const logger =
-	env.NODE_ENV === 'development'
-		? pino({
-				level: env.LOG_LEVEL,
-				redact,
-				transport: { target: 'pino-pretty' },
-			})
-		: pino({ level: env.LOG_LEVEL, redact })
+function serviceName(): string {
+	const name = process.env.SERVICE_NAME
+	return name != null && name !== '' ? name : 'app'
+}
+
+export const logger = pino({
+	level: env.LOG_LEVEL,
+	redact,
+	timestamp: pino.stdTimeFunctions.isoTime,
+	base: { service: serviceName() },
+	formatters: {
+		level(label) {
+			return { level: label }
+		},
+	},
+	mixin() {
+		const trace = currentTrace()
+		if (trace == null) return {}
+		return {
+			trace_id: trace.trace_id,
+			...(trace.job != null ? { job: trace.job } : {}),
+			...(trace.job_id != null ? { job_id: trace.job_id } : {}),
+			...(trace.match_id != null ? { match_id: trace.match_id } : {}),
+		}
+	},
+	...(env.NODE_ENV === 'development' && process.stdout.isTTY === true
+		? { transport: { target: 'pino-pretty' } }
+		: {}),
+})

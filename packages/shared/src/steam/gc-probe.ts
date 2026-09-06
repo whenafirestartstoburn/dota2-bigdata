@@ -1,6 +1,7 @@
 /// <reference path="../types/steam-user.d.ts" />
 import SteamUser from 'steam-user'
 import {
+	ensureAccountProxy,
 	isProxyTransportError,
 	proxyHostPort,
 	rotateAccountProxy,
@@ -14,6 +15,7 @@ import {
 	accountHasUsableTotp,
 	type GcAccount,
 	getGcAccountByLogin,
+	pickGcAccount,
 	saveSteamSession,
 } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
@@ -24,6 +26,7 @@ import {
 	encodeClientHello,
 	encodeMatchDetailsRequest,
 	GC_MSG,
+	type GcMatchReplayLocator,
 } from '#src/gc/protobuf'
 import { fetchSteamGuardFromMailbox } from '#src/steam/email-guard'
 import { generateAuthCode, querySteamTimeOffset } from '#src/steam/totp'
@@ -224,10 +227,10 @@ async function totpOffset(account: GcAccount): Promise<number> {
 	}
 }
 
-async function requestReplayLocator(
+async function requestLocator(
 	client: SteamUser,
 	matchId: number,
-): Promise<string> {
+): Promise<GcMatchReplayLocator> {
 	const payload = encodeMatchDetailsRequest(matchId)
 	const buffer = await new Promise<Buffer>((resolve, reject) => {
 		const timer = setTimeout(
@@ -246,20 +249,19 @@ async function requestReplayLocator(
 			},
 		)
 	})
-	const locator = decodeMatchDetailsResponse(buffer)
-	if (locator.cluster == null || locator.replaySalt == null) {
-		throw new Error(
-			`GC match ${String(matchId)} has no cluster/salt (result=${String(locator.result)})`,
-		)
-	}
-	return replayUrl(locator.cluster, matchId, locator.replaySalt)
+	return decodeMatchDetailsResponse(buffer)
 }
 
-/** Password-login this account into Dota GC, persist refresh token, optional match test. */
-export async function loginGcAndMaybeTest(input: {
+export type GcSessionApi = {
 	login: string
-	testOnMatchId: number | null
-}): Promise<{ replayUrl: string | null }> {
+	locate: (matchId: number) => Promise<GcMatchReplayLocator>
+}
+
+/** Password-login a Postgres GC account and keep the session for `run`. */
+export async function withGcSession<T>(input: {
+	login?: string
+	run: (api: GcSessionApi) => Promise<T>
+}): Promise<T> {
 	const bag: GuardBag = {
 		authCode: null,
 		lastEmailUid: null,
@@ -269,12 +271,24 @@ export async function loginGcAndMaybeTest(input: {
 	const settings = await getAppSettings()
 	const attempts = settings.gcLogonAttempts
 	for (let attempt = 0; attempt < attempts; attempt++) {
-		const account = await getGcAccountByLogin(input.login)
-		if (account == null) {
-			throw new Error(`no steam_accounts row for login=${input.login}`)
+		const picked =
+			input.login != null
+				? await getGcAccountByLogin(input.login)
+				: await pickGcAccount()
+		if (picked == null) {
+			throw new Error(
+				input.login != null
+					? `no steam_accounts row for login=${input.login}`
+					: 'no usable Steam account for GC',
+			)
 		}
+		await ensureAccountProxy({
+			accountId: picked.id,
+			proxyId: picked.proxyId,
+		})
+		const account = (await getGcAccountByLogin(picked.login)) ?? picked
 		if (account.password === '') {
-			throw new Error(`password is required for ${input.login}`)
+			throw new Error(`password is required for ${account.login}`)
 		}
 		const client = createClient(account)
 		client.on('refreshToken', (token) => {
@@ -326,15 +340,10 @@ export async function loginGcAndMaybeTest(input: {
 				resourceId: account.id,
 				ok: true,
 			})
-			if (input.testOnMatchId == null) {
-				return { replayUrl: null }
-			}
-			status(
-				`gc: CMsgGCMatchDetailsRequest matchId=${String(input.testOnMatchId)}`,
-			)
-			const url = await requestReplayLocator(client, input.testOnMatchId)
-			status(`gc: replayUrl=${url}`)
-			return { replayUrl: url }
+			return await input.run({
+				login: account.login,
+				locate: (matchId) => requestLocator(client, matchId),
+			})
 		} catch (error) {
 			lastError = error
 			if (isTransientCmClose(error) && attempt < attempts - 1) {
@@ -384,4 +393,35 @@ export async function loginGcAndMaybeTest(input: {
 	throw lastError instanceof Error
 		? lastError
 		: new Error(errorMessage(lastError))
+}
+
+/** Password-login this account into Dota GC, persist refresh token, optional match test. */
+export async function loginGcAndMaybeTest(input: {
+	login: string
+	testOnMatchId: number | null
+}): Promise<{ replayUrl: string | null }> {
+	return withGcSession({
+		login: input.login,
+		run: async ({ locate }) => {
+			if (input.testOnMatchId == null) {
+				return { replayUrl: null }
+			}
+			status(
+				`gc: CMsgGCMatchDetailsRequest matchId=${String(input.testOnMatchId)}`,
+			)
+			const locator = await locate(input.testOnMatchId)
+			if (locator.cluster == null || locator.replaySalt == null) {
+				throw new Error(
+					`GC match ${String(input.testOnMatchId)} has no cluster/salt (result=${String(locator.result)})`,
+				)
+			}
+			const url = replayUrl(
+				locator.cluster,
+				input.testOnMatchId,
+				locator.replaySalt,
+			)
+			status(`gc: replayUrl=${url}`)
+			return { replayUrl: url }
+		},
+	})
 }

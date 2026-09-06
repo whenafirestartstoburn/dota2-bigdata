@@ -18,12 +18,12 @@ type Store struct {
 }
 
 type Claimed struct {
-	MatchID        uint64
-	StartTime      time.Time
-	S3Bucket       string
-	S3Key          string
-	ParserVersion  *int32
-	Status         string
+	MatchID       uint64
+	StartTime     time.Time
+	S3Bucket      string
+	S3Key         string
+	ParserVersion *int32
+	Status        string
 }
 
 func Open(ctx context.Context, uri string) (*Store, error) {
@@ -47,14 +47,37 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
+func (s *Store) CountReplayStatus(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT status::text, count(*)
+		FROM match_replays
+		WHERE status IN ('stored', 'parsing', 'failed')
+		GROUP BY status
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{"stored": 0, "parsing": 0, "failed": 0}
+	for rows.Next() {
+		var status string
+		var n int64
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		out[status] = n
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Parallelism(ctx context.Context) (int, error) {
 	var raw string
 	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = 'parser_parallelism'`).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 1, nil
+		return 10, nil
 	}
 	if err != nil {
-		return 1, err
+		return 10, err
 	}
 	n := 0
 	for _, c := range raw {
@@ -64,7 +87,7 @@ func (s *Store) Parallelism(ctx context.Context) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	if n < 1 {
-		return 1, nil
+		return 10, nil
 	}
 	return n, nil
 }
@@ -225,6 +248,17 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 		WHERE match_id = $1
 	`, res.MatchID, int32(res.ParserVersion), int64(res.ParseRunID)); err != nil {
 		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE matches
+		SET phase = 'parsed',
+			waiting_for = NULL,
+			updated_at = now()
+		WHERE match_id = $1
+		  AND phase IN ('replay_stored', 'awaiting_replay', 'details_ready')
+	`, res.MatchID); err != nil {
+		return fmt.Errorf("matches.phase: %w", err)
 	}
 
 	return tx.Commit(ctx)

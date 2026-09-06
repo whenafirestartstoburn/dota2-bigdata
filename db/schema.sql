@@ -1,7 +1,7 @@
 \restrict dbmate
 
 -- Dumped from database version 16.15
--- Dumped by pg_dump version 18.4
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -103,7 +103,10 @@ CREATE TYPE public.match_phase AS ENUM (
     'awaiting_replay',
     'replay_stored',
     'replay_unavailable',
-    'failed'
+    'failed',
+    'awaiting_history',
+    'parsed',
+    'not_started'
 );
 
 
@@ -647,6 +650,178 @@ ALTER TABLE graphile_worker._private_tasks ALTER COLUMN id ADD GENERATED ALWAYS 
 
 
 --
+-- Name: abilities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.abilities (
+    ability_id integer NOT NULL,
+    name text NOT NULL,
+    localized_name text DEFAULT ''::text NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL,
+    CONSTRAINT abilities_kind_check CHECK ((kind = ANY (ARRAY['spell'::text, 'talent'::text, 'innate'::text, 'item'::text, 'other'::text])))
+);
+
+
+--
+-- Name: abilities_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.abilities_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: abilities_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.abilities_id_seq OWNED BY public.abilities.id;
+
+
+--
+-- Name: clusters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.clusters (
+    cluster integer NOT NULL,
+    region integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: clusters_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.clusters_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: clusters_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.clusters_id_seq OWNED BY public.clusters.id;
+
+
+--
+-- Name: game_modes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.game_modes (
+    game_mode integer NOT NULL,
+    name text NOT NULL,
+    balanced boolean,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: game_modes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.game_modes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: game_modes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.game_modes_id_seq OWNED BY public.game_modes.id;
+
+
+--
+-- Name: hero_abilities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hero_abilities (
+    hero_id integer NOT NULL,
+    ability_id integer NOT NULL,
+    slot integer NOT NULL,
+    is_talent boolean DEFAULT false NOT NULL,
+    talent_level integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: hero_abilities_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hero_abilities_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hero_abilities_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hero_abilities_id_seq OWNED BY public.hero_abilities.id;
+
+
+--
+-- Name: hero_facets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hero_facets (
+    hero_id integer NOT NULL,
+    facet_id integer NOT NULL,
+    name text NOT NULL,
+    localized_name text DEFAULT ''::text NOT NULL,
+    icon text,
+    color text,
+    deprecated boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: hero_facets_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hero_facets_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hero_facets_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hero_facets_id_seq OWNED BY public.hero_facets.id;
+
+
+--
 -- Name: heroes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -832,6 +1007,39 @@ CREATE SEQUENCE public.leagues_id_seq
 --
 
 ALTER SEQUENCE public.leagues_id_seq OWNED BY public.leagues.id;
+
+
+--
+-- Name: lobby_types; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.lobby_types (
+    lobby_type integer NOT NULL,
+    name text NOT NULL,
+    balanced boolean,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: lobby_types_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.lobby_types_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: lobby_types_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.lobby_types_id_seq OWNED BY public.lobby_types.id;
 
 
 --
@@ -1340,12 +1548,12 @@ CREATE TABLE public.match_replays (
     steam_account_id bigint,
     proxy_id bigint,
     parser_version integer,
-    parse_run_id bigint,
     parsed_at timestamp with time zone,
     stored_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    id bigint NOT NULL
+    id bigint NOT NULL,
+    parse_run_id bigint
 );
 
 
@@ -1446,7 +1654,22 @@ CREATE TABLE public.matches (
     game_number integer,
     stage_name text,
     league_tier integer,
-    id bigint NOT NULL
+    id bigint NOT NULL,
+    ingest_sources text[] DEFAULT '{}'::text[] NOT NULL,
+    waiting_for text,
+    last_error_kind text,
+    server_steam_id bigint,
+    live_league_missed_polls integer DEFAULT 0 NOT NULL,
+    top_live_missed_polls integer DEFAULT 0 NOT NULL,
+    history_poll_fast_count integer DEFAULT 0 NOT NULL,
+    history_poll_slow_count integer DEFAULT 0 NOT NULL,
+    history_last_polled_at timestamp with time zone,
+    history_next_poll_at timestamp with time zone,
+    seq_fetched_at timestamp with time zone,
+    last_realtime_at timestamp with time zone,
+    live_duration_max real DEFAULT 0 NOT NULL,
+    CONSTRAINT matches_last_error_kind_check CHECK (((last_error_kind IS NULL) OR (last_error_kind = ANY (ARRAY['network'::text, 'rate_limit'::text, 'auth'::text, 'not_ready'::text, 'unavailable'::text, 'history_timeout'::text, 'not_started'::text, 'other'::text])))),
+    CONSTRAINT matches_waiting_for_check CHECK (((waiting_for IS NULL) OR (waiting_for = ANY (ARRAY['live_end'::text, 'history'::text, 'seq'::text, 'gc'::text, 'replay'::text, 'parse'::text]))))
 );
 
 
@@ -1499,6 +1722,38 @@ CREATE SEQUENCE public.patches_id_seq
 --
 
 ALTER SEQUENCE public.patches_id_seq OWNED BY public.patches.id;
+
+
+--
+-- Name: permanent_buffs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.permanent_buffs (
+    buff_id integer NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: permanent_buffs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.permanent_buffs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: permanent_buffs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.permanent_buffs_id_seq OWNED BY public.permanent_buffs.id;
 
 
 --
@@ -1576,6 +1831,38 @@ CREATE SEQUENCE public.proxies_id_seq
 --
 
 ALTER SEQUENCE public.proxies_id_seq OWNED BY public.proxies.id;
+
+
+--
+-- Name: regions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regions (
+    region integer NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: regions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.regions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: regions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.regions_id_seq OWNED BY public.regions.id;
 
 
 --
@@ -1818,6 +2105,73 @@ ALTER SEQUENCE public.teams_id_seq OWNED BY public.teams.id;
 
 
 --
+-- Name: xp_levels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.xp_levels (
+    level integer NOT NULL,
+    xp integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    id bigint NOT NULL
+);
+
+
+--
+-- Name: xp_levels_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.xp_levels_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: xp_levels_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.xp_levels_id_seq OWNED BY public.xp_levels.id;
+
+
+--
+-- Name: abilities id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.abilities ALTER COLUMN id SET DEFAULT nextval('public.abilities_id_seq'::regclass);
+
+
+--
+-- Name: clusters id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.clusters ALTER COLUMN id SET DEFAULT nextval('public.clusters_id_seq'::regclass);
+
+
+--
+-- Name: game_modes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.game_modes ALTER COLUMN id SET DEFAULT nextval('public.game_modes_id_seq'::regclass);
+
+
+--
+-- Name: hero_abilities id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_abilities ALTER COLUMN id SET DEFAULT nextval('public.hero_abilities_id_seq'::regclass);
+
+
+--
+-- Name: hero_facets id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_facets ALTER COLUMN id SET DEFAULT nextval('public.hero_facets_id_seq'::regclass);
+
+
+--
 -- Name: heroes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1850,6 +2204,13 @@ ALTER TABLE ONLY public.league_ingest_runs ALTER COLUMN id SET DEFAULT nextval('
 --
 
 ALTER TABLE ONLY public.leagues ALTER COLUMN id SET DEFAULT nextval('public.leagues_id_seq'::regclass);
+
+
+--
+-- Name: lobby_types id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lobby_types ALTER COLUMN id SET DEFAULT nextval('public.lobby_types_id_seq'::regclass);
 
 
 --
@@ -1951,6 +2312,13 @@ ALTER TABLE ONLY public.patches ALTER COLUMN id SET DEFAULT nextval('public.patc
 
 
 --
+-- Name: permanent_buffs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permanent_buffs ALTER COLUMN id SET DEFAULT nextval('public.permanent_buffs_id_seq'::regclass);
+
+
+--
 -- Name: players id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1962,6 +2330,13 @@ ALTER TABLE ONLY public.players ALTER COLUMN id SET DEFAULT nextval('public.play
 --
 
 ALTER TABLE ONLY public.proxies ALTER COLUMN id SET DEFAULT nextval('public.proxies_id_seq'::regclass);
+
+
+--
+-- Name: regions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regions ALTER COLUMN id SET DEFAULT nextval('public.regions_id_seq'::regclass);
 
 
 --
@@ -2004,6 +2379,13 @@ ALTER TABLE ONLY public.steam_api_keys ALTER COLUMN id SET DEFAULT nextval('publ
 --
 
 ALTER TABLE ONLY public.teams ALTER COLUMN id SET DEFAULT nextval('public.teams_id_seq'::regclass);
+
+
+--
+-- Name: xp_levels id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xp_levels ALTER COLUMN id SET DEFAULT nextval('public.xp_levels_id_seq'::regclass);
 
 
 --
@@ -2068,6 +2450,86 @@ ALTER TABLE ONLY graphile_worker._private_tasks
 
 ALTER TABLE ONLY graphile_worker._private_tasks
     ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: abilities abilities_ability_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.abilities
+    ADD CONSTRAINT abilities_ability_id_key UNIQUE (ability_id);
+
+
+--
+-- Name: abilities abilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.abilities
+    ADD CONSTRAINT abilities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: clusters clusters_cluster_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.clusters
+    ADD CONSTRAINT clusters_cluster_key UNIQUE (cluster);
+
+
+--
+-- Name: clusters clusters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.clusters
+    ADD CONSTRAINT clusters_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: game_modes game_modes_game_mode_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.game_modes
+    ADD CONSTRAINT game_modes_game_mode_key UNIQUE (game_mode);
+
+
+--
+-- Name: game_modes game_modes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.game_modes
+    ADD CONSTRAINT game_modes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hero_abilities hero_abilities_hero_id_slot_is_talent_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_abilities
+    ADD CONSTRAINT hero_abilities_hero_id_slot_is_talent_key UNIQUE (hero_id, slot, is_talent);
+
+
+--
+-- Name: hero_abilities hero_abilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_abilities
+    ADD CONSTRAINT hero_abilities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hero_facets hero_facets_hero_id_facet_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_facets
+    ADD CONSTRAINT hero_facets_hero_id_facet_id_key UNIQUE (hero_id, facet_id);
+
+
+--
+-- Name: hero_facets hero_facets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_facets
+    ADD CONSTRAINT hero_facets_pkey PRIMARY KEY (id);
 
 
 --
@@ -2148,6 +2610,22 @@ ALTER TABLE ONLY public.leagues
 
 ALTER TABLE ONLY public.leagues
     ADD CONSTRAINT leagues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: lobby_types lobby_types_lobby_type_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lobby_types
+    ADD CONSTRAINT lobby_types_lobby_type_key UNIQUE (lobby_type);
+
+
+--
+-- Name: lobby_types lobby_types_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lobby_types
+    ADD CONSTRAINT lobby_types_pkey PRIMARY KEY (id);
 
 
 --
@@ -2391,6 +2869,22 @@ ALTER TABLE ONLY public.patches
 
 
 --
+-- Name: permanent_buffs permanent_buffs_buff_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permanent_buffs
+    ADD CONSTRAINT permanent_buffs_buff_id_key UNIQUE (buff_id);
+
+
+--
+-- Name: permanent_buffs permanent_buffs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.permanent_buffs
+    ADD CONSTRAINT permanent_buffs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: players players_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2420,6 +2914,22 @@ ALTER TABLE ONLY public.proxies
 
 ALTER TABLE ONLY public.proxies
     ADD CONSTRAINT proxies_url_key UNIQUE (url);
+
+
+--
+-- Name: regions regions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regions
+    ADD CONSTRAINT regions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: regions regions_region_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regions
+    ADD CONSTRAINT regions_region_key UNIQUE (region);
 
 
 --
@@ -2519,6 +3029,22 @@ ALTER TABLE ONLY public.teams
 
 
 --
+-- Name: xp_levels xp_levels_level_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xp_levels
+    ADD CONSTRAINT xp_levels_level_key UNIQUE (level);
+
+
+--
+-- Name: xp_levels xp_levels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xp_levels
+    ADD CONSTRAINT xp_levels_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: jobs_main_index; Type: INDEX; Schema: graphile_worker; Owner: -
 --
 
@@ -2568,6 +3094,13 @@ CREATE INDEX match_replays_status_idx ON public.match_replays USING btree (statu
 
 
 --
+-- Name: matches_history_poll_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_history_poll_idx ON public.matches USING btree (league_id, history_next_poll_at) WHERE (phase = 'awaiting_history'::public.match_phase);
+
+
+--
 -- Name: matches_league_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2579,6 +3112,13 @@ CREATE INDEX matches_league_idx ON public.matches USING btree (league_id);
 --
 
 CREATE INDEX matches_phase_idx ON public.matches USING btree (phase);
+
+
+--
+-- Name: matches_realtime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_realtime_idx ON public.matches USING btree (last_realtime_at) WHERE ((phase = 'live'::public.match_phase) AND (server_steam_id IS NOT NULL));
 
 
 --
@@ -2624,6 +3164,41 @@ CREATE INDEX series_league_idx ON public.series USING btree (league_id);
 
 
 --
+-- Name: abilities set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.abilities FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: clusters set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.clusters FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: game_modes set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.game_modes FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: hero_abilities set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.hero_abilities FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: hero_facets set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.hero_facets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: heroes set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2656,6 +3231,13 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.league_ingest_runs FOR EAC
 --
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.leagues FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: lobby_types set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.lobby_types FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -2757,6 +3339,13 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.patches FOR EACH ROW EXECU
 
 
 --
+-- Name: permanent_buffs set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.permanent_buffs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: players set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2768,6 +3357,13 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.players FOR EACH ROW EXECU
 --
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.proxies FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: regions set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.regions FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -2810,6 +3406,45 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_api_keys FOR EACH RO
 --
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.teams FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: xp_levels set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.xp_levels FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: clusters clusters_region_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.clusters
+    ADD CONSTRAINT clusters_region_fkey FOREIGN KEY (region) REFERENCES public.regions(region) ON DELETE SET NULL;
+
+
+--
+-- Name: hero_abilities hero_abilities_ability_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_abilities
+    ADD CONSTRAINT hero_abilities_ability_id_fkey FOREIGN KEY (ability_id) REFERENCES public.abilities(ability_id) ON DELETE CASCADE;
+
+
+--
+-- Name: hero_abilities hero_abilities_hero_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_abilities
+    ADD CONSTRAINT hero_abilities_hero_id_fkey FOREIGN KEY (hero_id) REFERENCES public.heroes(hero_id) ON DELETE CASCADE;
+
+
+--
+-- Name: hero_facets hero_facets_hero_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hero_facets
+    ADD CONSTRAINT hero_facets_hero_id_fkey FOREIGN KEY (hero_id) REFERENCES public.heroes(hero_id) ON DELETE CASCADE;
 
 
 --
@@ -3078,4 +3713,12 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260903200000'),
     ('20260903210000'),
     ('20260903220000'),
-    ('20260905220000');
+    ('20260905220000'),
+    ('20260905230000'),
+    ('20260906010000'),
+    ('20260906010100'),
+    ('20260906020000'),
+    ('20260906030000'),
+    ('20260906104000'),
+    ('20260906104100'),
+    ('20260906124400');

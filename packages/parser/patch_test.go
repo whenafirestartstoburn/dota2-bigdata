@@ -14,12 +14,12 @@ import (
 // TestParseMajorPatches walks testdata/patches/<patch>/*.dem* and asserts
 // the decoder still produces combat log + intervals. Fetch fixtures with:
 //
-//	go run ./cmd/fetch-patches
+//	bun run parser:fetch-patches
 func TestParseMajorPatches(t *testing.T) {
 	root := filepath.Join(testdataRoot(t), "testdata", "patches")
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		t.Skip("testdata/patches missing — run go run ./cmd/fetch-patches")
+		t.Skip("testdata/patches missing — run bun run parser:fetch-patches")
 	}
 	var patches []string
 	for _, e := range entries {

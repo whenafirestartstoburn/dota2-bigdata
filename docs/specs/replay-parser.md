@@ -1,6 +1,7 @@
 # Replay parser
 
-Companions: [`data-schema.md`](./data-schema.md), [`worker-architecture.md`](./worker-architecture.md).
+Companions: [`demo-file.md`](./demo-file.md) (what a `.dem` is),
+[`data-schema.md`](./data-schema.md), [`worker-architecture.md`](./worker-architecture.md).
 
 A Go service (`packages/parser`) reads `.dem.bz2` from S3, extracts every
 typed event the current `replay_*` schema can hold, and writes ClickHouse
@@ -8,18 +9,24 @@ plus the sparse Postgres facts the spec already named (`match_objectives`,
 `match_draft` clocks, `match_players` parse summaries). The TypeScript
 worker still only downloads; it does not parse.
 
-Decoder is [manta](https://github.com/dotabuff/manta). Extraction, commit,
-and storage are ours — the example projects are a reference for callback
-names and entity field paths, not a codebase we vendor.
+Decoder is ours (`packages/parser/internal/replay`). It implements the
+Source 2 demo wire (PBDEMS2, sendtables, field paths, packet entities)
+and uses Valve `.proto` types only. We do not depend on manta, Clarity,
+or any other third-party replay parser. Example projects are a reference
+for callback names and entity field paths, not a codebase we vendor.
 
 ## Status
 
-Postgres `replay_status` already has `parsing` / `parsed`. “Processed” in
-the product sense is `parsed`. We do not add a second enum value.
+Postgres `replay_status` already has `parsing` / `parsed`. A successful
+commit also sets `matches.phase = parsed` and clears `waiting_for`.
+“Processed” in the product sense is `parsed` on both rows.
+
+`GET /metrics` exposes parse success/fail, duration, inflight, and the
+`stored` / `parsing` / `failed` queue. Spec: [`metrics.md`](./metrics.md).
 
 ## Parallelism
 
-`settings.parser_parallelism` (default `1`). The service polls that row
+`settings.parser_parallelism` (default `10`). The service polls that row
 and runs that many in-flight parses. Live-priority `stored` rows go first.
 
 ## Claim
@@ -71,9 +78,15 @@ the first schema dropped:
 | `replay_actions` | unit / target / ability / position / queued |
 | `replay_pings` | `ping_type`, `target` |
 | `replay_cosmetics` | `account_id` |
+| `replay_alerts` | item/ability/courier/outpost/roshan/… user messages |
+| `replay_intervals` | `hp`, `max_hp`, `mana`, `max_mana`, `respawn` |
 
 Unknown `DOTA_COMBATLOG_{id}` and `CHAT_MESSAGE_{id}` values are stored,
 not dropped.
+
+Event → table map (every combat type, every stored user message, and
+what we deliberately skip): [`replay-mapping.md`](./replay-mapping.md).
+`parser_version` is **2** after `replay_alerts` and interval vitals.
 
 ## Out of scope
 

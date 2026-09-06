@@ -11,7 +11,7 @@ node_modules
 # коммитятся: они часть проекта, а не машины.
 .claude/settings.local.json
 
-# Справочные материалы CTO — не часть собираемого сервиса.
+# Справочные материалы — не часть собираемого сервиса.
 template/
 notion_data/
 example_projects/
@@ -22,5 +22,5 @@ packages/parser/testdata/demos/*.dem.bz2
 packages/parser/testdata/patches/**/*.dem
 packages/parser/testdata/patches/**/*.dem.bz2
 
-# MinIO / Postgres / ClickHouse volumes, если compose пишет рядом.
+# Postgres / ClickHouse volumes, если compose пишет рядом.
 .data/

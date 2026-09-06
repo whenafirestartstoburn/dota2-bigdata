@@ -98,7 +98,7 @@ export async function pickApiCredential(): Promise<ApiCredential> {
 			k.api_key
 		FROM steam_api_keys k
 		JOIN steam_accounts a ON a.id = k.account_id
-		WHERE k.status IN ('ready', 'active')
+		WHERE k.status IN ('ready', 'active', 'rate_limited')
 			AND (k.rate_limited_until IS NULL OR k.rate_limited_until < now())
 			AND a.status IN ('ready', 'active')
 		ORDER BY k.last_used_at NULLS FIRST
@@ -114,7 +114,11 @@ export async function pickApiCredential(): Promise<ApiCredential> {
 	const proxy = await ensureApiKeyProxy(keyId)
 	await db.execute(sql`
 		UPDATE steam_api_keys
-		SET last_used_at = now(), status = 'active', updated_at = now()
+		SET
+			last_used_at = now(),
+			status = 'active',
+			rate_limited_until = NULL,
+			updated_at = now()
 		WHERE id = ${keyId}
 	`)
 	return {
@@ -133,7 +137,8 @@ export async function apiCredentialForAccount(
 		SELECT k.id AS key_id, k.account_id, k.api_key
 		FROM steam_api_keys k
 		WHERE k.account_id = ${accountId}
-			AND k.status IN ('ready', 'active')
+			AND k.status IN ('ready', 'active', 'rate_limited')
+			AND (k.rate_limited_until IS NULL OR k.rate_limited_until < now())
 		ORDER BY k.updated_at DESC
 		LIMIT 1
 	`)

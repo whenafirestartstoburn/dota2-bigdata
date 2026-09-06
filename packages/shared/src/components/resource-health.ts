@@ -223,7 +223,7 @@ export async function countReadyApiKeys(): Promise<number> {
 		SELECT count(*)::int AS n
 		FROM steam_api_keys k
 		JOIN steam_accounts a ON a.id = k.account_id
-		WHERE k.status IN ('ready', 'active')
+		WHERE k.status IN ('ready', 'active', 'rate_limited')
 			AND (k.rate_limited_until IS NULL OR k.rate_limited_until < now())
 			AND a.status IN ('ready', 'active')
 	`)

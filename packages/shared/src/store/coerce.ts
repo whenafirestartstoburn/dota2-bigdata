@@ -43,11 +43,45 @@ export function asPgInt8(value: unknown): number | null {
 	return Math.trunc(n)
 }
 
+const UINT64_MAX = 2n ** 64n - 1n
+
+/**
+ * Steam64 / lobby / server ids. Values past `Number.MAX_SAFE_INTEGER` stay
+ * decimal text — `asNumber` would round them and GetRealtimeStats would 400.
+ */
+export function asSteamId64(value: unknown): string | null {
+	if (typeof value === 'bigint') {
+		if (value < 0n || value > UINT64_MAX) return null
+		return value.toString()
+	}
+	if (typeof value === 'number') {
+		if (!Number.isSafeInteger(value) || value < 0) return null
+		return String(value)
+	}
+	if (typeof value === 'string' && /^\d+$/.test(value)) {
+		try {
+			const n = BigInt(value)
+			if (n > UINT64_MAX) return null
+			return value
+		} catch {
+			return null
+		}
+	}
+	return null
+}
+
 /** ClickHouse unsigned columns: Valve uses -1 for “empty”. */
 export function asUInt32(value: unknown, fallback = 0): number {
 	const n = asNumber(value)
 	if (n === null || n < 0 || !Number.isFinite(n)) return fallback
 	return Math.trunc(n)
+}
+
+/** Inventory id. Valve `-1` means empty, same as `0`. Missing stays null. */
+export function asItemId(value: unknown): number | null {
+	const n = asNumber(value)
+	if (n === null) return null
+	return n < 0 ? 0 : n
 }
 
 export function asString(value: unknown): string | null {

@@ -7,8 +7,10 @@ import {
 	enqueueDownloadReplay,
 	matchOrigin,
 } from '@app/shared/src/jobs/fetch-match-details'
+import { observeReplayDownload } from '@app/shared/src/metrics/observe'
 import { asNumber, asString } from '@app/shared/src/store/coerce'
 import { getMatch } from '@app/shared/src/store/matches'
+import { ERROR_KIND } from '@app/shared/src/store/match-phase'
 import {
 	ensureReplayRow,
 	getReplay,
@@ -23,12 +25,29 @@ export async function runDownloadReplay(matchId: number): Promise<{
 	status: string
 	key?: string
 }> {
+	const started = performance.now()
+	try {
+		return await downloadReplay(matchId, started)
+	} catch (error) {
+		observeReplayDownload('error', started)
+		throw error
+	}
+}
+
+async function downloadReplay(
+	matchId: number,
+	started: number,
+): Promise<{
+	status: string
+	key?: string
+}> {
 	const match = await getMatch(matchId)
 	const origin = matchOrigin(match?.source)
 	await ensureReplayRow(matchId, origin)
 	const existing = await getReplay(matchId)
 	if (existing?.status === 'stored' && typeof existing.s3_key === 'string') {
 		if (await objectExists(existing.s3_key)) {
+			observeReplayDownload('already_stored', started)
 			return { status: 'stored', key: existing.s3_key }
 		}
 	}
@@ -52,6 +71,7 @@ export async function runDownloadReplay(matchId: number): Promise<{
 			storedAt: new Date(),
 		})
 		await markMatchReplayPhase(matchId, 'replay_stored')
+		observeReplayDownload('already_stored', started)
 		return { status: 'stored', key }
 	}
 
@@ -62,6 +82,22 @@ export async function runDownloadReplay(matchId: number): Promise<{
 	if (response.status === 404) {
 		const attempts = asNumber(existing?.attempts) ?? 0
 		const delay = replayBackoffMs(attempts)
+		if (delay == null) {
+			const message = `replay 404 exhausted after ${attempts + 1} tries: ${url}`
+			await updateReplay(matchId, {
+				status: 'unavailable',
+				error: message,
+				nextAttemptAt: null,
+				bumpAttempt: true,
+			})
+			await markMatchReplayPhase(matchId, 'replay_unavailable', {
+				error: message,
+				errorKind: ERROR_KIND.unavailable,
+			})
+			logger.info({ matchId, attempts: attempts + 1 }, 'replay 404 exhausted')
+			observeReplayDownload('not_found', started)
+			return { status: 'unavailable' }
+		}
 		const next = new Date(Date.now() + delay)
 		await updateReplay(matchId, {
 			status: 'pending',
@@ -74,6 +110,7 @@ export async function runDownloadReplay(matchId: number): Promise<{
 			ignoreLimit: true,
 		})
 		logger.info({ matchId, delay }, 'replay 404, rescheduled')
+		observeReplayDownload('not_found', started)
 		return { status: 'pending' }
 	}
 	if (!response.ok || response.body === null) {
@@ -96,5 +133,6 @@ export async function runDownloadReplay(matchId: number): Promise<{
 	})
 	await markMatchReplayPhase(matchId, 'replay_stored')
 	logger.info({ matchId, key, bytes: stat.size }, 'stored replay')
+	observeReplayDownload('success', started, stat.size)
 	return { status: 'stored', key }
 }

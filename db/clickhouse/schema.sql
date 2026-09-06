@@ -28,7 +28,9 @@ CREATE TABLE dota.live_match_ticks
     `game_number` UInt8 DEFAULT 0,
     `league_series_id` UInt32 DEFAULT 0,
     `league_game_id` UInt32 DEFAULT 0,
-    `league_tier` UInt8 DEFAULT 0
+    `league_tier` UInt8 DEFAULT 0,
+    `game_state` UInt8 DEFAULT 0,
+    `server_steam_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(captured_at)
@@ -63,7 +65,10 @@ CREATE TABLE dota.live_player_ticks
     `item5` UInt32 DEFAULT 0,
     `ultimate_state` UInt8 DEFAULT 0,
     `ultimate_cooldown` UInt16 DEFAULT 0,
-    `respawn_timer` UInt16 DEFAULT 0
+    `respawn_timer` UInt16 DEFAULT 0,
+    `item6` UInt32 DEFAULT 0,
+    `item7` UInt32 DEFAULT 0,
+    `item8` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(captured_at)
@@ -78,10 +83,10 @@ CREATE TABLE dota.replay_ability_levels
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `ability_id` String CODEC(ZSTD(1)),
     `ability_level` UInt8,
-    `target` String CODEC(ZSTD(1))
+    `target` String CODEC(ZSTD(1)),
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -96,8 +101,8 @@ CREATE TABLE dota.replay_actions
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `order_type` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
     `unit_index` Int32 DEFAULT -1,
     `target_index` Int32 DEFAULT -1,
     `ability_id` Int32 DEFAULT -1,
@@ -105,6 +110,28 @@ CREATE TABLE dota.replay_actions
     `pos_y` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `pos_z` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `queued` UInt8 DEFAULT 0
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(start_time)
+ORDER BY (match_id, time, tick)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE dota.replay_alerts
+(
+    `match_id` UInt64 CODEC(Delta(8), ZSTD(1)),
+    `start_time` DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
+    `time` Int32 CODEC(Delta(4), ZSTD(1)),
+    `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
+    `slot` Int8,
+    `parser_version` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0,
+    `kind` LowCardinality(String),
+    `player2` Int16 DEFAULT -1,
+    `value` Int32 DEFAULT 0 CODEC(T64, ZSTD(1)),
+    `value2` Int32 DEFAULT 0,
+    `x` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
+    `y` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
+    `key` String DEFAULT '' CODEC(ZSTD(1))
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -119,14 +146,14 @@ CREATE TABLE dota.replay_announcements
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `player1` Int16,
     `player2` Int16,
     `value` Int32,
     `player3` Int16 DEFAULT -1,
     `value2` UInt32 DEFAULT 0,
-    `value3` UInt32 DEFAULT 0
+    `value3` UInt32 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -141,11 +168,11 @@ CREATE TABLE dota.replay_chat
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `key` String CODEC(ZSTD(1)),
     `unit` String DEFAULT '' CODEC(ZSTD(1)),
-    `channel` UInt8 DEFAULT 0
+    `channel` UInt8 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -160,7 +187,6 @@ CREATE TABLE dota.replay_combat_log
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `type` LowCardinality(String),
     `attacker` String CODEC(ZSTD(1)),
     `target` String CODEC(ZSTD(1)),
@@ -247,7 +273,8 @@ CREATE TABLE dota.replay_combat_log
     `uses_charges` UInt8 DEFAULT 0,
     `tracked_stat_id` UInt32 DEFAULT 0,
     `modifier_purged_duration` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
-    `heal_from_regen` UInt8 DEFAULT 0
+    `heal_from_regen` UInt8 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -262,8 +289,8 @@ CREATE TABLE dota.replay_cosmetics
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `item_id` UInt32,
+    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -279,14 +306,14 @@ CREATE TABLE dota.replay_draft
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `is_pick` UInt8,
     `hero_id` Int32,
     `team` UInt8,
     `ord` UInt16,
     `clock` Int32,
     `extra_time_radiant` Int32 DEFAULT 0,
-    `extra_time_dire` Int32 DEFAULT 0
+    `extra_time_dire` Int32 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -301,9 +328,9 @@ CREATE TABLE dota.replay_epilogue
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `key` LowCardinality(String),
-    `value` String CODEC(ZSTD(3))
+    `value` String CODEC(ZSTD(3)),
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -318,7 +345,6 @@ CREATE TABLE dota.replay_intervals
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `hero_id` Int32,
     `variant` Int16,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
@@ -349,7 +375,13 @@ CREATE TABLE dota.replay_intervals
     `repicked` UInt8 DEFAULT 0,
     `randomed` UInt8 DEFAULT 0,
     `pred_vict` UInt8 DEFAULT 0,
-    `observers_placed` UInt16 DEFAULT 0
+    `observers_placed` UInt16 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0,
+    `hp` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
+    `max_hp` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
+    `mana` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
+    `max_mana` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
+    `respawn` UInt16 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -364,11 +396,11 @@ CREATE TABLE dota.replay_inventory
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `item_id` String CODEC(ZSTD(1)),
     `item_slot` Int8,
     `charges` UInt16,
-    `secondary_charges` UInt16
+    `secondary_charges` UInt16,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -383,12 +415,12 @@ CREATE TABLE dota.replay_neutrals
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `key` String CODEC(ZSTD(1)),
     `value` Int32,
     `is_neutral_active_drop` UInt8 DEFAULT 0,
-    `is_neutral_passive_drop` UInt8 DEFAULT 0
+    `is_neutral_passive_drop` UInt8 DEFAULT 0,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -403,9 +435,9 @@ CREATE TABLE dota.replay_pings
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
+    `parse_run_id` UInt64 DEFAULT 0,
     `ping_type` UInt16 DEFAULT 0,
     `target` Int32 DEFAULT -1
 )
@@ -422,13 +454,13 @@ CREATE TABLE dota.replay_wards
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `is_left` UInt8,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
     `z` Float32 CODEC(Gorilla, ZSTD(1)),
-    `ehandle` UInt32
+    `ehandle` UInt32,
+    `parse_run_id` UInt64 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -455,4 +487,6 @@ INSERT INTO dota.schema_migrations (version) VALUES
     ('20260830000000'),
     ('20260830000001'),
     ('20260830000002'),
-    ('20260905220000');
+    ('20260905220000'),
+    ('20260905233000'),
+    ('20260906010000');

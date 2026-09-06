@@ -21,11 +21,13 @@ export type Executor = Db | Tx
 
 function sqlCell(value: unknown): ReturnType<typeof sql> {
 	if (Array.isArray(value)) {
-		if (value.length === 0) return sql`'{}'::integer[]`
-		return sql`ARRAY[${sql.join(
+		if (value.length === 0) return sql`'{}'`
+		const cells = sql.join(
 			value.map((item) => sql`${item ?? null}`),
 			sql`, `,
-		)}]::integer[]`
+		)
+		const text = value.every((item) => item == null || typeof item === 'string')
+		return text ? sql`ARRAY[${cells}]::text[]` : sql`ARRAY[${cells}]::integer[]`
 	}
 	return sql`${value ?? null}`
 }

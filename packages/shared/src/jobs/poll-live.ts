@@ -2,14 +2,27 @@ import { insertJsonEachRow } from '#src/components/clickhouse'
 import { setCursor } from '#src/components/rate-limit'
 import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
-import { enqueueFetchMatchDetails } from '#src/jobs/fetch-match-details'
 import type { LiveLeagueGame } from '#src/steam/schemas'
 import { getLiveLeagueGames } from '#src/steam/web-api'
-import { asComplete, asNumber, asPgInt8, asUInt32 } from '#src/store/coerce'
-import { ensureLeagueStub } from '#src/store/leagues'
-import { partialPlayerFacts } from '#src/store/match-details'
 import {
-	markMatchesFinishedLive,
+	asComplete,
+	asItemId,
+	asNumber,
+	asPgInt8,
+	asUInt32,
+} from '#src/store/coerce'
+import { ensureLeagueStub } from '#src/store/leagues'
+import {
+	normalizeValvePlayerSlot,
+	partialPlayerFacts,
+	valvePlayerSlot,
+} from '#src/store/match-details'
+import { INGEST } from '#src/store/match-phase'
+import {
+	finishMissingLiveMatches,
+	noteLiveClock,
+	noteLiveFeedMisses,
+	noteLiveFeedSeen,
 	replaceMatchDraft,
 	touchMatchLive,
 	upsertMatchPlayers,
@@ -22,7 +35,6 @@ import { logger } from '#src/utils/logger'
 import { chNow } from './time'
 
 const hashes = new Map<number, string>()
-const missingTicks = new Map<number, number>()
 
 function hashOf(value: unknown): string {
 	return new Bun.CryptoHasher('sha1')
@@ -56,10 +68,10 @@ export async function runPollLiveGames(): Promise<{
 	const tickRows: Array<Record<string, unknown>> = []
 	const playerTickRows: Array<Record<string, unknown>> = []
 	let wrote = 0
-	const finished: number[] = []
+	let finished: number[] = []
 
 	await db.transaction(async (tx) => {
-		const currentIds = new Set(byId.keys())
+		const currentIds = [...byId.keys()]
 
 		for (const game of byId.values()) {
 			await upsertTeam(
@@ -87,6 +99,9 @@ export async function runPollLiveGames(): Promise<{
 				players: game.players,
 			})
 			const changed = hashes.get(game.match_id) !== digest
+			if (!changed) {
+				await noteLiveFeedSeen(tx, INGEST.liveLeague, game.match_id)
+			}
 			if (changed) {
 				await touchMatchLive(tx, {
 					matchId: game.match_id,
@@ -111,22 +126,10 @@ export async function runPollLiveGames(): Promise<{
 					direTeamLogo: asPgInt8(game.dire_team?.team_logo),
 					radiantTeamComplete: asComplete(game.radiant_team?.complete),
 					direTeamComplete: asComplete(game.dire_team?.complete),
+					ingest: INGEST.liveLeague,
 				})
 
-				const roster = game.players
-					.filter((player) => player.team === 0 || player.team === 1)
-					.map((player, index) => {
-						const slot = player.team === 0 ? index : 128 + index
-						return partialPlayerFacts({
-							accountId: player.account_id,
-							playerSlot: slot,
-							heroId: player.hero_id,
-							playerName: player.name,
-							teamNumber: player.team,
-							teamSlot: index,
-							side: player.team === 0 ? 'radiant' : 'dire',
-						})
-					})
+				const roster = rosterFromLivePlayers(game.players)
 				await upsertMatchPlayers(tx, game.match_id, roster)
 				for (const player of roster) {
 					await upsertPlayer(tx, {
@@ -145,17 +148,18 @@ export async function runPollLiveGames(): Promise<{
 				wrote += 1
 			}
 
-			missingTicks.delete(game.match_id)
-			appendTicks(game, capturedAt, tickRows, playerTickRows)
-
 			const board = game.scoreboard
+			await noteLiveClock(tx, game.match_id, board?.duration ?? 0)
+			appendTicks(game, capturedAt, tickRows, playerTickRows)
 			if (changed && board) {
 				const liveStats = (['radiant', 'dire'] as const).flatMap((side) => {
 					const players = board[side]?.players ?? []
 					return players.flatMap((item) => {
 						if (typeof item !== 'object' || item === null) return []
 						const row = item as Record<string, unknown>
-						const slot = asNumber(row.player_slot)
+						const slot = normalizeValvePlayerSlot(
+							asNumber(row.player_slot) ?? -1,
+						)
 						if (slot === null) return []
 						return [
 							partialPlayerFacts({
@@ -175,12 +179,12 @@ export async function runPollLiveGames(): Promise<{
 								goldPerMin: asNumber(row.gold_per_min),
 								xpPerMin: asNumber(row.xp_per_min),
 								netWorth: asNumber(row.net_worth),
-								item0: asNumber(row.item0) ?? asNumber(row.item_0),
-								item1: asNumber(row.item1) ?? asNumber(row.item_1),
-								item2: asNumber(row.item2) ?? asNumber(row.item_2),
-								item3: asNumber(row.item3) ?? asNumber(row.item_3),
-								item4: asNumber(row.item4) ?? asNumber(row.item_4),
-								item5: asNumber(row.item5) ?? asNumber(row.item_5),
+								item0: asItemId(row.item0) ?? asItemId(row.item_0),
+								item1: asItemId(row.item1) ?? asItemId(row.item_1),
+								item2: asItemId(row.item2) ?? asItemId(row.item_2),
+								item3: asItemId(row.item3) ?? asItemId(row.item_3),
+								item4: asItemId(row.item4) ?? asItemId(row.item_4),
+								item5: asItemId(row.item5) ?? asItemId(row.item_5),
 							}),
 						]
 					})
@@ -191,31 +195,20 @@ export async function runPollLiveGames(): Promise<{
 			}
 		}
 
-		const suspectEmptyTick = currentIds.size === 0 && hashes.size > 0
+		const suspectEmptyTick = currentIds.length === 0
 		if (!suspectEmptyTick) {
-			for (const matchId of hashes.keys()) {
-				if (currentIds.has(matchId)) continue
-				const count = (missingTicks.get(matchId) ?? 0) + 1
-				missingTicks.set(matchId, count)
-				if (count >= settings.liveMissingThreshold) finished.push(matchId)
-			}
-		}
-		if (finished.length > 0) {
-			await markMatchesFinishedLive(tx, finished, settings.replayLiveDelayMs)
-			for (const matchId of finished) {
-				hashes.delete(matchId)
-				missingTicks.delete(matchId)
-			}
+			await noteLiveFeedMisses(tx, INGEST.liveLeague, currentIds)
+			finished = await finishMissingLiveMatches(
+				tx,
+				settings.liveMissingThreshold,
+				settings.replayLiveDelayMs,
+			)
+			for (const matchId of finished) hashes.delete(matchId)
 		}
 	})
 
 	await insertJsonEachRow('live_match_ticks', tickRows)
 	await insertJsonEachRow('live_player_ticks', playerTickRows)
-
-	const detailsAt = new Date(Date.now() + settings.replayLiveDelayMs)
-	for (const matchId of finished) {
-		await enqueueFetchMatchDetails(matchId, 'live', detailsAt)
-	}
 
 	logger.info(
 		{
@@ -227,6 +220,37 @@ export async function runPollLiveGames(): Promise<{
 		'live league poll',
 	)
 	return { games: games.length, wrote }
+}
+
+export function rosterFromLivePlayers(
+	players: LiveLeagueGame['players'],
+): ReturnType<typeof partialPlayerFacts>[] {
+	const radiant = players.filter((player) => player.team === 0).slice(0, 5)
+	const dire = players.filter((player) => player.team === 1).slice(0, 5)
+	return [
+		...radiant.map((player, index) =>
+			partialPlayerFacts({
+				accountId: player.account_id,
+				playerSlot: valvePlayerSlot(0, index),
+				heroId: player.hero_id,
+				playerName: player.name,
+				teamNumber: 0,
+				teamSlot: index,
+				side: 'radiant',
+			}),
+		),
+		...dire.map((player, index) =>
+			partialPlayerFacts({
+				accountId: player.account_id,
+				playerSlot: valvePlayerSlot(1, index),
+				heroId: player.hero_id,
+				playerName: player.name,
+				teamNumber: 1,
+				teamSlot: index,
+				side: 'dire',
+			}),
+		),
+	]
 }
 
 function appendTicks(

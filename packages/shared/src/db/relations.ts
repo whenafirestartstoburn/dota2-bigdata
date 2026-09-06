@@ -2,6 +2,31 @@ import { defineRelations } from 'drizzle-orm'
 import * as schema from './schema'
 
 export const relations = defineRelations(schema, (r) => ({
+	clusters: {
+		regionRelation: r.one.regions({
+			from: r.clusters.region,
+			to: r.regions.region,
+		}),
+	},
+	regions: {
+		clusters: r.many.clusters(),
+	},
+	abilities: {
+		heroes: r.many.heroes({
+			from: r.abilities.ability_id.through(r.hero_abilities.ability_id),
+			to: r.heroes.hero_id.through(r.hero_abilities.hero_id),
+		}),
+	},
+	heroes: {
+		abilities: r.many.abilities(),
+		hero_facets: r.many.hero_facets(),
+	},
+	hero_facets: {
+		hero: r.one.heroes({
+			from: r.hero_facets.hero_id,
+			to: r.heroes.hero_id,
+		}),
+	},
 	marketplace_orders: {
 		steam_account: r.one.steam_accounts({
 			from: r.marketplace_orders.steam_account_id,

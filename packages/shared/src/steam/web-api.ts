@@ -7,6 +7,7 @@ import {
 import {
 	type ApiCallPurpose,
 	acquireSteamApiSlot,
+	clearApiKeyRateLimit,
 	markApiKeyRateLimited,
 } from '#src/components/rate-limit'
 import {
@@ -14,7 +15,13 @@ import {
 	recordResourceAttempt,
 } from '#src/components/resource-health'
 import { getAppSettings } from '#src/components/settings'
+import {
+	classifyWebApiError,
+	observeWebApi,
+	type WebApiSource,
+} from '#src/metrics/observe'
 import { MissingProxyError, steamFetch } from '#src/steam/http'
+import { parseSteamJson } from '#src/steam/json'
 import { errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
 import {
@@ -27,8 +34,13 @@ import {
 	liveLeagueGameSchema,
 	liveLeagueGamesResponseSchema,
 	matchHistoryResponseSchema,
+	type RealtimeStatsResponse,
+	realtimeStatsResponseSchema,
 	seqMatchSchema,
 	seqResponseSchema,
+	type TopLiveGameEntry,
+	topLiveGameEntrySchema,
+	topLiveGamesResponseSchema,
 } from './schemas'
 
 export class SteamApiError extends Error {
@@ -92,7 +104,6 @@ async function getJsonOnce(
 			resourceId: ctx.proxyId,
 			ok: true,
 		})
-		await markApiKeyRateLimited(ctx.keyId, `steam HTTP 429 ${url}`)
 	}
 	if (!response.ok) {
 		throw new SteamApiError({
@@ -102,7 +113,7 @@ async function getJsonOnce(
 		})
 	}
 	try {
-		const body = await response.json()
+		const body = parseSteamJson(await response.text())
 		await recordResourceAttempt({
 			kind: 'proxy',
 			resourceId: ctx.proxyId,
@@ -113,6 +124,7 @@ async function getJsonOnce(
 			resourceId: ctx.keyId,
 			ok: true,
 		})
+		await clearApiKeyRateLimit(ctx.keyId)
 		return body
 	} catch (error) {
 		throw toSteamApiError(error, url)
@@ -168,26 +180,58 @@ async function getJson(
 			await Bun.sleep((retryableHttp ? 1000 : 500) * 2 ** attempt)
 		}
 	}
+	if (lastError?.status === 429) {
+		await markApiKeyRateLimited(ctx.keyId, lastError.message)
+	}
 	throw lastError ?? new SteamApiError({ message: 'steam request failed', url })
+}
+
+async function steamCall<T>(
+	source: WebApiSource,
+	method: string,
+	url: string,
+	ctx: SteamRequestContext,
+	parse: (body: unknown) => T,
+): Promise<T> {
+	const started = performance.now()
+	try {
+		const value = parse(await getJson(url, ctx))
+		observeWebApi(source, method, 'success', started)
+		return value
+	} catch (error) {
+		if (error instanceof PublicMatchError) {
+			observeWebApi(source, method, 'public_match', started)
+			throw error
+		}
+		observeWebApi(source, method, classifyWebApiError(error), started)
+		throw error
+	}
 }
 
 export async function getLeagueInfoList(
 	ctx: SteamRequestContext,
 ): Promise<LeagueInfo[]> {
-	const body = await getJson(LEAGUE_INFO_URL, ctx)
-	const parsed = leagueInfoListSchema.safeParse(body)
-	if (!parsed.success) {
-		throw new SteamApiError({
-			message: 'GetLeagueInfoList: unexpected shape',
-		})
-	}
-	const infos: LeagueInfo[] = []
-	for (const raw of parsed.data.infos) {
-		const row = leagueInfoSchema.safeParse(raw)
-		if (row.success) infos.push(row.data)
-	}
-	logger.info({ count: infos.length }, 'fetched league info list')
-	return infos
+	return steamCall(
+		'dota2',
+		'GetLeagueInfoList',
+		LEAGUE_INFO_URL,
+		ctx,
+		(body) => {
+			const parsed = leagueInfoListSchema.safeParse(body)
+			if (!parsed.success) {
+				throw new SteamApiError({
+					message: 'GetLeagueInfoList: unexpected shape',
+				})
+			}
+			const infos: LeagueInfo[] = []
+			for (const raw of parsed.data.infos) {
+				const row = leagueInfoSchema.safeParse(raw)
+				if (row.success) infos.push(row.data)
+			}
+			logger.info({ count: infos.length }, 'fetched league info list')
+			return infos
+		},
+	)
 }
 
 export async function getLiveLeagueGames(
@@ -196,22 +240,23 @@ export async function getLiveLeagueGames(
 	const url = withQuery(`${STEAM_API}/IDOTA2Match_570/GetLiveLeagueGames/v1/`, {
 		key: ctx.apiKey,
 	})
-	const body = await getJson(url, ctx)
-	const parsed = liveLeagueGamesResponseSchema.safeParse(body)
-	if (!parsed.success) {
-		throw new SteamApiError({
-			message: 'GetLiveLeagueGames: unexpected shape',
-		})
-	}
-	const games: LiveLeagueGame[] = []
-	const raw: unknown[] = []
-	for (const item of parsed.data.result.games ?? []) {
-		const row = liveLeagueGameSchema.safeParse(item)
-		if (!row.success || row.data.match_id === 0) continue
-		games.push(row.data)
-		raw.push(item)
-	}
-	return { games, raw }
+	return steamCall('steam', 'GetLiveLeagueGames', url, ctx, (body) => {
+		const parsed = liveLeagueGamesResponseSchema.safeParse(body)
+		if (!parsed.success) {
+			throw new SteamApiError({
+				message: 'GetLiveLeagueGames: unexpected shape',
+			})
+		}
+		const games: LiveLeagueGame[] = []
+		const raw: unknown[] = []
+		for (const item of parsed.data.result.games ?? []) {
+			const row = liveLeagueGameSchema.safeParse(item)
+			if (!row.success || row.data.match_id === 0) continue
+			games.push(row.data)
+			raw.push(item)
+		}
+		return { games, raw }
+	})
 }
 
 export async function getMatchHistoryPage(
@@ -230,29 +275,30 @@ export async function getMatchHistoryPage(
 		matches_requested: settings.historyPageSize,
 		start_at_match_id: input.startAtMatchId,
 	})
-	const body = await getJson(url, ctx)
-	const parsed = matchHistoryResponseSchema.safeParse(body)
-	if (!parsed.success || parsed.data.result.status !== 1) {
-		throw new SteamApiError({
-			message: `GetMatchHistory status=${
-				parsed.success ? parsed.data.result.status : 'invalid'
-			} ${parsed.success ? (parsed.data.result.statusDetail ?? '') : ''}`,
-		})
-	}
-	const matches: HistoryMatch[] = []
-	const raw: unknown[] = []
-	for (const item of parsed.data.result.matches) {
-		const row = historyMatchSchema.safeParse(item)
-		if (!row.success) continue
-		matches.push(row.data)
-		raw.push(item)
-	}
-	return {
-		matches,
-		raw,
-		resultsRemaining: parsed.data.result.results_remaining ?? 0,
-		totalResults: parsed.data.result.total_results ?? matches.length,
-	}
+	return steamCall('steam', 'GetMatchHistory', url, ctx, (body) => {
+		const parsed = matchHistoryResponseSchema.safeParse(body)
+		if (!parsed.success || parsed.data.result.status !== 1) {
+			throw new SteamApiError({
+				message: `GetMatchHistory status=${
+					parsed.success ? parsed.data.result.status : 'invalid'
+				} ${parsed.success ? (parsed.data.result.statusDetail ?? '') : ''}`,
+			})
+		}
+		const matches: HistoryMatch[] = []
+		const raw: unknown[] = []
+		for (const item of parsed.data.result.matches) {
+			const row = historyMatchSchema.safeParse(item)
+			if (!row.success) continue
+			matches.push(row.data)
+			raw.push(item)
+		}
+		return {
+			matches,
+			raw,
+			resultsRemaining: parsed.data.result.results_remaining ?? 0,
+			totalResults: parsed.data.result.total_results ?? matches.length,
+		}
+	})
 }
 
 export async function getMatchHistoryBySequenceNum(
@@ -272,30 +318,118 @@ export async function getMatchHistoryBySequenceNum(
 			matches_requested: input.matchesRequested,
 		},
 	)
-	const body = await getJson(url, ctx)
-	const parsed = seqResponseSchema.safeParse(body)
-	if (!parsed.success || parsed.data.result.status !== 1) {
-		throw new SteamApiError({
-			message: `GetMatchHistoryBySequenceNum status=${
-				parsed.success ? parsed.data.result.status : 'invalid'
-			}`,
-		})
+	return steamCall(
+		'steam',
+		'GetMatchHistoryBySequenceNum',
+		url,
+		ctx,
+		(body) => {
+			const parsed = seqResponseSchema.safeParse(body)
+			if (!parsed.success || parsed.data.result.status !== 1) {
+				throw new SteamApiError({
+					message: `GetMatchHistoryBySequenceNum status=${
+						parsed.success ? parsed.data.result.status : 'invalid'
+					}`,
+				})
+			}
+			const matches: Array<
+				{ match_id: number; match_seq_num: number } & Record<string, unknown>
+			> = []
+			const raw: unknown[] = []
+			for (const item of parsed.data.result.matches) {
+				const row = seqMatchSchema.safeParse(item)
+				if (!row.success) continue
+				matches.push({
+					...(item as Record<string, unknown>),
+					match_id: row.data.match_id,
+					match_seq_num: row.data.match_seq_num,
+				})
+				raw.push(item)
+			}
+			return { matches, raw }
+		},
+	)
+}
+
+export class PublicMatchError extends Error {
+	readonly matchId: number | null
+
+	constructor(matchId: number | null) {
+		super(`server hosts public match ${matchId ?? 'unknown'}`)
+		this.name = 'PublicMatchError'
+		this.matchId = matchId
 	}
-	const matches: Array<
-		{ match_id: number; match_seq_num: number } & Record<string, unknown>
-	> = []
-	const raw: unknown[] = []
-	for (const item of parsed.data.result.matches) {
-		const row = seqMatchSchema.safeParse(item)
-		if (!row.success) continue
-		matches.push({
-			...(item as Record<string, unknown>),
-			match_id: row.data.match_id,
-			match_seq_num: row.data.match_seq_num,
-		})
-		raw.push(item)
+}
+
+export async function getTopLiveGames(
+	ctx: SteamRequestContext,
+): Promise<{ games: TopLiveGameEntry[] }> {
+	const url = withQuery(`${STEAM_API}/IDOTA2Match_570/GetTopLiveGame/v1/`, {
+		key: ctx.apiKey,
+		partner: 0,
+	})
+	return steamCall('steam', 'GetTopLiveGame', url, ctx, (body) => {
+		const parsed = topLiveGamesResponseSchema.safeParse(body)
+		if (!parsed.success) {
+			throw new SteamApiError({
+				message: 'GetTopLiveGame: unexpected shape',
+			})
+		}
+		const games: TopLiveGameEntry[] = []
+		for (const item of parsed.data.game_list) {
+			const record =
+				typeof item === 'object' && item !== null
+					? (item as Record<string, unknown>)
+					: {}
+			const leagueId =
+				typeof record.league_id === 'number' ? record.league_id : 0
+			if (leagueId <= 0) continue
+			const row = topLiveGameEntrySchema.safeParse(item)
+			if (!row.success) continue
+			games.push(row.data)
+		}
+		return { games }
+	})
+}
+
+export async function getRealtimeStats(
+	ctx: SteamRequestContext,
+	serverSteamId: string,
+): Promise<RealtimeStatsResponse> {
+	const url = withQuery(
+		`${STEAM_API}/IDOTA2MatchStats_570/GetRealtimeStats/v1/`,
+		{
+			key: ctx.apiKey,
+			server_steam_id: serverSteamId,
+		},
+	)
+	return steamCall('steam', 'GetRealtimeStats', url, ctx, (body) => {
+		const rawMatch =
+			typeof body === 'object' && body !== null
+				? (body as { match?: Record<string, unknown> }).match
+				: undefined
+		const rawLeagueId = rawMatch?.league_id
+		if (typeof rawLeagueId === 'number' && rawLeagueId <= 0) {
+			const rawMatchId = asNumberFromUnknown(rawMatch?.match_id)
+			throw new PublicMatchError(rawMatchId)
+		}
+		const parsed = realtimeStatsResponseSchema.safeParse(body)
+		if (!parsed.success) {
+			throw new SteamApiError({
+				message: 'GetRealtimeStats: unexpected shape',
+			})
+		}
+		return parsed.data
+	})
+}
+
+function asNumberFromUnknown(value: unknown): number | null {
+	if (typeof value === 'number' && Number.isFinite(value)) return value
+	if (typeof value === 'string' && value !== '') {
+		const n = Number(value)
+		return Number.isFinite(n) ? n : null
 	}
-	return { matches, raw }
+	return null
 }
 
 export function replayUrl(

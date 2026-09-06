@@ -1,11 +1,19 @@
 import { eq } from 'drizzle-orm'
 import { leagues, matches } from '#src/db/schema'
-import { asNumber } from '#src/store/coerce'
-import type {
-	DraftPick,
-	MatchFacts,
-	PlayerFacts,
+import { asItemId, asNumber, asSteamId64 } from '#src/store/coerce'
+import {
+	type DraftPick,
+	type MatchFacts,
+	normalizeValvePlayerSlot,
+	type PlayerFacts,
 } from '#src/store/match-details'
+import {
+	advanceHistoryMiss,
+	ERROR_KIND,
+	INGEST,
+	type LiveIngest,
+	WAITING,
+} from '#src/store/match-phase'
 import { syntheticSeriesId } from '#src/store/series-id'
 import { db, type Executor, sql, sqlIn, sqlValues } from '#src/utils/db'
 
@@ -196,8 +204,13 @@ export async function touchMatchLive(
 		direTeamLogo?: number | null
 		radiantTeamComplete?: number | null
 		direTeamComplete?: number | null
+		ingest?: LiveIngest
+		serverSteamId?: string | number | null
 	},
 ): Promise<void> {
+	const ingest = row.ingest ?? INGEST.liveLeague
+	const resetLive = ingest === INGEST.liveLeague
+	const resetTop = ingest === INGEST.topLive
 	await tx.execute(sql`
 		INSERT INTO matches (
 			match_id, league_id, league_node_id, series_id, series_type,
@@ -205,7 +218,8 @@ export async function touchMatchLive(
 			radiant_team_id, dire_team_id, radiant_team_name, dire_team_name,
 			lobby_id, game_number, league_series_id, league_game_id,
 			stage_name, league_tier, radiant_team_logo, dire_team_logo,
-			radiant_team_complete, dire_team_complete,
+			radiant_team_complete, dire_team_complete, server_steam_id,
+			ingest_sources, waiting_for,
 			phase, source, live_seen_at, live_disappeared_at, updated_at
 		) VALUES (
 			${row.matchId}, ${row.leagueId}, ${row.leagueNodeId}, ${row.seriesId},
@@ -217,19 +231,21 @@ export async function touchMatchLive(
 			${row.stageName ?? null}, ${row.leagueTier ?? null},
 			${row.radiantTeamLogo ?? null}, ${row.direTeamLogo ?? null},
 			${row.radiantTeamComplete ?? null}, ${row.direTeamComplete ?? null},
+			${asSteamId64(row.serverSteamId) ?? null}::bigint,
+			ARRAY[${ingest}]::text[], ${WAITING.liveEnd},
 			'live'::match_phase, 'live'::match_source,
 			now(), NULL, now()
 		)
 		ON CONFLICT (match_id) DO UPDATE SET
-			league_id = excluded.league_id,
-			league_node_id = excluded.league_node_id,
+			league_id = COALESCE(excluded.league_id, matches.league_id),
+			league_node_id = COALESCE(excluded.league_node_id, matches.league_node_id),
 			series_id = COALESCE(excluded.series_id, matches.series_id),
-			series_type = excluded.series_type,
-			radiant_series_wins = excluded.radiant_series_wins,
-			dire_series_wins = excluded.dire_series_wins,
-			stream_delay_s = excluded.stream_delay_s,
-			radiant_team_id = excluded.radiant_team_id,
-			dire_team_id = excluded.dire_team_id,
+			series_type = COALESCE(excluded.series_type, matches.series_type),
+			radiant_series_wins = COALESCE(excluded.radiant_series_wins, matches.radiant_series_wins),
+			dire_series_wins = COALESCE(excluded.dire_series_wins, matches.dire_series_wins),
+			stream_delay_s = COALESCE(excluded.stream_delay_s, matches.stream_delay_s),
+			radiant_team_id = COALESCE(excluded.radiant_team_id, matches.radiant_team_id),
+			dire_team_id = COALESCE(excluded.dire_team_id, matches.dire_team_id),
 			radiant_team_name = COALESCE(excluded.radiant_team_name, matches.radiant_team_name),
 			dire_team_name = COALESCE(excluded.dire_team_name, matches.dire_team_name),
 			lobby_id = COALESCE(excluded.lobby_id, matches.lobby_id),
@@ -242,41 +258,327 @@ export async function touchMatchLive(
 			dire_team_logo = COALESCE(excluded.dire_team_logo, matches.dire_team_logo),
 			radiant_team_complete = COALESCE(excluded.radiant_team_complete, matches.radiant_team_complete),
 			dire_team_complete = COALESCE(excluded.dire_team_complete, matches.dire_team_complete),
+			server_steam_id = COALESCE(excluded.server_steam_id, matches.server_steam_id),
+			ingest_sources = CASE
+				WHEN matches.ingest_sources @> ARRAY[${ingest}]::text[]
+					THEN matches.ingest_sources
+				ELSE matches.ingest_sources || ${ingest}::text
+			END,
 			source = 'live'::match_source,
 			phase = CASE
-				WHEN matches.phase IN ('details_ready', 'awaiting_replay', 'replay_stored', 'replay_unavailable')
-					THEN matches.phase
+				WHEN matches.phase IN (
+					'details_ready', 'awaiting_replay', 'replay_stored',
+					'replay_unavailable', 'parsed'
+				) THEN matches.phase
 				ELSE 'live'::match_phase
+			END,
+			waiting_for = CASE
+				WHEN matches.phase IN (
+					'details_ready', 'awaiting_replay', 'replay_stored',
+					'replay_unavailable', 'parsed'
+				) THEN matches.waiting_for
+				ELSE ${WAITING.liveEnd}
+			END,
+			last_error = CASE
+				WHEN matches.phase = 'not_started' THEN NULL
+				ELSE matches.last_error
+			END,
+			last_error_kind = CASE
+				WHEN matches.phase = 'not_started' THEN NULL
+				ELSE matches.last_error_kind
 			END,
 			live_seen_at = now(),
 			live_disappeared_at = NULL,
-			live_disappeared_count = 0,
+			live_league_missed_polls = CASE
+				WHEN ${resetLive} THEN 0 ELSE matches.live_league_missed_polls
+			END,
+			top_live_missed_polls = CASE
+				WHEN ${resetTop} THEN 0 ELSE matches.top_live_missed_polls
+			END,
 			updated_at = now()
 	`)
 }
 
-export async function markMatchesFinishedLive(
+export async function noteLiveFeedSeen(
 	tx: Executor,
-	matchIds: readonly number[],
-	replayDelayMs: number,
+	feed: LiveIngest,
+	matchId: number,
 ): Promise<void> {
-	if (matchIds.length === 0) return
-	const delaySec = Math.round(replayDelayMs / 1000)
+	const resetLive = feed === INGEST.liveLeague
+	const resetTop = feed === INGEST.topLive
 	await tx.execute(sql`
+		UPDATE matches
+		SET
+			live_seen_at = now(),
+			live_league_missed_polls = CASE
+				WHEN ${resetLive} THEN 0 ELSE live_league_missed_polls
+			END,
+			top_live_missed_polls = CASE
+				WHEN ${resetTop} THEN 0 ELSE top_live_missed_polls
+			END,
+			updated_at = now()
+		WHERE match_id = ${matchId} AND phase = 'live'
+	`)
+}
+
+export async function noteLiveFeedMisses(
+	tx: Executor,
+	feed: LiveIngest,
+	seenIds: readonly number[],
+): Promise<void> {
+	const column =
+		feed === INGEST.liveLeague
+			? sql`live_league_missed_polls`
+			: sql`top_live_missed_polls`
+	const notSeen =
+		seenIds.length === 0 ? sql`TRUE` : sql`match_id NOT IN ${sqlIn(seenIds)}`
+	await tx.execute(sql`
+		UPDATE matches
+		SET ${column} = ${column} + 1, updated_at = now()
+		WHERE phase = 'live'
+			AND ingest_sources @> ARRAY[${feed}]::text[]
+			AND ${notSeen}
+	`)
+}
+
+export async function noteLiveClock(
+	tx: Executor,
+	matchId: number,
+	duration: number,
+): Promise<void> {
+	if (!(duration > 0)) return
+	await tx.execute(sql`
+		UPDATE matches
+		SET
+			live_duration_max = GREATEST(live_duration_max, ${duration}::real),
+			updated_at = now()
+		WHERE match_id = ${matchId}
+	`)
+}
+
+export async function finishMissingLiveMatches(
+	tx: Executor,
+	threshold: number,
+	replayDelayMs: number,
+): Promise<number[]> {
+	const delaySec = Math.round(replayDelayMs / 1000)
+	const rows = await tx.execute(sql`
 		UPDATE matches
 		SET
 			live_disappeared_at = now(),
 			live_disappeared_count = live_disappeared_count + 1,
-			finished_at = now(),
-			replay_available_at = now() + ${delaySec} * interval '1 second',
+			finished_at = CASE
+				WHEN live_duration_max > 0 THEN now()
+				ELSE finished_at
+			END,
+			replay_available_at = CASE
+				WHEN live_duration_max > 0
+					THEN now() + ${delaySec} * interval '1 second'
+				ELSE replay_available_at
+			END,
 			phase = CASE
-				WHEN details_fetched_at IS NULL THEN 'awaiting_details'::match_phase
-				ELSE 'details_ready'::match_phase
+				WHEN live_duration_max > 0 THEN 'awaiting_history'::match_phase
+				ELSE 'not_started'::match_phase
+			END,
+			waiting_for = CASE
+				WHEN live_duration_max > 0 THEN ${WAITING.history}
+				ELSE NULL
+			END,
+			history_next_poll_at = CASE
+				WHEN live_duration_max > 0 THEN now()
+				ELSE NULL
+			END,
+			last_error = CASE
+				WHEN live_duration_max > 0 THEN last_error
+				ELSE 'live listing never started'
+			END,
+			last_error_kind = CASE
+				WHEN live_duration_max > 0 THEN last_error_kind
+				ELSE ${ERROR_KIND.notStarted}
+			END,
+			last_error_at = CASE
+				WHEN live_duration_max > 0 THEN last_error_at
+				ELSE now()
 			END,
 			updated_at = now()
-		WHERE match_id IN ${sqlIn(matchIds)}
-			AND phase = 'live'
+		WHERE phase = 'live'
+			AND (
+				ingest_sources @> ARRAY[${INGEST.liveLeague}]::text[]
+				OR ingest_sources @> ARRAY[${INGEST.topLive}]::text[]
+			)
+			AND (
+				NOT ingest_sources @> ARRAY[${INGEST.liveLeague}]::text[]
+				OR live_league_missed_polls >= ${threshold}
+			)
+			AND (
+				NOT ingest_sources @> ARRAY[${INGEST.topLive}]::text[]
+				OR top_live_missed_polls >= ${threshold}
+			)
+		RETURNING match_id
 	`)
+	return rows
+		.map((row) => asNumber(row.match_id))
+		.filter((id): id is number => id != null)
+}
+
+export async function clearServerSteamId(
+	matchId: number,
+	tx?: Executor,
+): Promise<void> {
+	const exec = tx ?? db
+	await exec.execute(sql`
+		UPDATE matches
+		SET server_steam_id = NULL, updated_at = now()
+		WHERE match_id = ${matchId}
+	`)
+}
+
+export async function touchRealtimeSeen(
+	tx: Executor,
+	matchId: number,
+): Promise<void> {
+	await tx.execute(sql`
+		UPDATE matches
+		SET last_realtime_at = now(), updated_at = now()
+		WHERE match_id = ${matchId}
+	`)
+}
+
+export async function listLiveRealtimeTargets(
+	limit: number,
+): Promise<Array<{ matchId: number; serverSteamId: string }>> {
+	const rows = await db.execute(sql`
+		SELECT match_id, server_steam_id::text AS server_steam_id
+		FROM matches
+		WHERE phase = 'live' AND server_steam_id IS NOT NULL
+		ORDER BY last_realtime_at NULLS FIRST, match_id
+		LIMIT ${limit}
+	`)
+	const out: Array<{ matchId: number; serverSteamId: string }> = []
+	for (const row of rows) {
+		const matchId = asNumber(row.match_id)
+		const serverSteamId = asSteamId64(row.server_steam_id)
+		if (matchId == null || serverSteamId == null) continue
+		out.push({ matchId, serverSteamId })
+	}
+	return out
+}
+
+export async function listDueHistoryLeagueIds(): Promise<number[]> {
+	const rows = await db.execute(sql`
+		SELECT DISTINCT league_id
+		FROM matches
+		WHERE phase = 'awaiting_history'
+			AND league_id IS NOT NULL
+			AND (history_next_poll_at IS NULL OR history_next_poll_at <= now())
+		ORDER BY league_id
+	`)
+	return rows
+		.map((row) => asNumber(row.league_id))
+		.filter((id): id is number => id != null)
+}
+
+export async function listAwaitingHistoryMatchIds(
+	leagueId: number,
+): Promise<number[]> {
+	const rows = await db.execute(sql`
+		SELECT match_id
+		FROM matches
+		WHERE league_id = ${leagueId} AND phase = 'awaiting_history'
+	`)
+	return rows
+		.map((row) => asNumber(row.match_id))
+		.filter((id): id is number => id != null)
+}
+
+export async function markHistoryAvailable(
+	tx: Executor,
+	row: {
+		matchId: number
+		leagueId: number
+		matchSeqNum: number
+		startTime: number
+		lobbyType: number
+		seriesId: number | null
+		seriesType: number | null
+		radiantTeamId: number | null
+		direTeamId: number | null
+	},
+): Promise<void> {
+	const patch = await lookupPatch(tx, row.startTime)
+	await tx.execute(sql`
+		UPDATE matches
+		SET
+			league_id = COALESCE(${row.leagueId}, league_id),
+			match_seq_num = COALESCE(${row.matchSeqNum}, match_seq_num),
+			start_time = COALESCE(${row.startTime}, start_time),
+			lobby_type = COALESCE(${row.lobbyType}, lobby_type),
+			series_id = COALESCE(${row.seriesId}, series_id),
+			series_type = COALESCE(${row.seriesType}, series_type),
+			radiant_team_id = COALESCE(${row.radiantTeamId}, radiant_team_id),
+			dire_team_id = COALESCE(${row.direTeamId}, dire_team_id),
+			patch = COALESCE(patch, ${patch}),
+			ingest_sources = CASE
+				WHEN ingest_sources @> ARRAY[${INGEST.history}]::text[]
+					THEN ingest_sources
+				ELSE ingest_sources || ${INGEST.history}::text
+			END,
+			phase = 'awaiting_details'::match_phase,
+			waiting_for = ${WAITING.seq},
+			updated_at = now()
+		WHERE match_id = ${row.matchId}
+			AND phase = 'awaiting_history'
+	`)
+}
+
+export async function recordHistoryPollMisses(
+	tx: Executor,
+	matchIds: readonly number[],
+	input: {
+		fastLimit: number
+		slowLimit: number
+		fastMs: number
+		slowMs: number
+	},
+): Promise<void> {
+	if (matchIds.length === 0) return
+	const rows = await tx.execute(sql`
+		SELECT match_id, history_poll_fast_count, history_poll_slow_count
+		FROM matches
+		WHERE match_id IN ${sqlIn(matchIds)} AND phase = 'awaiting_history'
+	`)
+	for (const row of rows) {
+		const matchId = asNumber(row.match_id)
+		if (matchId == null) continue
+		const next = advanceHistoryMiss({
+			fastCount: asNumber(row.history_poll_fast_count) ?? 0,
+			slowCount: asNumber(row.history_poll_slow_count) ?? 0,
+			fastLimit: input.fastLimit,
+			slowLimit: input.slowLimit,
+			fastMs: input.fastMs,
+			slowMs: input.slowMs,
+		})
+		const nextAt =
+			next.phase === 'failed' ? null : new Date(Date.now() + next.nextPollMs)
+		await tx.execute(sql`
+			UPDATE matches
+			SET
+				history_poll_fast_count = ${next.fastCount},
+				history_poll_slow_count = ${next.slowCount},
+				history_last_polled_at = now(),
+				history_next_poll_at = ${nextAt},
+				phase = ${next.phase}::match_phase,
+				waiting_for = ${next.phase === 'failed' ? null : WAITING.history},
+				last_error = ${next.errorKind === null ? null : 'history_timeout'},
+				last_error_kind = ${next.errorKind},
+				last_error_at = CASE
+					WHEN ${next.errorKind}::text IS NULL THEN last_error_at
+					ELSE now()
+				END,
+				updated_at = now()
+			WHERE match_id = ${matchId}
+		`)
+	}
 }
 
 export async function upsertMatchPlayers(
@@ -285,80 +587,87 @@ export async function upsertMatchPlayers(
 	players: readonly PlayerFacts[],
 ): Promise<void> {
 	if (players.length === 0) return
-	const rows = players.map((player) => ({
-		match_id: matchId,
-		account_id: player.accountId,
-		player_slot: player.playerSlot,
-		hero_id: player.heroId,
-		hero_variant: player.heroVariant,
-		player_name: player.playerName,
-		pro_name: player.proName,
-		real_name: player.realName,
-		team_number: player.teamNumber,
-		team_slot: player.teamSlot,
-		side: player.side,
-		kills: player.kills,
-		deaths: player.deaths,
-		assists: player.assists,
-		last_hits: player.lastHits,
-		denies: player.denies,
-		gold: player.gold,
-		gold_spent: player.goldSpent,
-		level: player.level,
-		gold_per_min: player.goldPerMin,
-		xp_per_min: player.xpPerMin,
-		net_worth: player.netWorth,
-		hero_damage: player.heroDamage,
-		tower_damage: player.towerDamage,
-		hero_healing: player.heroHealing,
-		scaled_hero_damage: player.scaledHeroDamage,
-		scaled_tower_damage: player.scaledTowerDamage,
-		scaled_hero_healing: player.scaledHeroHealing,
-		item_0: player.item0,
-		item_1: player.item1,
-		item_2: player.item2,
-		item_3: player.item3,
-		item_4: player.item4,
-		item_5: player.item5,
-		item_neutral: player.itemNeutral,
-		item_neutral2: player.itemNeutral2,
-		item_6: player.item6,
-		item_7: player.item7,
-		item_8: player.item8,
-		item_9: player.item9,
-		item_10: player.item10,
-		item_10_lvl: player.item10Lvl,
-		backpack_0: player.backpack0,
-		backpack_1: player.backpack1,
-		backpack_2: player.backpack2,
-		backpack_3: player.backpack3,
-		selected_facet: player.selectedFacet,
-		aghanims_scepter: player.aghanimsScepter,
-		aghanims_shard: player.aghanimsShard,
-		moonshard: player.moonshard,
-		ability_upgrades: player.abilityUpgrades,
-		leaver_status: player.leaverStatus,
-		party_id: player.partyId,
-		party_size: player.partySize,
-		claimed_farm_gold: player.claimedFarmGold,
-		support_gold: player.supportGold,
-		claimed_denies: player.claimedDenies,
-		claimed_misses: player.claimedMisses,
-		misses: player.misses,
-		support_ability_value: player.supportAbilityValue,
-		scaled_kills: player.scaledKills,
-		scaled_deaths: player.scaledDeaths,
-		scaled_assists: player.scaledAssists,
-		hero_pick_order: player.heroPickOrder,
-		hero_was_randomed: player.heroWasRandomed,
-		seconds_dead: player.secondsDead,
-		gold_lost_to_death: player.goldLostToDeath,
-		lane_selection_flags: player.laneSelectionFlags,
-		bounty_runes: player.bountyRunes,
-		outposts_captured: player.outpostsCaptured,
-		disable_duration: player.disableDuration,
-		updated_at: new Date(),
-	}))
+	const rows = players.flatMap((player) => {
+		const playerSlot = normalizeValvePlayerSlot(player.playerSlot)
+		if (playerSlot === null) return []
+		return [
+			{
+				match_id: matchId,
+				account_id: player.accountId,
+				player_slot: playerSlot,
+				hero_id: player.heroId,
+				hero_variant: player.heroVariant,
+				player_name: player.playerName,
+				pro_name: player.proName,
+				real_name: player.realName,
+				team_number: player.teamNumber,
+				team_slot: player.teamSlot,
+				side: playerSlot < 128 ? 'radiant' : 'dire',
+				kills: player.kills,
+				deaths: player.deaths,
+				assists: player.assists,
+				last_hits: player.lastHits,
+				denies: player.denies,
+				gold: player.gold,
+				gold_spent: player.goldSpent,
+				level: player.level,
+				gold_per_min: player.goldPerMin,
+				xp_per_min: player.xpPerMin,
+				net_worth: player.netWorth,
+				hero_damage: player.heroDamage,
+				tower_damage: player.towerDamage,
+				hero_healing: player.heroHealing,
+				scaled_hero_damage: player.scaledHeroDamage,
+				scaled_tower_damage: player.scaledTowerDamage,
+				scaled_hero_healing: player.scaledHeroHealing,
+				item_0: asItemId(player.item0),
+				item_1: asItemId(player.item1),
+				item_2: asItemId(player.item2),
+				item_3: asItemId(player.item3),
+				item_4: asItemId(player.item4),
+				item_5: asItemId(player.item5),
+				item_neutral: asItemId(player.itemNeutral),
+				item_neutral2: asItemId(player.itemNeutral2),
+				item_6: asItemId(player.item6),
+				item_7: asItemId(player.item7),
+				item_8: asItemId(player.item8),
+				item_9: asItemId(player.item9),
+				item_10: asItemId(player.item10),
+				item_10_lvl: player.item10Lvl,
+				backpack_0: asItemId(player.backpack0),
+				backpack_1: asItemId(player.backpack1),
+				backpack_2: asItemId(player.backpack2),
+				backpack_3: asItemId(player.backpack3),
+				selected_facet: player.selectedFacet,
+				aghanims_scepter: player.aghanimsScepter,
+				aghanims_shard: player.aghanimsShard,
+				moonshard: player.moonshard,
+				ability_upgrades: player.abilityUpgrades,
+				leaver_status: player.leaverStatus,
+				party_id: player.partyId,
+				party_size: player.partySize,
+				claimed_farm_gold: player.claimedFarmGold,
+				support_gold: player.supportGold,
+				claimed_denies: player.claimedDenies,
+				claimed_misses: player.claimedMisses,
+				misses: player.misses,
+				support_ability_value: player.supportAbilityValue,
+				scaled_kills: player.scaledKills,
+				scaled_deaths: player.scaledDeaths,
+				scaled_assists: player.scaledAssists,
+				hero_pick_order: player.heroPickOrder,
+				hero_was_randomed: player.heroWasRandomed,
+				seconds_dead: player.secondsDead,
+				gold_lost_to_death: player.goldLostToDeath,
+				lane_selection_flags: player.laneSelectionFlags,
+				bounty_runes: player.bountyRunes,
+				outposts_captured: player.outpostsCaptured,
+				disable_duration: player.disableDuration,
+				updated_at: new Date(),
+			},
+		]
+	})
+	if (rows.length === 0) return
 	await tx.execute(sql`
 		INSERT INTO match_players ${sqlValues(rows)}
 		ON CONFLICT (match_id, player_slot) DO UPDATE SET
@@ -557,12 +866,14 @@ export async function upsertHistoryMatches(
 			INSERT INTO matches (
 				match_id, league_id, match_seq_num, start_time, lobby_type,
 				series_id, series_type, radiant_team_id, dire_team_id,
-				patch, phase, source, created_at, updated_at
+				patch, phase, source, ingest_sources, waiting_for,
+				created_at, updated_at
 			) VALUES (
 				${row.match_id}, ${row.league_id}, ${row.match_seq_num},
 				${row.start_time}, ${row.lobby_type}, ${row.series_id || null},
 				${row.series_type}, ${row.radiant_team_id}, ${row.dire_team_id},
-				${patch}, 'discovered'::match_phase, 'historical'::match_source,
+				${patch}, 'awaiting_details'::match_phase, 'historical'::match_source,
+				ARRAY[${INGEST.history}]::text[], ${WAITING.seq},
 				now(), now()
 			)
 			ON CONFLICT (match_id) DO UPDATE SET
@@ -575,6 +886,25 @@ export async function upsertHistoryMatches(
 				radiant_team_id = COALESCE(excluded.radiant_team_id, matches.radiant_team_id),
 				dire_team_id = COALESCE(excluded.dire_team_id, matches.dire_team_id),
 				patch = COALESCE(matches.patch, excluded.patch),
+				ingest_sources = CASE
+					WHEN matches.ingest_sources @> ARRAY[${INGEST.history}]::text[]
+						THEN matches.ingest_sources
+					ELSE matches.ingest_sources || ${INGEST.history}::text
+				END,
+				phase = CASE
+					WHEN matches.phase IN (
+						'live', 'details_ready', 'awaiting_replay', 'replay_stored',
+						'replay_unavailable', 'parsed', 'failed'
+					) THEN matches.phase
+					ELSE 'awaiting_details'::match_phase
+				END,
+				waiting_for = CASE
+					WHEN matches.phase IN (
+						'live', 'details_ready', 'awaiting_replay', 'replay_stored',
+						'replay_unavailable', 'parsed', 'failed'
+					) THEN matches.waiting_for
+					ELSE ${WAITING.seq}
+				END,
 				updated_at = now()
 		`)
 	}
@@ -584,6 +914,7 @@ export async function saveMatchFacts(
 	tx: Executor,
 	facts: MatchFacts,
 	apiKeyId: number | null,
+	fetched: 'seq' | 'gc' = 'gc',
 ): Promise<void> {
 	const patch = await lookupPatch(tx, facts.startTime)
 	const finishedAt =
@@ -647,13 +978,31 @@ export async function saveMatchFacts(
 				WHEN source = 'historical' AND replay_available_at IS NULL THEN now()
 				ELSE replay_available_at
 			END,
-			details_fetched_at = now(),
+			seq_fetched_at = CASE
+				WHEN ${fetched} = 'seq' THEN now() ELSE seq_fetched_at
+			END,
+			details_fetched_at = CASE
+				WHEN ${fetched} = 'gc' THEN now() ELSE details_fetched_at
+			END,
 			phase = CASE
-				WHEN phase IN ('awaiting_replay', 'replay_stored', 'replay_unavailable') THEN phase
-				ELSE 'details_ready'::match_phase
+				WHEN phase IN (
+					'awaiting_replay', 'replay_stored', 'replay_unavailable', 'parsed'
+				) THEN phase
+				WHEN ${fetched} = 'gc' OR details_fetched_at IS NOT NULL
+					THEN 'details_ready'::match_phase
+				ELSE 'awaiting_details'::match_phase
+			END,
+			waiting_for = CASE
+				WHEN phase IN (
+					'awaiting_replay', 'replay_stored', 'replay_unavailable', 'parsed'
+				) THEN waiting_for
+				WHEN ${fetched} = 'gc' OR details_fetched_at IS NOT NULL
+					THEN ${WAITING.replay}
+				ELSE ${WAITING.gc}
 			END,
 			last_api_key_id = COALESCE(${apiKeyId}, last_api_key_id),
 			last_error = NULL,
+			last_error_kind = NULL,
 			updated_at = now()
 		WHERE match_id = ${facts.matchId}
 	`)
@@ -662,8 +1011,11 @@ export async function saveMatchFacts(
 export async function insertUndiscoveredMatch(
 	tx: Executor,
 	facts: MatchFacts,
+	fetched: 'seq' | 'gc' = 'gc',
 ): Promise<void> {
 	const patch = await lookupPatch(tx, facts.startTime)
+	const phase = fetched === 'gc' ? 'details_ready' : 'awaiting_details'
+	const waiting = fetched === 'gc' ? WAITING.replay : WAITING.gc
 	await tx.execute(sql`
 		INSERT INTO matches (
 			match_id, league_id, match_seq_num, start_time, duration,
@@ -675,7 +1027,8 @@ export async function insertUndiscoveredMatch(
 			radiant_team_id, dire_team_id, radiant_team_name, dire_team_name,
 			radiant_team_logo, dire_team_logo, radiant_team_tag, dire_team_tag,
 			match_flags, match_outcome,
-			patch, phase, source, details_fetched_at, created_at, updated_at
+			patch, phase, source, ingest_sources, waiting_for,
+			seq_fetched_at, details_fetched_at, created_at, updated_at
 		) VALUES (
 			${facts.matchId}, ${facts.leagueId}, ${facts.matchSeqNum},
 			${facts.startTime}, ${facts.duration}, ${facts.preGameDuration},
@@ -690,10 +1043,31 @@ export async function insertUndiscoveredMatch(
 			${facts.radiantTeamLogo}, ${facts.direTeamLogo},
 			${facts.radiantTeamTag}, ${facts.direTeamTag},
 			${facts.matchFlags}, ${facts.matchOutcome},
-			${patch}, 'details_ready'::match_phase, 'historical'::match_source,
-			now(), now(), now()
+			${patch}, ${phase}::match_phase, 'historical'::match_source,
+			'{}'::text[], ${waiting},
+			${fetched === 'seq' ? new Date() : null},
+			${fetched === 'gc' ? new Date() : null},
+			now(), now()
 		)
 		ON CONFLICT (match_id) DO NOTHING
+	`)
+}
+
+export async function markSeqFetched(
+	tx: Executor,
+	matchIds: readonly number[],
+): Promise<void> {
+	if (matchIds.length === 0) return
+	await tx.execute(sql`
+		UPDATE matches
+		SET
+			seq_fetched_at = COALESCE(seq_fetched_at, now()),
+			waiting_for = CASE
+				WHEN details_fetched_at IS NULL THEN ${WAITING.gc}
+				ELSE waiting_for
+			END,
+			updated_at = now()
+		WHERE match_id IN ${sqlIn(matchIds)}
 	`)
 }
 
@@ -791,11 +1165,13 @@ export async function replaceBroadcasters(
 export async function recordMatchError(
 	matchId: number,
 	error: string,
+	kind: string | null = null,
 ): Promise<void> {
 	await db.execute(sql`
 		UPDATE matches
 		SET
 			last_error = ${error},
+			last_error_kind = ${kind},
 			last_error_at = now(),
 			attempts = attempts + 1,
 			updated_at = now()

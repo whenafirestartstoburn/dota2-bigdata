@@ -5,24 +5,89 @@ import {
 } from '@app/shared/src/components/jobs'
 import { getAppSettings } from '@app/shared/src/components/settings'
 import { runFetchLeagues } from '@app/shared/src/jobs/fetch-leagues'
-import { matchOrigin } from '@app/shared/src/jobs/fetch-match-details'
+import {
+	enqueueFetchMatchDetails,
+	matchOrigin,
+} from '@app/shared/src/jobs/fetch-match-details'
+import { runPollFinishedHistory } from '@app/shared/src/jobs/poll-finished-history'
 import { runPollLiveGames } from '@app/shared/src/jobs/poll-live'
+import { runPollRealtimeStats } from '@app/shared/src/jobs/poll-realtime-stats'
+import { runPollTopLive } from '@app/shared/src/jobs/poll-top-live'
 import { runReplenishAccounts } from '@app/shared/src/jobs/replenish-accounts'
 import { runRetestDisabledResources } from '@app/shared/src/jobs/retest-resources'
+import { runSyncCatalogs } from '@app/shared/src/jobs/sync-catalogs'
 import { runWalkLeagueHistory } from '@app/shared/src/jobs/walk-league-history'
-import type { JobHelpers, TaskList } from 'graphile-worker'
+import { jobsInProgress, observeJob } from '@app/shared/src/metrics/observe'
+import { errorMessage } from '@app/shared/src/store/coerce'
+import { logger } from '@app/shared/src/utils/logger'
+import { runWithTrace } from '@app/shared/src/utils/trace'
+import type { JobHelpers, Task, TaskList } from 'graphile-worker'
 import { runDownloadReplay } from '#src/jobs/download-replay'
 import { runFetchMatchDetails } from '#src/jobs/fetch-match-details'
 
-async function rescheduleLive(helpers: JobHelpers): Promise<void> {
+function traced(name: string, fn: Task, opts?: { skipNoKey?: boolean }): Task {
+	return async (payload, helpers) => {
+		const matchId =
+			jobNumber(payload, 'match_id') ?? jobNumber(payload, 'matchId')
+		await runWithTrace(
+			{
+				trace_id: helpers.job.id,
+				job: name,
+				job_id: helpers.job.id,
+				...(matchId != null ? { match_id: matchId } : {}),
+			},
+			async () => {
+				const started = performance.now()
+				jobsInProgress.inc({ job: name })
+				try {
+					await fn(payload, helpers)
+					observeJob(name, 'success', started)
+				} catch (error) {
+					if (
+						opts?.skipNoKey === true &&
+						/no ready Steam API key/i.test(errorMessage(error))
+					) {
+						observeJob(name, 'skipped', started)
+						logger.warn({ err: errorMessage(error) }, `${name} skipped`)
+						return
+					}
+					observeJob(name, 'error', started)
+					throw error
+				} finally {
+					jobsInProgress.dec({ job: name })
+				}
+			},
+		)
+	}
+}
+
+async function rescheduleLive(
+	helpers: JobHelpers,
+	identifier: 'poll_live_games' | 'poll_top_live' | 'poll_realtime_stats',
+): Promise<void> {
 	const settings = await getAppSettings()
 	await helpers.addJob(
-		'poll_live_games',
+		identifier,
 		{},
 		{
 			runAt: new Date(Date.now() + settings.livePollIntervalMs),
-			jobKey: 'poll_live_games',
+			jobKey: identifier,
 			jobKeyMode: 'replace',
+			maxAttempts: 1,
+		},
+	)
+}
+
+async function rescheduleFinishedHistory(helpers: JobHelpers): Promise<void> {
+	const settings = await getAppSettings()
+	await helpers.addJob(
+		'poll_finished_history',
+		{},
+		{
+			runAt: new Date(Date.now() + settings.historyFastPollMs),
+			jobKey: 'poll_finished_history',
+			jobKeyMode: 'replace',
+			maxAttempts: 1,
 		},
 	)
 }
@@ -37,6 +102,7 @@ async function rescheduleReplenish(helpers: JobHelpers): Promise<void> {
 			jobKey: 'replenish_accounts',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.replenish,
+			maxAttempts: 1,
 		},
 	)
 }
@@ -51,6 +117,7 @@ async function rescheduleRetest(helpers: JobHelpers): Promise<void> {
 			jobKey: 'retest_disabled_resources',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.retest,
+			maxAttempts: 1,
 		},
 	)
 }
@@ -64,61 +131,127 @@ function matchIdOf(payload: unknown): number {
 }
 
 export const taskList = {
-	fetch_leagues: async () => {
-		await runFetchLeagues()
-	},
-	poll_live_games: async (_payload, helpers) => {
-		try {
-			await runPollLiveGames()
-		} finally {
-			await rescheduleLive(helpers)
-		}
-	},
-	walk_league_history: async (payload) => {
-		const body = readJobPayload(payload)
-		await runWalkLeagueHistory({
-			leagueId: jobNumber(payload, 'league_id'),
-			matchesLimit: jobNumber(payload, 'matches_limit') ?? null,
-			reset: body.reset === true,
-		})
-	},
-	fetch_match_details: async (payload) => {
+	fetch_leagues: traced(
+		'fetch_leagues',
+		async () => {
+			await runFetchLeagues()
+		},
+		{ skipNoKey: true },
+	),
+	sync_catalogs: traced('sync_catalogs', async () => {
+		await runSyncCatalogs()
+	}),
+	poll_live_games: traced(
+		'poll_live_games',
+		async (_payload, helpers) => {
+			try {
+				await runPollLiveGames()
+			} finally {
+				await rescheduleLive(helpers, 'poll_live_games')
+			}
+		},
+		{ skipNoKey: true },
+	),
+	poll_top_live: traced(
+		'poll_top_live',
+		async (_payload, helpers) => {
+			try {
+				await runPollTopLive()
+			} finally {
+				await rescheduleLive(helpers, 'poll_top_live')
+			}
+		},
+		{ skipNoKey: true },
+	),
+	poll_realtime_stats: traced(
+		'poll_realtime_stats',
+		async (_payload, helpers) => {
+			try {
+				await runPollRealtimeStats()
+			} finally {
+				await rescheduleLive(helpers, 'poll_realtime_stats')
+			}
+		},
+		{ skipNoKey: true },
+	),
+	poll_finished_history: traced(
+		'poll_finished_history',
+		async (_payload, helpers) => {
+			try {
+				await runPollFinishedHistory()
+			} finally {
+				await rescheduleFinishedHistory(helpers)
+			}
+		},
+		{ skipNoKey: true },
+	),
+	walk_league_history: traced(
+		'walk_league_history',
+		async (payload) => {
+			const body = readJobPayload(payload)
+			await runWalkLeagueHistory({
+				leagueId: jobNumber(payload, 'league_id'),
+				matchesLimit: jobNumber(payload, 'matches_limit') ?? null,
+				reset: body.reset === true,
+			})
+		},
+		{ skipNoKey: true },
+	),
+	fetch_match_details: traced('fetch_match_details', async (payload) => {
 		const matchId = jobNumber(payload, 'match_id')
 		if (matchId === undefined) {
 			throw new Error('fetch_match_details payload requires match_id')
 		}
-		const origin = readJobPayload(payload).origin
-		await runFetchMatchDetails({
-			matchId,
-			origin: matchOrigin(origin),
-		})
-	},
-	process_league: async (payload) => {
-		const leagueId = jobNumber(payload, 'league_id')
-		if (leagueId === undefined) {
-			throw new Error('process_league payload requires league_id')
+		const origin = matchOrigin(readJobPayload(payload).origin)
+		try {
+			await runFetchMatchDetails({ matchId, origin })
+		} catch (error) {
+			if (!/no ready Steam API key/i.test(errorMessage(error))) {
+				throw error
+			}
+			await enqueueFetchMatchDetails(
+				matchId,
+				origin,
+				new Date(Date.now() + 30_000),
+			)
 		}
-		await runWalkLeagueHistory({
-			leagueId,
-			matchesLimit: jobNumber(payload, 'matches_limit') ?? null,
-			reset: true,
-		})
-	},
-	download_replay: async (payload) => {
+	}),
+	process_league: traced(
+		'process_league',
+		async (payload) => {
+			const leagueId = jobNumber(payload, 'league_id')
+			if (leagueId === undefined) {
+				throw new Error('process_league payload requires league_id')
+			}
+			await runWalkLeagueHistory({
+				leagueId,
+				matchesLimit: jobNumber(payload, 'matches_limit') ?? null,
+				reset: true,
+			})
+		},
+		{ skipNoKey: true },
+	),
+	download_replay: traced('download_replay', async (payload) => {
 		await runDownloadReplay(matchIdOf(payload))
-	},
-	replenish_accounts: async (_payload, helpers) => {
-		try {
-			await runReplenishAccounts()
-		} finally {
-			await rescheduleReplenish(helpers)
-		}
-	},
-	retest_disabled_resources: async (_payload, helpers) => {
-		try {
-			await runRetestDisabledResources()
-		} finally {
-			await rescheduleRetest(helpers)
-		}
-	},
+	}),
+	replenish_accounts: traced(
+		'replenish_accounts',
+		async (_payload, helpers) => {
+			try {
+				await runReplenishAccounts()
+			} finally {
+				await rescheduleReplenish(helpers)
+			}
+		},
+	),
+	retest_disabled_resources: traced(
+		'retest_disabled_resources',
+		async (_payload, helpers) => {
+			try {
+				await runRetestDisabledResources()
+			} finally {
+				await rescheduleRetest(helpers)
+			}
+		},
+	),
 } satisfies TaskList

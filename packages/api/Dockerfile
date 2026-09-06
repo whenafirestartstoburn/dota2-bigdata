@@ -47,4 +47,6 @@ COPY packages/shared/src ./packages/shared/src
 ENV SERVER_PORT=8080
 # </template:runtime>
 
+ENV SERVICE_NAME=api
+
 CMD ["bun", "packages/api/src/app.ts"]

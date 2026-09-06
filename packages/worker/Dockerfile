@@ -49,4 +49,6 @@ COPY packages/shared/src ./packages/shared/src
 ENV WORKER_PORT=8080
 # </template:runtime>
 
+ENV SERVICE_NAME=worker
+
 CMD ["bun", "packages/worker/src/app.ts"]

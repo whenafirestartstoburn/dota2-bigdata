@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dotabuff/manta"
+	"dota2-collector/parser/internal/replay"
 )
 
 func pad4(i int) string {
@@ -96,7 +96,7 @@ func asBool(v any) (bool, bool) {
 	}
 }
 
-func getAny(e *manta.Entity, names ...string) any {
+func getAny(e *replay.Entity, names ...string) any {
 	if e == nil {
 		return nil
 	}
@@ -108,7 +108,7 @@ func getAny(e *manta.Entity, names ...string) any {
 	return nil
 }
 
-func getInt(e *manta.Entity, names ...string) int32 {
+func getInt(e *replay.Entity, names ...string) int32 {
 	v, ok := asInt32(getAny(e, names...))
 	if !ok {
 		return 0
@@ -116,7 +116,7 @@ func getInt(e *manta.Entity, names ...string) int32 {
 	return v
 }
 
-func getUint(e *manta.Entity, names ...string) uint32 {
+func getUint(e *replay.Entity, names ...string) uint32 {
 	v, ok := asUint32(getAny(e, names...))
 	if !ok {
 		return 0
@@ -124,7 +124,7 @@ func getUint(e *manta.Entity, names ...string) uint32 {
 	return v
 }
 
-func getUint64(e *manta.Entity, names ...string) uint64 {
+func getUint64(e *replay.Entity, names ...string) uint64 {
 	v, ok := asUint64(getAny(e, names...))
 	if !ok {
 		return 0
@@ -132,7 +132,7 @@ func getUint64(e *manta.Entity, names ...string) uint64 {
 	return v
 }
 
-func getFloat(e *manta.Entity, names ...string) float32 {
+func getFloat(e *replay.Entity, names ...string) float32 {
 	v, ok := asFloat32(getAny(e, names...))
 	if !ok {
 		return 0
@@ -140,7 +140,7 @@ func getFloat(e *manta.Entity, names ...string) float32 {
 	return v
 }
 
-func getBool(e *manta.Entity, names ...string) bool {
+func getBool(e *replay.Entity, names ...string) bool {
 	v, ok := asBool(getAny(e, names...))
 	if !ok {
 		return false
@@ -155,19 +155,19 @@ func rulesPath(suffix string) []string {
 	}
 }
 
-func rulesInt(e *manta.Entity, suffix string) int32 {
+func rulesInt(e *replay.Entity, suffix string) int32 {
 	return getInt(e, rulesPath(suffix)...)
 }
 
-func rulesUint(e *manta.Entity, suffix string) uint32 {
+func rulesUint(e *replay.Entity, suffix string) uint32 {
 	return getUint(e, rulesPath(suffix)...)
 }
 
-func rulesFloat(e *manta.Entity, suffix string) float32 {
+func rulesFloat(e *replay.Entity, suffix string) float32 {
 	return getFloat(e, rulesPath(suffix)...)
 }
 
-func rulesBool(e *manta.Entity, suffix string) bool {
+func rulesBool(e *replay.Entity, suffix string) bool {
 	return getBool(e, rulesPath(suffix)...)
 }
 
@@ -186,7 +186,7 @@ func cellCoord(cell int32, vec float32) float32 {
 	return float32(cell) + vec/128
 }
 
-func entityPosition(e *manta.Entity) (x, y, z float32, ok bool) {
+func entityPosition(e *replay.Entity) (x, y, z float32, ok bool) {
 	if e == nil {
 		return 0, 0, 0, false
 	}
@@ -202,7 +202,7 @@ func entityPosition(e *manta.Entity) (x, y, z float32, ok bool) {
 	return cellCoord(cx, vx), cellCoord(cy, vy), cellCoord(cz, vz), true
 }
 
-func classHasPrefix(e *manta.Entity, prefixes ...string) bool {
+func classHasPrefix(e *replay.Entity, prefixes ...string) bool {
 	if e == nil {
 		return false
 	}
@@ -254,25 +254,22 @@ func boolU8(v bool) uint8 {
 	return 0
 }
 
-func lookupCL(p *manta.Parser, idx uint32) string {
-	if p == nil || idx == 0 {
-		// index 0 can be a real name; still try
-	}
+func lookupCL(p *replay.Session, idx uint32) string {
 	if p == nil {
 		return ""
 	}
-	name, ok := p.LookupStringByIndex("CombatLogNames", int32(idx))
+	name, ok := p.LookupString("CombatLogNames", int32(idx))
 	if !ok {
 		return ""
 	}
 	return name
 }
 
-func lookupEntityName(p *manta.Parser, idx uint32) string {
+func lookupEntityName(p *replay.Session, idx uint32) string {
 	if p == nil {
 		return ""
 	}
-	name, ok := p.LookupStringByIndex("EntityNames", int32(idx))
+	name, ok := p.LookupString("EntityNames", int32(idx))
 	if !ok {
 		return ""
 	}

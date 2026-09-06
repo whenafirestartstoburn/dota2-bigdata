@@ -1,7 +1,8 @@
 // biome-ignore-all assist/source/organizeImports: регион <template:imports> собирает генератор
 import { seedSteamResources } from '@app/shared/src/components/seed'
 import { db, sql } from '@app/shared/src/utils/db'
-import { corsPreflight, json, notFound } from '#src/http'
+import { logger } from '@app/shared/src/utils/logger'
+import { corsPreflight, json, notFound, tracedRoutes } from '#src/http'
 import { routes } from '#src/routes'
 import env from '#src/utils/env'
 
@@ -15,7 +16,7 @@ await seedSteamResources()
 
 const server = Bun.serve({
 	idleTimeout: 0,
-	routes: {
+	routes: tracedRoutes({
 		'/': () => new Response(null, { status: 200 }),
 		'/healthz': () => Response.json({ status: 'ok' }),
 		'/readyz': async (request) => {
@@ -30,7 +31,7 @@ const server = Bun.serve({
 
 		// <template:routes>
 		// </template:routes>
-	},
+	}),
 	fetch(request) {
 		if (request.method === 'OPTIONS') return corsPreflight(request)
 		return notFound(request)
@@ -38,7 +39,7 @@ const server = Bun.serve({
 	port: env.SERVER_PORT,
 })
 
-console.log(`[api] http://localhost:${server.port}`)
+logger.info({ port: server.port }, 'api listening')
 
 async function shutdown(): Promise<void> {
 	await server.stop()

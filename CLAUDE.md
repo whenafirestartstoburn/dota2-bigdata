@@ -16,7 +16,10 @@
 | `packages/worker` | сервис: свой `app.ts` с graceful shutdown и свой `utils/env.ts` |
 <!-- </template:structure> -->
 
-| `packages/parser` | Go replay parser (manta decoder, ClickHouse `replay_*`) |
+| `packages/parser` | Go replay parser (own Source 2 decoder, ClickHouse `replay_*`) |
+
+Prometheus + Grafana live in compose (`:9090`, `:3003`). Worker and parser
+serve `GET /metrics`. Catalog: `docs/specs/metrics.md`.
 
 ## Запуск
 
@@ -58,11 +61,19 @@ cd packages/worker && bun run test
 ```
 <!-- </template:commands> -->
 
+TypeScript tests live in `packages/<pkg>/tests/`, mirroring `src/`
+(not next to production files). Go parser tests stay `*_test.go` beside
+the package, as `go test` requires.
+
 Parser (Go, not Bun):
 
 ```bash
 cd packages/parser && go test -count=1 -timeout 15m
 ```
+
+Service logs are one JSON line: ISO `time`, string `level`, `service`,
+`trace_id`. graphile-worker goes through pino. Parser `slog` uses the same
+keys. `pino-pretty` only on a local TTY.
 
 ## ClickHouse
 

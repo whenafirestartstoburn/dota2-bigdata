@@ -18,14 +18,21 @@ cp ~/Downloads/8973166068_276401451.dem.bz2 \
 
 ## One replay per major patch
 
+Uses Postgres `patches` + `steam_accounts` (Web API key for
+GetLeagueInfoList / GetMatchHistory, GC account for replay salt):
+
 ```bash
-cd packages/parser
-go run ./cmd/fetch-patches
-go test -count=1 -timeout 30m -run TestParseMajorPatches
+bun run parser:fetch-patches
+# bun run parser:fetch-patches -- --only 7.39,7.38
+cd packages/parser && go test -count=1 -timeout 30m -run TestParseMajorPatches
 ```
 
-Valve expires CDN files after a few weeks (replay{cluster}.valve.net
-returns 502 for anything older). The fetcher skips a patch when no URL
-still serves the bytes. Tests skip empty patch directories. The attached
-TI / current-patch demos are copied under `patches/7.39/` as the live
-major-version fixture.
+Newest patches first. A patch is skipped when Valve already expired the
+file (`replay_state` or CDN 502). Tests skip empty patch directories.
+Already-`stored` S3 objects are copied into `patches/<patch>/` when the
+CDN is gone. The attached TI demos can be copied under `patches/7.39/`.
+
+Downloads are checked: `Content-Length` must match, and `bzip2 -t`
+must pass for `.bz2`. Truncated CDN bodies are discarded and the next
+match is tried. `7.23`, `7.28`, and `7.32` currently have no live Valve
+file (every candidate 502).

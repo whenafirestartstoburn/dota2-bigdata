@@ -24,6 +24,7 @@ var replayTables = []string{
 	"replay_inventory",
 	"replay_neutrals",
 	"replay_cosmetics",
+	"replay_alerts",
 	"replay_epilogue",
 }
 
@@ -111,6 +112,9 @@ func (c *ClickHouse) insertAll(ctx context.Context, res *model.Result) error {
 		}},
 		{"replay_cosmetics", func(ctx context.Context) error {
 			return insert(ctx, c.conn, "replay_cosmetics", res.Cosmetics)
+		}},
+		{"replay_alerts", func(ctx context.Context) error {
+			return insert(ctx, c.conn, "replay_alerts", res.Alerts)
 		}},
 		{"replay_epilogue", func(ctx context.Context) error {
 			return insert(ctx, c.conn, "replay_epilogue", res.Epilogue)

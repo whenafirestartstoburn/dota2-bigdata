@@ -2,10 +2,24 @@ import {
 	asBool,
 	asComplete,
 	asIntArray,
+	asItemId,
 	asNumber,
 	asPgInt8,
 	asString,
 } from '#src/store/coerce'
+
+/** Valve `player_slot`: 0–4 radiant, 128–132 dire. */
+export function valvePlayerSlot(team: 0 | 1, teamSlot: number): number {
+	return team === 0 ? teamSlot : 128 + teamSlot
+}
+
+/** Accept Valve slots or linear 0–9 (5–9 → dire). Reject 133+ / negative. */
+export function normalizeValvePlayerSlot(slot: number): number | null {
+	if (slot >= 0 && slot <= 4) return slot
+	if (slot >= 128 && slot <= 132) return slot
+	if (slot >= 5 && slot <= 9) return 128 + (slot - 5)
+	return null
+}
 
 export type MatchFacts = {
 	matchId: number
@@ -374,7 +388,9 @@ export function extractPlayers(raw: Record<string, unknown>): PlayerFacts[] {
 		const item = rows[i]
 		if (typeof item !== 'object' || item === null) continue
 		const row = item as Record<string, unknown>
-		const slot = asNumber(row.player_slot) ?? i
+		const rawSlot = asNumber(row.player_slot) ?? i
+		const slot = normalizeValvePlayerSlot(rawSlot)
+		if (slot === null) continue
 		out.push(extractPlayer(row, slot))
 	}
 	return out
@@ -461,17 +477,17 @@ function extractPlayer(
 		units.push({
 			unitName,
 			item0:
-				asNumber(unit.item_0) ?? (items == null ? null : asNumber(items[0])),
+				asItemId(unit.item_0) ?? (items == null ? null : asItemId(items[0])),
 			item1:
-				asNumber(unit.item_1) ?? (items == null ? null : asNumber(items[1])),
+				asItemId(unit.item_1) ?? (items == null ? null : asItemId(items[1])),
 			item2:
-				asNumber(unit.item_2) ?? (items == null ? null : asNumber(items[2])),
+				asItemId(unit.item_2) ?? (items == null ? null : asItemId(items[2])),
 			item3:
-				asNumber(unit.item_3) ?? (items == null ? null : asNumber(items[3])),
+				asItemId(unit.item_3) ?? (items == null ? null : asItemId(items[3])),
 			item4:
-				asNumber(unit.item_4) ?? (items == null ? null : asNumber(items[4])),
+				asItemId(unit.item_4) ?? (items == null ? null : asItemId(items[4])),
 			item5:
-				asNumber(unit.item_5) ?? (items == null ? null : asNumber(items[5])),
+				asItemId(unit.item_5) ?? (items == null ? null : asItemId(items[5])),
 		})
 	}
 
@@ -514,24 +530,24 @@ function extractPlayer(
 		scaledHeroDamage: asNumber(row.scaled_hero_damage),
 		scaledTowerDamage: asNumber(row.scaled_tower_damage),
 		scaledHeroHealing: asNumber(row.scaled_hero_healing),
-		item0: asNumber(row.item_0) ?? asNumber(row.item0),
-		item1: asNumber(row.item_1) ?? asNumber(row.item1),
-		item2: asNumber(row.item_2) ?? asNumber(row.item2),
-		item3: asNumber(row.item_3) ?? asNumber(row.item3),
-		item4: asNumber(row.item_4) ?? asNumber(row.item4),
-		item5: asNumber(row.item_5) ?? asNumber(row.item5),
-		itemNeutral: asNumber(row.item_neutral),
-		itemNeutral2: asNumber(row.item_neutral2),
-		item6: asNumber(row.item_6),
-		item7: asNumber(row.item_7),
-		item8: asNumber(row.item_8),
-		item9: asNumber(row.item_9),
-		item10: asNumber(row.item_10),
+		item0: asItemId(row.item_0) ?? asItemId(row.item0),
+		item1: asItemId(row.item_1) ?? asItemId(row.item1),
+		item2: asItemId(row.item_2) ?? asItemId(row.item2),
+		item3: asItemId(row.item_3) ?? asItemId(row.item3),
+		item4: asItemId(row.item_4) ?? asItemId(row.item4),
+		item5: asItemId(row.item_5) ?? asItemId(row.item5),
+		itemNeutral: asItemId(row.item_neutral),
+		itemNeutral2: asItemId(row.item_neutral2),
+		item6: asItemId(row.item_6),
+		item7: asItemId(row.item_7),
+		item8: asItemId(row.item_8),
+		item9: asItemId(row.item_9),
+		item10: asItemId(row.item_10),
 		item10Lvl: asNumber(row.item_10_lvl),
-		backpack0: asNumber(row.backpack_0),
-		backpack1: asNumber(row.backpack_1),
-		backpack2: asNumber(row.backpack_2),
-		backpack3: asNumber(row.backpack_3),
+		backpack0: asItemId(row.backpack_0),
+		backpack1: asItemId(row.backpack_1),
+		backpack2: asItemId(row.backpack_2),
+		backpack3: asItemId(row.backpack_3),
 		selectedFacet: asNumber(row.selected_facet) ?? asNumber(row.hero_variant),
 		aghanimsScepter: asNumber(row.aghanims_scepter),
 		aghanimsShard: asNumber(row.aghanims_shard),

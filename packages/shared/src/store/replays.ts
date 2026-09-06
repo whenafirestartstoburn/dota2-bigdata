@@ -91,17 +91,53 @@ export async function updateReplay(
 export async function markMatchReplayPhase(
 	matchId: number,
 	phase: 'awaiting_replay' | 'replay_stored' | 'replay_unavailable' | 'failed',
+	opts?: { error?: string; errorKind?: string },
 ): Promise<void> {
+	const waiting =
+		phase === 'awaiting_replay'
+			? 'replay'
+			: phase === 'replay_stored'
+				? 'parse'
+				: null
+	const error = opts?.error ?? null
+	const errorKind = opts?.errorKind ?? null
 	await db.execute(sql`
 		UPDATE matches
-		SET phase = ${phase}::match_phase, updated_at = now()
+		SET
+			phase = CASE
+				WHEN phase = 'parsed' THEN phase
+				ELSE ${phase}::match_phase
+			END,
+			waiting_for = CASE
+				WHEN phase = 'parsed' THEN waiting_for
+				ELSE ${waiting}
+			END,
+			last_error = CASE
+				WHEN ${error}::text IS NULL THEN last_error
+				ELSE ${error}
+			END,
+			last_error_kind = CASE
+				WHEN ${errorKind}::text IS NULL THEN last_error_kind
+				ELSE ${errorKind}
+			END,
+			last_error_at = CASE
+				WHEN ${error}::text IS NULL THEN last_error_at
+				ELSE now()
+			END,
+			updated_at = now()
 		WHERE match_id = ${matchId}
 	`)
 }
 
-export function replayBackoffMs(attempts: number): number {
-	const steps = [5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000]
-	return (
-		steps[Math.min(Math.max(attempts, 0), steps.length - 1)] ?? 6 * 60 * 60_000
-	)
+/**
+ * Delay until the next download after `failed` 404s (attempts before bump).
+ * First live try is settings.replay_live_delay_ms (30 s), not this table.
+ * Then 1 m, 1 m, 3 m × 20, 1 h × 24. Null = give up.
+ */
+export function replayBackoffMs(failed: number): number | null {
+	const n = Math.max(failed, 0)
+	if (n <= 1) return 60_000
+	if (n <= 21) return 3 * 60_000
+	if (n <= 45) return 60 * 60_000
+	return null
 }

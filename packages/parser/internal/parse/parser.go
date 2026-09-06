@@ -11,10 +11,9 @@ import (
 	"time"
 
 	"dota2-collector/parser/internal/model"
+	"dota2-collector/parser/internal/replay"
+	"dota2-collector/parser/internal/valve"
 	"dota2-collector/parser/internal/version"
-
-	"github.com/dotabuff/manta"
-	"github.com/dotabuff/manta/dota"
 )
 
 const intervalSeconds = 1
@@ -43,16 +42,16 @@ type player struct {
 }
 
 type wardWatch struct {
-	kind   string
-	slot   int8
+	kind    string
+	slot    int8
 	x, y, z float32
-	alive  bool
+	alive   bool
 }
 
 type Session struct {
 	job    Job
 	runID  uint64
-	parser *manta.Parser
+	parser *replay.Session
 
 	out *model.Result
 
@@ -64,10 +63,10 @@ type Session struct {
 	serverTick   uint32
 	gameState    int32
 
-	playerResource *manta.Entity
-	gamerules      *manta.Entity
-	radiantData    *manta.Entity
-	direData       *manta.Entity
+	playerResource *replay.Entity
+	gamerules      *replay.Entity
+	radiantData    *replay.Entity
+	direData       *replay.Entity
 	players        [24]*player
 	playerCount    int
 	playersReady   bool
@@ -77,11 +76,11 @@ type Session struct {
 	draftSeen   [48]int32
 	draftOrd    uint16
 	abilitySeen map[string]uint8
-	startItems  [10]bool
 
 	wards map[int32]*wardWatch
 
 	cosmetics map[uint64]struct{}
+	lastItems [10][21]uint64
 
 	laneUntil int32
 }
@@ -121,21 +120,21 @@ func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, erro
 	if job.StartTime.IsZero() {
 		job.StartTime = time.Unix(0, 0).UTC()
 	}
-	p, err := manta.NewStreamParser(r)
+	p, err := replay.New(r)
 	if err != nil {
-		return nil, fmt.Errorf("manta: %w", err)
+		return nil, fmt.Errorf("demo: %w", err)
 	}
 	s := &Session{
-		job:         job,
-		runID:       newRunID(),
-		parser:      p,
+		job:          job,
+		runID:        newRunID(),
+		parser:       p,
 		tickInterval: 1.0 / 30.0,
-		nameToSlot:  make(map[string]int8, 32),
-		idToSlot:    make(map[int]int8, 24),
-		abilitySeen: make(map[string]uint8, 128),
-		wards:       make(map[int32]*wardWatch, 64),
-		cosmetics:   make(map[uint64]struct{}, 64),
-		laneUntil:   600,
+		nameToSlot:   make(map[string]int8, 32),
+		idToSlot:     make(map[int]int8, 24),
+		abilitySeen:  make(map[string]uint8, 128),
+		wards:        make(map[int32]*wardWatch, 64),
+		cosmetics:    make(map[uint64]struct{}, 64),
+		laneUntil:    600,
 		out: &model.Result{
 			MatchID:       job.MatchID,
 			StartTime:     job.StartTime,
@@ -153,6 +152,7 @@ func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, erro
 			Inventory:     make([]model.Inventory, 0, 80),
 			Neutrals:      make([]model.Neutral, 0, 64),
 			Cosmetics:     make([]model.Cosmetic, 0, 64),
+			Alerts:        make([]model.Alert, 0, 256),
 			Epilogue:      make([]model.Epilogue, 0, 16),
 			Objectives:    make([]model.Objective, 0, 32),
 		},
@@ -163,7 +163,7 @@ func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, erro
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("parse match %d: %w", job.MatchID, err)
+		return nil, fmt.Errorf("parse match %d build %d: %w", job.MatchID, p.GameBuild, err)
 	}
 	s.finishSummaries()
 	return s.out, nil
@@ -186,46 +186,47 @@ func (s *Session) clock() int32 {
 }
 
 func (s *Session) wire() {
-	s.parser.Callbacks.OnCSVCMsg_ServerInfo(func(m *dota.CSVCMsg_ServerInfo) error {
+	s.parser.Hooks.ServerInfo = func(m *valve.CSVCMsg_ServerInfo) error {
 		if m.GetTickInterval() > 0 {
 			s.tickInterval = m.GetTickInterval()
 		}
 		return nil
-	})
-	s.parser.Callbacks.OnCNETMsg_Tick(func(m *dota.CNETMsg_Tick) error {
+	}
+	s.parser.Hooks.Tick = func(m *valve.CNETMsg_Tick) error {
 		s.serverTick = m.GetTick()
 		return nil
-	})
+	}
 	s.parser.OnEntity(s.onEntity)
-	s.parser.Callbacks.OnCSVCMsg_PacketEntities(func(_ *dota.CSVCMsg_PacketEntities) error {
+	s.parser.Hooks.PacketEntities = func(_ *valve.CSVCMsg_PacketEntities) error {
 		s.tickWorld()
 		return nil
-	})
-	s.parser.Callbacks.OnCMsgDOTACombatLogEntry(s.onCombat)
-	s.parser.Callbacks.OnCDOTAUserMsg_SpectatorPlayerUnitOrders(s.onOrder)
-	s.parser.Callbacks.OnCDOTAUserMsg_LocationPing(s.onLocationPing)
-	s.parser.Callbacks.OnCDOTAUserMsg_MinimapEvent(s.onMinimap)
-	s.parser.Callbacks.OnCDOTAUserMsg_ChatEvent(s.onChatEvent)
-	s.parser.Callbacks.OnCDOTAUserMsg_ChatMessage(s.onChatMessage)
-	s.parser.Callbacks.OnCDOTAUserMsg_ChatWheel(s.onChatWheel)
-	s.parser.Callbacks.OnCUserMessageSayText2(s.onSayText2)
-	s.parser.Callbacks.OnCDOTAUserMsg_GamerulesStateChanged(func(m *dota.CDOTAUserMsg_GamerulesStateChanged) error {
+	}
+	s.parser.Hooks.CombatLog = s.onCombat
+	s.parser.Hooks.UnitOrders = s.onOrder
+	s.parser.Hooks.LocationPing = s.onLocationPing
+	s.parser.Hooks.Minimap = s.onMinimap
+	s.parser.Hooks.ChatEvent = s.onChatEvent
+	s.parser.Hooks.ChatMessage = s.onChatMessage
+	s.parser.Hooks.ChatWheel = s.onChatWheel
+	s.parser.Hooks.SayText2 = s.onSayText2
+	s.parser.Hooks.GamerulesState = func(m *valve.CDOTAUserMsg_GamerulesStateChanged) error {
 		s.gameState = int32(m.GetState())
 		return nil
-	})
-	s.parser.Callbacks.OnCDOTAUserMsg_FoundNeutralItem(s.onNeutralFound)
-	s.parser.Callbacks.OnCDemoFileInfo(s.onFileInfo)
-	s.parser.Callbacks.OnCDOTAMatchMetadataFile(s.onMetadata)
+	}
+	s.parser.Hooks.NeutralFound = s.onNeutralFound
+	s.parser.Hooks.FileInfo = s.onFileInfo
+	s.parser.Hooks.Metadata = s.onMetadata
+	s.parser.Hooks.UserMessage = s.onUserMessage
 }
 
-func (s *Session) onEntity(e *manta.Entity, op manta.EntityOp) error {
+func (s *Session) onEntity(e *replay.Entity, op replay.Op) error {
 	if e == nil {
 		return nil
 	}
 	class := e.GetClassName()
 	switch {
 	case class == "CDOTA_PlayerResource":
-		if op.Flag(manta.EntityOpDeleted) {
+		if op.Has(replay.OpDeleted) {
 			if s.playerResource == e {
 				s.playerResource = nil
 			}
@@ -233,15 +234,15 @@ func (s *Session) onEntity(e *manta.Entity, op manta.EntityOp) error {
 		}
 		s.playerResource = e
 	case class == "CDOTAGamerulesProxy" || class == "CDOTA_GamerulesProxy":
-		if !op.Flag(manta.EntityOpDeleted) {
+		if !op.Has(replay.OpDeleted) {
 			s.gamerules = e
 		}
 	case class == "CDOTA_DataRadiant":
-		if !op.Flag(manta.EntityOpDeleted) {
+		if !op.Has(replay.OpDeleted) {
 			s.radiantData = e
 		}
 	case class == "CDOTA_DataDire":
-		if !op.Flag(manta.EntityOpDeleted) {
+		if !op.Has(replay.OpDeleted) {
 			s.direData = e
 		}
 	case strings.Contains(class, "Observer_Ward") || strings.HasSuffix(class, "_ObserverWard") ||
@@ -407,7 +408,7 @@ func (s *Session) slotForPlayerID(id int32) int8 {
 	return -1
 }
 
-func (s *Session) dataTeam(team int32) *manta.Entity {
+func (s *Session) dataTeam(team int32) *replay.Entity {
 	if team == 2 {
 		return s.radiantData
 	}
@@ -417,7 +418,7 @@ func (s *Session) dataTeam(team int32) *manta.Entity {
 	return nil
 }
 
-func (s *Session) onFileInfo(m *dota.CDemoFileInfo) error {
+func (s *Session) onFileInfo(m *valve.CDemoFileInfo) error {
 	if m == nil {
 		return nil
 	}
@@ -445,7 +446,7 @@ func (s *Session) onFileInfo(m *dota.CDemoFileInfo) error {
 	return nil
 }
 
-func (s *Session) onMetadata(m *dota.CDOTAMatchMetadataFile) error {
+func (s *Session) onMetadata(m *valve.CDOTAMatchMetadataFile) error {
 	if m == nil {
 		return nil
 	}
@@ -464,7 +465,7 @@ func (s *Session) addEpilogue(key, value string) {
 	})
 }
 
-func (s *Session) mergeFileInfoDraft(picks []*dota.CGameInfo_CDotaGameInfo_CHeroSelectEvent) {
+func (s *Session) mergeFileInfoDraft(picks []*valve.CGameInfo_CDotaGameInfo_CHeroSelectEvent) {
 	if len(s.out.Draft) > 0 || len(picks) == 0 {
 		return
 	}

@@ -1,11 +1,21 @@
+import {
+	pickApiCredential,
+	steamCtx,
+} from '@app/shared/src/components/resources'
 import { REPLAY_STATE } from '@app/shared/src/gc/protobuf'
 import {
 	enqueueDownloadReplay,
 	enqueueFetchMatchDetails,
 	matchOrigin,
+	persistSeqMatches,
 } from '@app/shared/src/jobs/fetch-match-details'
 import { replayUrl } from '@app/shared/src/steam/web-api'
-import { asNumber, asString, errorMessage } from '@app/shared/src/store/coerce'
+import {
+	asDate,
+	asNumber,
+	asString,
+	errorMessage,
+} from '@app/shared/src/store/coerce'
 import { getMatch } from '@app/shared/src/store/matches'
 import { persistMatchRecord } from '@app/shared/src/store/persist-match'
 import {
@@ -24,6 +34,12 @@ export async function runFetchMatchDetails(input: {
 }): Promise<{ saved: number; url?: string }> {
 	const match = await getMatch(input.matchId)
 	const origin = input.origin ?? matchOrigin(match?.source)
+	const seqNum = asNumber(match?.match_seq_num)
+	if (match?.seq_fetched_at == null && seqNum != null && seqNum > 0) {
+		const cred = await pickApiCredential()
+		const ctx = steamCtx(cred, origin)
+		await persistSeqMatches(ctx, seqNum)
+	}
 	await ensureReplayRow(input.matchId, origin)
 	await copyReplayLocatorFromMatch(input.matchId)
 	const replay = await getReplay(input.matchId)
@@ -32,7 +48,11 @@ export async function runFetchMatchDetails(input: {
 	const existingUrl = asString(replay?.source_url)
 
 	if (cluster != null && salt != null && existingUrl != null) {
-		await enqueueDownloadReplay(input.matchId, origin)
+		await enqueueDownloadReplay(
+			input.matchId,
+			origin,
+			downloadAt(match?.replay_available_at),
+		)
 		return { saved: 0, url: existingUrl }
 	}
 
@@ -75,6 +95,7 @@ export async function runFetchMatchDetails(input: {
 			await persistMatchRecord(tx, gcMatch, {
 				mustExist: false,
 				skipStoryObjectives: true,
+				fetched: 'gc',
 			})
 		})
 	}
@@ -103,7 +124,17 @@ export async function runFetchMatchDetails(input: {
 		steamAccountId: locator.accountId,
 		proxyId: locator.proxyId,
 	})
-	await enqueueDownloadReplay(input.matchId, origin)
+	await enqueueDownloadReplay(
+		input.matchId,
+		origin,
+		downloadAt(match?.replay_available_at),
+	)
 	logger.info({ matchId: input.matchId, url }, 'GC match details + replay url')
 	return { saved: 1, url }
+}
+
+function downloadAt(value: unknown): Date | undefined {
+	const at = asDate(value)
+	if (at == null || at.getTime() <= Date.now()) return undefined
+	return at
 }

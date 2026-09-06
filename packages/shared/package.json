@@ -7,7 +7,7 @@
 		"#src/*": "./src/*.ts"
 	},
 	"scripts": {
-		"test": "NODE_ENV=development bun test --env-file=../../.env"
+		"test": "NODE_ENV=development bun test --env-file=../../.env tests"
 	},
 	"dependencies": {
 		"@clickhouse/client": "catalog:",

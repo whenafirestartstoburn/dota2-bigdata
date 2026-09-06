@@ -1,6 +1,10 @@
 import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { deriveLeagueStatus } from '#src/steam/league-status'
-import { getLeagueInfoList, getLiveLeagueGames } from '#src/steam/web-api'
+import {
+	getLeagueInfoList,
+	getLiveLeagueGames,
+	getTopLiveGames,
+} from '#src/steam/web-api'
 import { errorMessage } from '#src/store/coerce'
 import { upsertLeagues } from '#src/store/leagues'
 import { logger } from '#src/utils/logger'
@@ -22,6 +26,17 @@ export async function runFetchLeagues(): Promise<{ count: number }> {
 	const liveIds = new Set(
 		live.games.map((game) => game.league_id).filter((id) => id > 0),
 	)
+	try {
+		const top = await getTopLiveGames(ctx)
+		for (const game of top.games) {
+			if (game.league_id > 0) liveIds.add(game.league_id)
+		}
+	} catch (error) {
+		logger.warn(
+			{ err: errorMessage(error) },
+			'top live games unavailable while deriving league status',
+		)
+	}
 
 	const infos = await getLeagueInfoList(ctx)
 	const now = Math.floor(Date.now() / 1000)

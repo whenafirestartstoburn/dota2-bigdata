@@ -1,6 +1,6 @@
 # Data schema
 
-Professional Dota 2 matches only. Companions: [`worker-architecture.md`](./worker-architecture.md), [`adr-technology.md`](./adr-technology.md) (runtime and stores).
+Professional Dota 2 matches only. Companions: [`worker-architecture.md`](./worker-architecture.md), [`adr-technology.md`](./adr-technology.md) (runtime and stores), [`demo-file.md`](./demo-file.md) (what is inside a `.dem`).
 
 Postgres holds **entities and match-level facts**. ClickHouse holds **ticks and replay events**. S3 holds **`.dem.bz2`**. JSON blobs are not a source of truth.
 
@@ -33,7 +33,7 @@ leagues 1──* series 1──* matches
                 │            ├── 1 match_replay
                 │            └── * ClickHouse live_* / replay_*
                 └── 2 teams
-heroes, items, patches   catalogs keyed by Valve id
+heroes, items, patches, abilities, …   catalogs keyed by Valve id
 ```
 
 Names (vs the list in the request):
@@ -108,6 +108,7 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `barracks_status_radiant`, `barracks_status_dire` | details |
 | `first_blood_time` | details |
 | `lobby_id` | live GetLiveLeagueGames |
+| `server_steam_id` | GetTopLiveGame / GetRealtimeStats; Steam uint64 kept as decimal text in JS (`Number` rounds it, GetRealtimeStats then 400s) |
 | `match_flags` / `flags` | details / GC |
 | `match_outcome` | GC `EMatchOutcome`; also derives `radiant_win` (2 rad / 3 dire) |
 | `game_balance` | GC float |
@@ -126,20 +127,27 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `positive_votes`, `negative_votes` | details (keep; cheap) |
 | `patch` | derived from `start_time` vs `patches` |
 | `stream_delay_s` | live |
-| `phase` | `discovered` → `live` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` / `replay_unavailable` / `failed` |
-| `source` | `live` / `historical` — **sticky**: live origin stays `live` even if history lists it later (replay priority) |
-| `live_seen_at`, `live_disappeared_at`, `live_disappeared_count` | finish detection |
-| `details_fetched_at` | |
-| `finished_at` | `live_disappeared_at`, else `to_timestamp(start_time + duration)` |
-| `replay_available_at` | live: `finished_at + settings.replay_live_delay_ms`; historical: `now()` |
-| `last_error`, `last_error_at`, `attempts`, `next_attempt_at` | |
+| `phase` | `discovered` → `live` → `awaiting_history` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` → `parsed` / `replay_unavailable` / `failed` / `not_started`. Never rewrite a later phase backwards except a live flap (`not_started` and `awaiting_history` go back to `live` if the id reappears on a live feed). |
+| `source` | `live` / `historical` — **sticky**: any live feed wins and stays (replay priority) |
+| `ingest_sources` | `text[]`, accumulated, never removed: `GetLiveLeagueGames`, `GetTopLiveGame`, `GetMatchHistory` |
+| `waiting_for` | `live_end` / `history` / `seq` / `gc` / `replay` / `parse` / null |
+| `live_seen_at`, `live_disappeared_at`, `live_disappeared_count` | last live sighting; flap count (18.1) |
+| `live_league_missed_polls`, `top_live_missed_polls` | current miss streak per feed; reset when that feed sees the match |
+| `live_duration_max` | max `GetLiveLeagueGames` / `GetRealtimeStats` clock seen while live; 0 means the listing never horned |
+| `history_poll_fast_count`, `history_poll_slow_count`, `history_last_polled_at`, `history_next_poll_at` | GetMatchHistory waiter after a **started** live match leaves the feed |
+| `seq_fetched_at` | GetMatchHistoryBySequenceNum persisted |
+| `details_fetched_at` | GC `CMsgDOTAMatch` persisted |
+| `last_realtime_at` | last successful GetRealtimeStats |
+| `finished_at` | live disappear **after** `live_duration_max > 0`, else `to_timestamp(start_time + duration)`; stays null for `not_started` |
+| `replay_available_at` | live: `finished_at + settings.replay_live_delay_ms` (seed 30 s, first try); historical: `now()`. 404 retries: 1 m, 1 m, 3 m × 20, 1 h × 24, then `replay_unavailable`. |
+| `last_error`, `last_error_kind`, `last_error_at`, `attempts`, `next_attempt_at` | 8.1: kind is `network` / `rate_limit` / `auth` / `not_ready` / `unavailable` / `history_timeout` / `not_started` / `other` |
 | `created_at`, `updated_at` | |
 
 Indexes: `(league_id, start_time DESC)`, `(phase)`, `(match_seq_num)`, `(source, phase)`, partial `(replay_available_at)` where phase is awaiting replay.
 
 ### `match_players`
 
-Unique `(match_id, player_slot)`. Slot 0–4 radiant, 128–132 dire.
+Unique `(match_id, player_slot)`. Slot 0–4 radiant, 128–132 dire. Live `GetLiveLeagueGames.players[]` has no `player_slot` (and includes `team=4` coaches) — assign per-team index, never the combined array index. Linear 0–9 from some APIs maps 5–9 → 128–132. Replay ClickHouse `slot` is 0–9, `-1` if unknown (draft / global alerts / creeps).
 
 Box score from **GetMatchHistoryBySequenceNum / GC `CMsgDOTAMatch.Player`**, overwritten when a richer source arrives. Live scoreboard updates the same row while `phase = live`.
 
@@ -149,7 +157,7 @@ Box score from **GetMatchHistoryBySequenceNum / GC `CMsgDOTAMatch.Player`**, ove
 
 **Damage:** `hero_damage`, `tower_damage`, `hero_healing`, `scaled_hero_damage`, `scaled_tower_damage`, `scaled_hero_healing`, `scaled_kills` / `scaled_deaths` / `scaled_assists` (GC). Per-type pre/post reduction is child table `match_player_damage_breakdown`.
 
-**Items:** `item_0`…`item_5`, `item_6`…`item_10` + `item_10_lvl` (GC extra slots), `item_neutral`, `item_neutral2`, `backpack_0`…`backpack_3`, `aghanims_scepter`, `aghanims_shard`, `moonshard`
+**Items:** `item_0`…`item_5`, `item_6`…`item_10` + `item_10_lvl` (GC extra slots), `item_neutral`, `item_neutral2`, `backpack_0`…`backpack_3`, `aghanims_scepter`, `aghanims_shard`, `moonshard`. Valve `-1` (empty) is stored as `0`.
 
 **Other details:** `ability_upgrades integer[]` plus timed rows in `match_player_ability_upgrades`; `leaver_status`, `party_id` (bigint), `party_size`, `hero_pick_order`, `hero_was_randomed`, `lane_selection_flags`, `support_ability_value`, `disable_duration`; `additional_units` — child table `match_player_units`
 
@@ -193,13 +201,28 @@ Unique `(match_id, seq)`. GC broadcaster channels (country, language, caster acc
 
 `team_id` unique, `name`, `tag`, `logo_url`, `updated_at`. Names on `matches` are the snapshot; this row is “current”.
 
-### `heroes` / `items` / `patches`
+### Catalogs (`heroes`, `items`, `patches`, `abilities`, …)
 
-Static catalogs, refreshed on patch. Events store **ids only**.
+Static Valve-id dictionaries, refreshed by `sync_catalogs` (worker boot + daily). Events store **ids only** — there is **no FK** from `match_draft.hero_id` / `match_players.item_*` / `match_player_ability_upgrades.ability_id` to these tables. Live draft uses `hero_id = 0` before a pick, and a brand-new Valve id must not block ingest before the next catalog refresh.
 
-- `heroes`: `hero_id` (Valve) unique, `name`, `localized_name`, `primary_attr`, `attack_type`, `roles[]`
-- `items`: `item_id` (Valve) unique, `name`, `localized_name`, `cost`
-- `patches`: `patch` text unique, `released_at` — stamps `matches.patch`
+Spells and talents share one ability-id space. Talents are `abilities.kind = talent` (`special_bonus_*`). Facets are `hero_facets` (join `match_players.selected_facet` to `facet_id`; Valve’s slot is often 1-based).
+
+| Table | Natural key | Notes |
+|---|---|---|
+| `heroes` | `hero_id` | `name`, `localized_name`, `primary_attr`, `attack_type`, `roles[]` |
+| `items` | `item_id` | `name`, `localized_name`, `cost` |
+| `patches` | `patch` | `released_at` — stamps `matches.patch` |
+| `abilities` | `ability_id` | `kind`: `spell` / `talent` / `innate` / `item` / `other` |
+| `hero_abilities` | `(hero_id, slot, is_talent)` | skill build + talent tree; FK to `heroes` / `abilities` |
+| `hero_facets` | `(hero_id, facet_id)` | `selected_facet` on the player row |
+| `permanent_buffs` | `buff_id` | Aghs / Moonshard / … on `match_player_buffs` |
+| `game_modes` | `game_mode` | `matches.game_mode` |
+| `lobby_types` | `lobby_type` | `matches.lobby_type` |
+| `regions` | `region` | Valve region id |
+| `clusters` | `cluster` | `matches.cluster` → `regions.region` |
+| `xp_levels` | `level` | cumulative XP to reach that level |
+
+Source: [odota/dotaconstants](https://github.com/odota/dotaconstants) (GitHub raw, OpenDota `/constants` fallback). Steam Web API no longer publishes items/abilities; `GetHeroes` lacks roles/attrs and would burn the 1 rps match budget.
 
 ### `match_draft`
 
@@ -233,7 +256,9 @@ Filled from details (`first_blood_time`) before parse, then from parser `CHAT_ME
 
 `kind` values (from `CDOTAUserMsg_ChatEvent` + combat log):
 
-`first_blood`, `tower`, `barracks`, `roshan`, `aegis`, `aegis_stolen`, `buyback`, `glyph`, `scan`, `pause`, `reconnect`, `disconnect`, `win`
+`first_blood`, `tower`, `barracks`, `roshan`, `aegis`, `aegis_stolen`, `aegis_denied`, `buyback`, `glyph`, `scan`, `pause`, `reconnect`, `disconnect`, `win`, `courier`, `shrine`, `ward`, `tormentor`, `smoke`, `banner`, `outpost`
+
+The full event → table map is [`replay-mapping.md`](./replay-mapping.md).
 
 These are the rows an analyst dashboard hits first. The full event stream stays in ClickHouse.
 
@@ -320,6 +345,8 @@ game_number         UInt8
 league_series_id    UInt32
 league_game_id      UInt32
 league_tier         UInt8
+game_state          UInt8
+server_steam_id     UInt64
 ```
 
 `ENGINE = MergeTree PARTITION BY toYYYYMM(captured_at) ORDER BY (match_id, captured_at)`
@@ -328,11 +355,11 @@ league_tier         UInt8
 
 Same grain, one row per player on the scoreboard.
 
-`match_id, captured_at, player_slot` + `account_id, hero_id, kills, deaths, assists, last_hits, denies, gold, net_worth, level, gold_per_min, xp_per_min, x, y` (`position_x` / `position_y` from GetLiveLeagueGames), `item0`…`item5`, `ultimate_state`, `ultimate_cooldown`, `respawn_timer`.
+`match_id, captured_at, player_slot` + `account_id, hero_id, kills, deaths, assists, last_hits, denies, gold, net_worth, level, gold_per_min, xp_per_min, x, y` (`position_x` / `position_y` from GetLiveLeagueGames), `item0`…`item8` (0–5 inventory; 6–8 backpack from GetRealtimeStats), `ultimate_state`, `ultimate_cooldown`, `respawn_timer`.
 
 `ORDER BY (match_id, captured_at, player_slot)`
 
-Default live source is GetLiveLeagueGames only. GetTopLiveGame + GetRealtimeStats is optional enrichment (see workers spec); it must not be required to fill this table.
+GetLiveLeagueGames fills this table on its own. GetTopLiveGame + GetRealtimeStats add a second `source` and extra fields; they are not required for a live row to exist.
 
 ### Replay tables
 
@@ -370,7 +397,8 @@ From parser NDJSON (`type`) and Valve combat-log / user-message names:
 | `STARTING_ITEM` / inventory dumps | `replay_inventory` | starting items + optional later snapshots |
 | `neutral_token` / `neutral_item_history` | `replay_neutrals` | |
 | `cosmetics` | `replay_cosmetics` | wearable def ids |
-| `epilogue` | `replay_epilogue` | one row; match end blob typed into columns we use |
+| item/ability/courier/outpost/roshan/… UM | `replay_alerts` | see [`replay-mapping.md`](./replay-mapping.md) |
+| `epilogue` | `replay_epilogue` | file-info + metadata leftovers |
 | `player_slot` | (mapping only) | used while parsing, not stored |
 
 Teamfights are not a parser event. v1: derive in a query from clustered `DEATH` + `DAMAGE` windows, or a nightly materialized view. Do not block ingest on a teamfight detector.
@@ -398,7 +426,7 @@ Unknown `DOTA_COMBATLOG_{id}` values (newer than the named enum) are still inser
 
 #### `replay_intervals`/ `lh_t` / `xp_t` / `lane_pos`). ~2×10⁴ rows/match. Gold graphs and farming curves.
 
-From parser interval fields: `slot, hero_id, variant, facet_hero_id, unit, x, y, gold, lh, xp, networth, denies, level, kills, deaths, assists, life_state, stuns, obs_placed, sen_placed, creeps_stacked, camps_stacked, rune_pickups, towers_killed, roshans_killed, teamfight_participation, firstblood_claimed, draft_stage, repicked, randomed, pred_vict, observers_placed`. The parser does not currently emit `hp`.
+From parser interval fields: `slot, hero_id, variant, facet_hero_id, unit, x, y, gold, lh, xp, networth, denies, level, kills, deaths, assists, life_state, stuns, obs_placed, sen_placed, creeps_stacked, camps_stacked, rune_pickups, towers_killed, roshans_killed, teamfight_participation, firstblood_claimed, draft_stage, repicked, randomed, pred_vict, observers_placed, hp, max_hp, mana, max_mana, respawn`.
 
 #### `replay_actions`
 
@@ -420,9 +448,13 @@ One row per unit order. `order_type UInt16` (`key` in the parser). High volume i
 
 `kind` LowCardinality (`CHAT_MESSAGE_TOWER_KILL`, …), `player1`, `player2`, `player3`, `value`, `value2`, `value3`. Source for PG `match_objectives`. Unknown `CHAT_MESSAGE_{id}` values are stored, not dropped.
 
+#### `replay_alerts`
+
+Spectator/user messages that are match facts but not combat, chat, or orders: item/ability pings, courier kill, outpost, roshan/tormentor timers, Aghs, map lines, sold items. Columns: `kind`, `player2`, `value`, `value2`, `x`, `y`, `key`. Full `kind` list in [`replay-mapping.md`](./replay-mapping.md).
+
 #### `replay_draft` / `replay_ability_levels` / `replay_inventory` / `replay_neutrals` / `replay_cosmetics` / `replay_epilogue`
 
-Small. Keep typed columns, not a JSON dump. Epilogue is one (or few) rows per match.
+Small. Keep typed columns, not a JSON dump. Epilogue is leftover file-info / metadata keys. Inventory rows fire on hero item-handle change (and early combat purchases).
 
 ### Volume (pro-only, order of magnitude)
 
@@ -435,9 +467,10 @@ Small. Keep typed columns, not a JSON dump. Epilogue is one (or few) rows per ma
 | Source | Writes |
 |---|---|
 | `GetLeagueInfoList` | `leagues` |
-| `GetLiveLeagueGames` | `matches` (live, including `lobby_id` / logos / series ids), `match_players` (roster/scoreboard items), `match_draft` (provisional), `live_*` ticks |
-| `GetTopLiveGame` + `GetRealtimeStats` | extra live tick fields when enabled; **not** required |
-| `GetMatchHistory` (`league_id`) | discover `match_id` / `match_seq_num` / series / teams |
+| `GetLiveLeagueGames` | `matches` (live, including `lobby_id` / logos / series ids), `ingest_sources`, `match_players` (roster/scoreboard items), `match_draft` (provisional), `live_*` ticks |
+| `GetTopLiveGame` | `matches.server_steam_id`, `ingest_sources`, live phase |
+| `GetRealtimeStats` | live PG scoreboard/draft plus CH `live_*` ticks (`source = GetRealtimeStats`, `game_state`, backpack items) |
+| `GetMatchHistory` (`league_id`) | discover `match_id` / `match_seq_num` / series / teams; live-finished waiter |
 | `GetMatchHistoryBySequenceNum` | full `matches` + `match_players` + `match_draft` for targets **and** any other known-league match that landed in the window. Optional HTTP details — `GetMatchDetails` is gone for good. |
 | GC `CMsgGCMatchDetailsResponse` → `CMsgDOTAMatch` | **Primary** fill for `cluster` / `replay_salt` and for box-score columns when HTTP details never ran. Same PG columns as seq-num. |
 | Replay parse | CH `replay_*`, PG `match_objectives`, parse summaries on `match_players`, `match_draft` clocks |

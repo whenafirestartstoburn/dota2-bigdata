@@ -26,7 +26,7 @@ export const livePlayerSchema = z.object({
 export const liveTeamSchema = z.object({
 	team_id: z.number(),
 	team_name: z.string().default(''),
-	team_logo: z.number().optional(),
+	team_logo: z.union([z.string(), z.number()]).optional(),
 	complete: z.boolean().optional(),
 })
 
@@ -55,7 +55,7 @@ export const liveLeagueGameSchema = z.object({
 	dire_series_wins: z.number().default(0),
 	radiant_series_wins: z.number().default(0),
 	stream_delay_s: z.number().default(0),
-	lobby_id: z.number().optional(),
+	lobby_id: z.union([z.string(), z.number()]).optional(),
 	spectators: z.number().optional(),
 	game_number: z.number().optional(),
 	league_series_id: z.number().optional(),
@@ -110,6 +110,40 @@ export const seqResponseSchema = z.object({
 	}),
 })
 
+export const topLiveGamesResponseSchema = z.object({
+	game_list: z.array(z.unknown()).default([]),
+})
+
+export const topLiveGameEntrySchema = z.object({
+	match_id: z.union([z.string(), z.number()]),
+	server_steam_id: z.union([z.string(), z.number()]),
+	league_id: z.number(),
+	delay: z.number().default(0),
+})
+
+export const realtimePickBanSchema = z.object({
+	team: z.number(),
+	hero: z.number(),
+})
+
+export const realtimeMatchSchema = z.object({
+	match_id: z.union([z.string(), z.number()]),
+	game_state: z.number().optional(),
+	game_time: z.number().optional(),
+	league_id: z.number(),
+	league_node_id: z.number().optional(),
+	server_steam_id: z.union([z.string(), z.number()]).optional(),
+	picks: z.array(realtimePickBanSchema).optional(),
+	bans: z.array(realtimePickBanSchema).optional(),
+})
+
+export const realtimeStatsResponseSchema = z.object({
+	match: realtimeMatchSchema,
+	teams: z.array(z.unknown()).default([]),
+})
+
 export type LeagueInfo = z.infer<typeof leagueInfoSchema>
 export type LiveLeagueGame = z.infer<typeof liveLeagueGameSchema>
 export type HistoryMatch = z.infer<typeof historyMatchSchema>
+export type TopLiveGameEntry = z.infer<typeof topLiveGameEntrySchema>
+export type RealtimeStatsResponse = z.infer<typeof realtimeStatsResponseSchema>

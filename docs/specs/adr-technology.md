@@ -128,17 +128,25 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Replay parser
 
-**Decision:** Go service in `packages/parser`. [manta](https://github.com/dotabuff/manta) decodes the demo; extraction and ClickHouse/Postgres commit are ours. The TypeScript worker still only downloads. Spec: [`replay-parser.md`](./replay-parser.md).
+**Decision:** Go service in `packages/parser`. Our own Source 2 decoder (`internal/replay`) plus Valve protobuf types; extraction and ClickHouse/Postgres commit are ours. The TypeScript worker still only downloads. Spec: [`replay-parser.md`](./replay-parser.md).
 
-**Why.** Parse is CPU-heavy and does not belong on the Steam-session worker. Go is where the maintained Source 2 decoder lives. MergeTree writes stay append-only; `parse_run_id` is the everything-or-nothing token without changing the engine.
+**Why.** Parse is CPU-heavy and does not belong on the Steam-session worker. A third-party parser as a library would own the decode path we need to version and test. MergeTree writes stay append-only; `parse_run_id` is the everything-or-nothing token without changing the engine.
 
 **Rejected.** A Java Clarity sidecar. OpenDota HTTP. Parsing inside `download_replay`. Copying `example_projects/*` wholesale.
 
 ## Logging and formatting
 
-**Decision:** `pino` (JSON in production, `pino-pretty` only when `NODE_ENV=development`), redaction of Steam/S3 secrets. [biome](https://biomejs.dev) (tabs, single quotes, width 80). No Prettier + ESLint pair.
+**Decision:** `pino` JSON with ISO `time`, string `level`, `service`, and `trace_id` (graphile-worker and HTTP go through the same logger). `pino-pretty` only when `NODE_ENV=development` and stdout is a TTY. Parser `slog` uses the same keys. Redaction of Steam/S3 secrets. [biome](https://biomejs.dev) (tabs, single quotes, width 80). No Prettier + ESLint pair.
 
 **Why.** Collectors are scraped as logs, not pretty-printed. biome is one tool and already in the template.
+
+## Metrics
+
+**Decision:** Prometheus text on `GET /metrics` from worker and parser. Compose runs Prometheus + Grafana with provisioned dashboards. Worker registry is a small in-process exposition (`packages/shared/src/metrics`); parser uses `prometheus/client_golang`. Spec: [`metrics.md`](./metrics.md).
+
+**Why.** Valve HTTP, GC, account pool, and parse backlog are the operator questions. A second log pile does not answer rates or inventory. postgres_exporter would miss the replenish predicates.
+
+**Rejected.** OpenTelemetry SDK / `prom-client` for a handful of counters. Per-match labels.
 
 ## Packaging and deploy
 
@@ -161,7 +169,8 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 | Demos | S3 | bytea, local disk |
 | Queue | graphile-worker in PG | Bull / Kafka / in-process timers |
 | Steam HTTP vs GC | fetch+Zod vs steam-user | one account for both roles |
-| Parse | Go `packages/parser` + manta | third-party match API, Java sidecar, parse-in-download |
+| Parse | Go `packages/parser` (own Source 2 decoder) | manta/Clarity as a dependency, third-party match API, Java sidecar, parse-in-download |
 | Domain flow | `async`/`await`, `Promise` | Effect, neverthrow, RxJS |
+| Metrics | Prometheus scrape + Grafana dashboards | OpenTelemetry SDK, per-match labels |
 
 Revisit this ADR if we add a public query API, a second region, or a Steam transport that is not `steam-user`. Until then, schema and worker specs assume this stack.

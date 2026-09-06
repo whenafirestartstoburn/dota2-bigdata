@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,10 +10,11 @@ import (
 
 	"dota2-collector/parser/internal/app"
 	"dota2-collector/parser/internal/config"
+	"dota2-collector/parser/internal/logfmt"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := logfmt.New("parser")
 	cfg, err := config.FromEnv()
 	if err != nil {
 		log.Error("config", "err", err)

@@ -1,0 +1,17 @@
+import { describe, expect, test } from 'bun:test'
+import { rosterFromLivePlayers } from '#src/jobs/poll-live'
+
+describe('rosterFromLivePlayers', () => {
+	test('assigns per-team Valve slots, ignores team 4, mixed order', () => {
+		const roster = rosterFromLivePlayers([
+			{ account_id: 99, hero_id: 0, name: 'coach', team: 4 },
+			{ account_id: 2, hero_id: 75, name: 'dire0', team: 1 },
+			{ account_id: 1, hero_id: 126, name: 'rad0', team: 0 },
+			{ account_id: 3, hero_id: 26, name: 'rad1', team: 0 },
+			{ account_id: 4, hero_id: 38, name: 'dire1', team: 1 },
+		])
+		expect(roster.map((row) => row.playerSlot)).toEqual([0, 1, 128, 129])
+		expect(roster.map((row) => row.accountId)).toEqual([1, 3, 2, 4])
+		expect(roster.map((row) => row.teamSlot)).toEqual([0, 1, 0, 1])
+	})
+})

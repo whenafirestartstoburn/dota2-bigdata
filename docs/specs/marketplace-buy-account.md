@@ -90,10 +90,14 @@ Collector cadence (was env):
 |---|---|---|
 | `live_poll_interval_ms` | 3000 | `poll_live_games` period |
 | `live_missing_threshold` | 2 | missing live ticks before finish |
-| `replay_live_delay_ms` | 1800000 | wait after live finish before details/replay |
+| `replay_live_delay_ms` | 30000 | first live replay download wait after finish. 404s: 1 m, 1 m, 3 m × 20, 1 h × 24, then `replay_unavailable` |
+| `history_fast_poll_ms` | 5000 | GetMatchHistory waiter interval (first 100 misses) |
+| `history_fast_poll_limit` | 100 | fast-poll attempts per finished live match |
+| `history_slow_poll_ms` | 60000 | waiter interval after the fast budget |
+| `history_slow_poll_limit` | 100 | slow-poll attempts before `history_timeout` |
 | `history_page_size` | 100 | GetMatchHistory page (Valve max 100) |
-| `history_details_enqueue_limit` | 500 | in-flight historical details jobs |
-| `history_replay_enqueue_limit` | 50 | in-flight historical download jobs |
+| `history_details_enqueue_limit` | 5 | queued historical details jobs (run cap is 5 `details:*` queues) |
+| `history_replay_enqueue_limit` | 50 | queued historical download_replay jobs (run cap is 10 `replay-historical:*` queues) |
 | `seq_batch_size` | 100 | GetMatchHistoryBySequenceNum window |
 | `steam_api_min_interval_ms` | 1000 | 1 rps mutex per Web API key |
 | `history_newest_refresh_ms` | 3600000 | re-fetch newest history page |

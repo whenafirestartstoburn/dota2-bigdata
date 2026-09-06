@@ -28,13 +28,15 @@
 		"db:new": "dbmate --env PGURI new",
 		"db:pull": "bun --env-file=.env run scripts/db-pull.ts",
 		"db:up": "dbmate --env PGURI up",
-		"lint": "biome check packages/*/src scripts",
-		"lint:fix": "biome check --write packages/*/src scripts",
+		"lint": "biome check packages/*/src packages/*/tests scripts",
+		"lint:fix": "biome check --write packages/*/src packages/*/tests scripts",
 		"worker": "bun run packages/worker/src/app.ts",
 		"steam:guard": "bun run packages/cli/src/steam-guard.ts",
 		"steam:import": "bun run packages/cli/src/import-accounts.ts",
 		"steam:proxies": "bun run packages/cli/src/import-proxies.ts",
-		"test": "NODE_ENV=development bun test packages"
+		"parser:fetch-patches": "bun run --env-file=.env packages/cli/src/fetch-patch-replays.ts",
+		"catalogs:sync": "bun run --env-file=.env packages/cli/src/sync-catalogs.ts",
+		"test": "NODE_ENV=development bun test packages/*/tests"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.6",

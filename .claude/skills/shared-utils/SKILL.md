@@ -36,6 +36,7 @@ import { asIso } from '@app/shared/src/store/coerce'
 | `Date` → ISO, or non-empty string | `asIso` |
 | `Error.message` | `errorMessage` / `asError` |
 | Postgres int8 range | `asPgInt8` |
+| Steam64 / server / lobby id (uint64 text) | `asSteamId64` |
 
 A domain parser (`asKind` for a proxy enum, `asSecret` for Steam base64) may
 stay next to its type. A second copy of `asText` may not.
@@ -48,4 +49,4 @@ stay next to its type. A second copy of `asText` may not.
    (or the existing module) and switch callers.
 3. Do not wrap `Bun.sleep` / `fetch` / `Bun.file` (see bun-builtins).
 
-Tests for new coercers go in `packages/shared/src/store/coerce.test.ts`.
+Tests for new coercers go in `packages/shared/tests/store/coerce.test.ts`.

@@ -83,6 +83,22 @@ export async function markApiKeyRateLimited(
 			last_error = ${error},
 			updated_at = now()
 		WHERE id = ${keyId}
+			AND status <> 'disabled'
+	`)
+}
+
+export async function clearApiKeyRateLimit(keyId: number): Promise<void> {
+	await db.execute(sql`
+		UPDATE steam_api_keys
+		SET
+			status = CASE
+				WHEN status = 'rate_limited' THEN 'active'
+				ELSE status
+			END,
+			rate_limited_until = NULL,
+			updated_at = now()
+		WHERE id = ${keyId}
+			AND status <> 'disabled'
 	`)
 }
 

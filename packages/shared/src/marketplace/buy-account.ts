@@ -33,6 +33,7 @@ import {
 	marketplaceConfigured,
 	purchaseFromMarketplace,
 } from '#src/marketplace/store'
+import { observeMarketplaceOrder } from '#src/metrics/observe'
 import { loginGcAndMaybeTest } from '#src/steam/gc-probe'
 import { runWithProxy } from '#src/steam/http'
 import { issueApiKeyForLogin } from '#src/steam/provision-api-key'
@@ -285,6 +286,7 @@ async function buyOne(
 			testResult,
 		})
 		status(`buy-account: order ${order.id} success login=${bought.login}`)
+		observeMarketplaceOrder(input.store, input.type, 'success')
 		return {
 			id: order.id,
 			status: 'success',
@@ -312,6 +314,7 @@ async function buyOne(
 				id: order.id,
 				errorMessage: classified.errorMessage,
 			})
+			observeMarketplaceOrder(input.store, input.type, 'pending')
 			return {
 				id: order.id,
 				status: 'pending',
@@ -327,6 +330,7 @@ async function buyOne(
 			steamAccountId,
 			errorMessage: classified.errorMessage,
 		})
+		observeMarketplaceOrder(input.store, input.type, 'failed')
 		return {
 			id: order.id,
 			status: 'failed',

@@ -13,5 +13,6 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
 COPY --from=build /parser /parser
 ENV PARSER_PORT=8080
+ENV SERVICE_NAME=parser
 EXPOSE 8080
 CMD ["/parser"]
