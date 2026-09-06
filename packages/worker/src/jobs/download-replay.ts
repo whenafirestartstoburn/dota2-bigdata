@@ -1,4 +1,5 @@
 import {
+	objectBucket,
 	objectExists,
 	objectStore,
 	replayObjectKey,
@@ -9,8 +10,8 @@ import {
 } from '@app/shared/src/jobs/fetch-match-details'
 import { observeReplayDownload } from '@app/shared/src/metrics/observe'
 import { asNumber, asString } from '@app/shared/src/store/coerce'
-import { getMatch } from '@app/shared/src/store/matches'
 import { ERROR_KIND } from '@app/shared/src/store/match-phase'
+import { getMatch } from '@app/shared/src/store/matches'
 import {
 	ensureReplayRow,
 	getReplay,
@@ -18,7 +19,6 @@ import {
 	replayBackoffMs,
 	updateReplay,
 } from '@app/shared/src/store/replays'
-import env from '@app/shared/src/utils/env'
 import { logger } from '@app/shared/src/utils/logger'
 
 export async function runDownloadReplay(matchId: number): Promise<{
@@ -66,7 +66,7 @@ async function downloadReplay(
 	if (await objectExists(key)) {
 		await updateReplay(matchId, {
 			status: 'stored',
-			s3Bucket: env.S3_BUCKET,
+			s3Bucket: objectBucket(),
 			s3Key: key,
 			storedAt: new Date(),
 		})
@@ -125,7 +125,7 @@ async function downloadReplay(
 	await updateReplay(matchId, {
 		status: 'stored',
 		sourceUrl: url,
-		s3Bucket: env.S3_BUCKET,
+		s3Bucket: objectBucket(),
 		s3Key: key,
 		bytes: stat.size,
 		storedAt: new Date(),

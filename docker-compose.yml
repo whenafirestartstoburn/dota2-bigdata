@@ -83,6 +83,9 @@ services:
       SERVICE_NAME: worker
     ports:
       - "3001:8080"
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+      - "metadata.goog:169.254.169.254"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -110,6 +113,9 @@ services:
       SERVICE_NAME: parser
     ports:
       - "3002:8080"
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+      - "metadata.goog:169.254.169.254"
     depends_on:
       migrate:
         condition: service_completed_successfully

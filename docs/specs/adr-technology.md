@@ -94,9 +94,9 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Object storage
 
-**Decision:** S3 API (`S3_*` in `.env`) for `.dem.bz2`. Parser reads the object; re-parse does not need Valve’s replay CDN.
+**Decision:** Object store (`S3_*` in `.env`) for `.dem.bz2`. `S3_BUCKET=gs://…` talks to GCS with the GCE instance service account (metadata token, no HMAC keys). A plain bucket name uses the S3 API and `S3_ACCESS_KEY` / `S3_SECRET_KEY`. Parser reads the object; re-parse does not need Valve’s replay CDN.
 
-**Why.** Files are tens to hundreds of MB; they are not rows. S3 is the durable blob; Postgres `match_replays` is the locator and status.
+**Why.** Files are tens to hundreds of MB; they are not rows. The blob store is durable; Postgres `match_replays` is the locator and status. Production replays live in GCS on the collector VM.
 
 **Rejected.** Storing demos in Postgres `bytea`. Filesystem on the worker box (replicas, no shared disk).
 
