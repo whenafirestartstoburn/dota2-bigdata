@@ -36,8 +36,24 @@ const LATER_PHASES = new Set([
 	'failed',
 ])
 
+/** Phases a live-feed sighting must not pull back to `live`. */
+export const KEEP_ON_LIVE_SIGHTING = [
+	'details_ready',
+	'awaiting_replay',
+	'replay_stored',
+	'replay_unavailable',
+	'parsed',
+] as const
+
+const KEEP_ON_LIVE = new Set<string>(KEEP_ON_LIVE_SIGHTING)
+
 export function isLaterPhase(phase: string | null | undefined): boolean {
 	return phase != null && LATER_PHASES.has(phase)
+}
+
+/** Steam can drop a still-running match from a live feed, then list it again. */
+export function canResumeLive(phase: string | null | undefined): boolean {
+	return phase != null && !KEEP_ON_LIVE.has(phase)
 }
 
 export function liveFeedsDone(

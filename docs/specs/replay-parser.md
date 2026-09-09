@@ -26,8 +26,10 @@ commit also sets `matches.phase = parsed` and clears `waiting_for`.
 
 ## Parallelism
 
-`settings.parser_parallelism` (default `10`). The service polls that row
+`settings.parser_parallelism` (default `3`). The service polls that row
 and runs that many in-flight parses. Live-priority `stored` rows go first.
+Each parse holds the decompressed `.dem` plus entity state; 10-wide
+claims do not fit a 4 GiB parser cgroup.
 
 ## Claim
 

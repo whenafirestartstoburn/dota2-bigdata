@@ -513,3 +513,18 @@ export const REPLAY_STATE = {
 	notRecorded: 1,
 	expired: 2,
 } as const
+
+/** Steam EResult on `CMsgGCMatchDetailsResponse.result`. */
+export const GC_ERESULT = {
+	ok: 1,
+	accessDenied: 15,
+} as const
+
+/**
+ * Match-level denial from the GC. Same session still serves other matches,
+ * so this is not a proxy / account fault — retrying occupies a details
+ * shard and never unblocks.
+ */
+export function isTerminalGcDetailsResult(result: number): boolean {
+	return result === GC_ERESULT.accessDenied
+}

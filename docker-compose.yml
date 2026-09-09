@@ -65,8 +65,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.90"
-          memory: 6144M
+          cpus: "0.70"
+          memory: 4096M
         reservations:
           memory: 1024M
 
@@ -198,10 +198,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
-          memory: 2048M
+          cpus: "0.70"
+          memory: 4096M
         reservations:
-          memory: 512M
+          memory: 1024M
 
   api:
     build:

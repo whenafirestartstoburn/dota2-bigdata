@@ -2,7 +2,11 @@ import {
 	pickApiCredential,
 	steamCtx,
 } from '@app/shared/src/components/resources'
-import { REPLAY_STATE } from '@app/shared/src/gc/protobuf'
+import {
+	GC_ERESULT,
+	isTerminalGcDetailsResult,
+	REPLAY_STATE,
+} from '@app/shared/src/gc/protobuf'
 import {
 	enqueueDownloadReplay,
 	enqueueFetchMatchDetails,
@@ -16,12 +20,14 @@ import {
 	asString,
 	errorMessage,
 } from '@app/shared/src/store/coerce'
+import { ERROR_KIND } from '@app/shared/src/store/match-phase'
 import { getMatch } from '@app/shared/src/store/matches'
 import { persistMatchRecord } from '@app/shared/src/store/persist-match'
 import {
 	copyReplayLocatorFromMatch,
 	ensureReplayRow,
 	getReplay,
+	markMatchReplayPhase,
 	updateReplay,
 } from '@app/shared/src/store/replays'
 import { db } from '@app/shared/src/utils/db'
@@ -70,7 +76,25 @@ export async function runFetchMatchDetails(input: {
 		return { saved: 0 }
 	}
 
-	if (locator.result !== 1 && locator.result !== 0) {
+	if (isTerminalGcDetailsResult(locator.result)) {
+		const message = `GC result ${locator.result} (AccessDenied)`
+		await updateReplay(input.matchId, {
+			status: 'unavailable',
+			steamAccountId: locator.accountId,
+			proxyId: locator.proxyId,
+			error: message,
+		})
+		await markMatchReplayPhase(input.matchId, 'replay_unavailable', {
+			error: message,
+			errorKind: ERROR_KIND.unavailable,
+		})
+		logger.info(
+			{ matchId: input.matchId, result: locator.result },
+			'GC details unavailable',
+		)
+		return { saved: 0 }
+	}
+	if (locator.result !== GC_ERESULT.ok && locator.result !== 0) {
 		throw new Error(`GC result ${locator.result} for match ${input.matchId}`)
 	}
 	if (

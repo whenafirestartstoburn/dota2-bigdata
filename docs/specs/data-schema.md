@@ -127,7 +127,7 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `positive_votes`, `negative_votes` | details (keep; cheap) |
 | `patch` | derived from `start_time` vs `patches` |
 | `stream_delay_s` | live |
-| `phase` | `discovered` → `live` → `awaiting_history` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` → `parsed` / `replay_unavailable` / `failed` / `not_started`. Never rewrite a later phase backwards except a live flap (`not_started` and `awaiting_history` go back to `live` if the id reappears on a live feed). |
+| `phase` | `discovered` → `live` → `awaiting_history` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` → `parsed` / `replay_unavailable` / `failed` / `not_started`. Never rewrite a later phase backwards except a live flap (`not_started`, `awaiting_history`, `awaiting_details`, `failed` go back to `live` if either live feed lists the id again — including an unchanged GetLiveLeagueGames hash that only calls `noteLiveFeedSeen`). |
 | `source` | `live` / `historical` — **sticky**: any live feed wins and stays (replay priority) |
 | `ingest_sources` | `text[]`, accumulated, never removed: `GetLiveLeagueGames`, `GetTopLiveGame`, `GetMatchHistory` |
 | `waiting_for` | `live_end` / `history` / `seq` / `gc` / `replay` / `parse` / null |

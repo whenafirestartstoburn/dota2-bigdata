@@ -8,6 +8,7 @@ import {
 	markSeqFetched,
 	noteLiveClock,
 	noteLiveFeedMisses,
+	noteLiveFeedSeen,
 	recordHistoryPollMisses,
 	touchMatchLive,
 	upsertHistoryMatches,
@@ -163,6 +164,71 @@ describe('live finish detection', () => {
 		expect(flap?.phase).toBe('live')
 		expect(flap?.waiting_for).toBe('live_end')
 		expect(flap?.last_error_kind).toBeNull()
+	})
+
+	test('a later live sighting flaps awaiting_history back to live', async () => {
+		await cleanup()
+		await db.execute(sql`
+			INSERT INTO leagues (league_id, name, status)
+			VALUES (${LEAGUE_ID}, 'pipeline test', 'LIVE')
+			ON CONFLICT (league_id) DO NOTHING
+		`)
+		await db.transaction(async (tx) => {
+			await touchMatchLive(tx, {
+				matchId: LIVE_ID,
+				leagueId: LEAGUE_ID,
+				leagueNodeId: 0,
+				seriesId: null,
+				seriesType: 0,
+				radiantSeriesWins: 0,
+				direSeriesWins: 0,
+				streamDelayS: 0,
+				radiantTeamId: null,
+				direTeamId: null,
+				radiantTeamName: null,
+				direTeamName: null,
+				ingest: INGEST.liveLeague,
+			})
+			await noteLiveClock(tx, LIVE_ID, 90)
+			await missOnly(tx, INGEST.liveLeague, LIVE_ID)
+			await missOnly(tx, INGEST.liveLeague, LIVE_ID)
+			const done = await finishMissingLiveMatches(tx, 2, 1_800_000)
+			expect(done.filter((id) => id === LIVE_ID)).toEqual([LIVE_ID])
+		})
+		const [finished] = await db.execute(sql`
+			SELECT phase, finished_at FROM matches WHERE match_id = ${LIVE_ID}
+		`)
+		expect(finished?.phase).toBe('awaiting_history')
+		expect(finished?.finished_at).not.toBeNull()
+
+		await db.transaction(async (tx) => {
+			await noteLiveFeedSeen(tx, INGEST.liveLeague, LIVE_ID)
+		})
+		const [flap] = await db.execute(sql`
+			SELECT phase, waiting_for, finished_at, replay_available_at,
+				history_next_poll_at, live_league_missed_polls
+			FROM matches WHERE match_id = ${LIVE_ID}
+		`)
+		expect(flap?.phase).toBe('live')
+		expect(flap?.waiting_for).toBe('live_end')
+		expect(flap?.finished_at).toBeNull()
+		expect(flap?.replay_available_at).toBeNull()
+		expect(flap?.history_next_poll_at).toBeNull()
+		expect(asNumber(flap?.live_league_missed_polls)).toBe(0)
+
+		await db.transaction(async (tx) => {
+			await tx.execute(sql`
+				UPDATE matches
+				SET phase = 'details_ready'::match_phase, waiting_for = 'replay'
+				WHERE match_id = ${LIVE_ID}
+			`)
+			await noteLiveFeedSeen(tx, INGEST.topLive, LIVE_ID)
+		})
+		const [kept] = await db.execute(sql`
+			SELECT phase, waiting_for FROM matches WHERE match_id = ${LIVE_ID}
+		`)
+		expect(kept?.phase).toBe('details_ready')
+		expect(kept?.waiting_for).toBe('replay')
 	})
 
 	test('waits for both live feeds when both listed the match', async () => {

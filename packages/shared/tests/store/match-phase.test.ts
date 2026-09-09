@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
 	advanceHistoryMiss,
+	canResumeLive,
 	ERROR_KIND,
 	INGEST,
 	isLaterPhase,
@@ -75,5 +76,18 @@ describe('isLaterPhase', () => {
 		expect(isLaterPhase('not_started')).toBe(false)
 		expect(isLaterPhase('parsed')).toBe(true)
 		expect(isLaterPhase('failed')).toBe(true)
+	})
+})
+
+describe('canResumeLive', () => {
+	test('a live-feed sighting flaps false finishes, not replay/parse', () => {
+		expect(canResumeLive('live')).toBe(true)
+		expect(canResumeLive('not_started')).toBe(true)
+		expect(canResumeLive('awaiting_history')).toBe(true)
+		expect(canResumeLive('awaiting_details')).toBe(true)
+		expect(canResumeLive('failed')).toBe(true)
+		expect(canResumeLive('details_ready')).toBe(false)
+		expect(canResumeLive('parsed')).toBe(false)
+		expect(canResumeLive('replay_unavailable')).toBe(false)
 	})
 })

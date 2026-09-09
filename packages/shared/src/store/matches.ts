@@ -11,6 +11,7 @@ import {
 	advanceHistoryMiss,
 	ERROR_KIND,
 	INGEST,
+	KEEP_ON_LIVE_SIGHTING,
 	type LiveIngest,
 	WAITING,
 } from '#src/store/match-phase'
@@ -18,6 +19,79 @@ import { syntheticSeriesId } from '#src/store/series-id'
 import { db, type Executor, sql, sqlIn, sqlValues } from '#src/utils/db'
 
 export type { Executor as Tx }
+
+function keepOnLiveSighting(
+	phaseCol: ReturnType<typeof sql>,
+): ReturnType<typeof sql> {
+	const phases = sql.join(
+		KEEP_ON_LIVE_SIGHTING.map((phase) => sql`${phase}`),
+		sql`, `,
+	)
+	return sql`${phaseCol} IN (${phases})`
+}
+
+/** Shared flap: a live-feed sighting pulls a false finish back to `live`. */
+function liveSightingResumeSet(
+	phaseCol: ReturnType<typeof sql>,
+	col: (name: string) => ReturnType<typeof sql>,
+	resetLive: boolean,
+	resetTop: boolean,
+): ReturnType<typeof sql> {
+	const keep = keepOnLiveSighting(phaseCol)
+	return sql`
+		phase = CASE
+			WHEN ${keep} THEN ${col('phase')}
+			ELSE 'live'::match_phase
+		END,
+		waiting_for = CASE
+			WHEN ${keep} THEN ${col('waiting_for')}
+			ELSE ${WAITING.liveEnd}
+		END,
+		last_error = CASE
+			WHEN ${keep} THEN ${col('last_error')}
+			ELSE NULL
+		END,
+		last_error_kind = CASE
+			WHEN ${keep} THEN ${col('last_error_kind')}
+			ELSE NULL
+		END,
+		last_error_at = CASE
+			WHEN ${keep} THEN ${col('last_error_at')}
+			ELSE NULL
+		END,
+		finished_at = CASE
+			WHEN ${keep} OR ${phaseCol} = 'live' THEN ${col('finished_at')}
+			ELSE NULL
+		END,
+		replay_available_at = CASE
+			WHEN ${keep} OR ${phaseCol} = 'live' THEN ${col('replay_available_at')}
+			ELSE NULL
+		END,
+		history_next_poll_at = CASE
+			WHEN ${keep} OR ${phaseCol} = 'live' THEN ${col('history_next_poll_at')}
+			ELSE NULL
+		END,
+		history_poll_fast_count = CASE
+			WHEN ${keep} OR ${phaseCol} = 'live' THEN ${col('history_poll_fast_count')}
+			ELSE 0
+		END,
+		history_poll_slow_count = CASE
+			WHEN ${keep} OR ${phaseCol} = 'live' THEN ${col('history_poll_slow_count')}
+			ELSE 0
+		END,
+		live_seen_at = now(),
+		live_disappeared_at = CASE
+			WHEN ${keep} THEN ${col('live_disappeared_at')}
+			ELSE NULL
+		END,
+		live_league_missed_polls = CASE
+			WHEN ${resetLive} THEN 0 ELSE ${col('live_league_missed_polls')}
+		END,
+		top_live_missed_polls = CASE
+			WHEN ${resetTop} THEN 0 ELSE ${col('top_live_missed_polls')}
+		END
+	`
+}
 
 export async function upsertTeam(
 	tx: Executor,
@@ -265,36 +339,12 @@ export async function touchMatchLive(
 				ELSE matches.ingest_sources || ${ingest}::text
 			END,
 			source = 'live'::match_source,
-			phase = CASE
-				WHEN matches.phase IN (
-					'details_ready', 'awaiting_replay', 'replay_stored',
-					'replay_unavailable', 'parsed'
-				) THEN matches.phase
-				ELSE 'live'::match_phase
-			END,
-			waiting_for = CASE
-				WHEN matches.phase IN (
-					'details_ready', 'awaiting_replay', 'replay_stored',
-					'replay_unavailable', 'parsed'
-				) THEN matches.waiting_for
-				ELSE ${WAITING.liveEnd}
-			END,
-			last_error = CASE
-				WHEN matches.phase = 'not_started' THEN NULL
-				ELSE matches.last_error
-			END,
-			last_error_kind = CASE
-				WHEN matches.phase = 'not_started' THEN NULL
-				ELSE matches.last_error_kind
-			END,
-			live_seen_at = now(),
-			live_disappeared_at = NULL,
-			live_league_missed_polls = CASE
-				WHEN ${resetLive} THEN 0 ELSE matches.live_league_missed_polls
-			END,
-			top_live_missed_polls = CASE
-				WHEN ${resetTop} THEN 0 ELSE matches.top_live_missed_polls
-			END,
+			${liveSightingResumeSet(
+				sql`matches.phase`,
+				(name) => sql.raw(`matches.${name}`),
+				resetLive,
+				resetTop,
+			)},
 			updated_at = now()
 	`)
 }
@@ -309,15 +359,14 @@ export async function noteLiveFeedSeen(
 	await tx.execute(sql`
 		UPDATE matches
 		SET
-			live_seen_at = now(),
-			live_league_missed_polls = CASE
-				WHEN ${resetLive} THEN 0 ELSE live_league_missed_polls
-			END,
-			top_live_missed_polls = CASE
-				WHEN ${resetTop} THEN 0 ELSE top_live_missed_polls
-			END,
+			${liveSightingResumeSet(
+				sql`phase`,
+				(name) => sql.raw(name),
+				resetLive,
+				resetTop,
+			)},
 			updated_at = now()
-		WHERE match_id = ${matchId} AND phase = 'live'
+		WHERE match_id = ${matchId}
 	`)
 }
 

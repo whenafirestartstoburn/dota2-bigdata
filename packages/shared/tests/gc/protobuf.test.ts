@@ -5,6 +5,8 @@ import {
 	decodeMatchDetailsResponse,
 	encodeClientHello,
 	encodeMatchDetailsRequest,
+	GC_ERESULT,
+	isTerminalGcDetailsResult,
 	protoFloat32,
 	protoNum,
 	protoSint32,
@@ -80,6 +82,13 @@ describe('gc protobuf', () => {
 	test('protoSint32 zigzag-decodes omitted-as-minus-one chat player ids', () => {
 		const fields = decodeFields(Uint8Array.from([0x18, 0x01]))
 		expect(protoSint32(fields, 3)).toBe(-1)
+	})
+
+	test('AccessDenied (15) is a match-level GC details denial', () => {
+		expect(isTerminalGcDetailsResult(GC_ERESULT.accessDenied)).toBe(true)
+		expect(isTerminalGcDetailsResult(GC_ERESULT.ok)).toBe(false)
+		expect(isTerminalGcDetailsResult(0)).toBe(false)
+		expect(isTerminalGcDetailsResult(2)).toBe(false)
 	})
 
 	test('protoFloat32 reads IEEE-754 bits; protoNum keeps the raw uint', () => {

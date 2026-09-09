@@ -80,11 +80,11 @@ A job does one unit of work, then re-enqueues itself if more remains.
 
 ### Live (`poll_live_games`)
 
-GetLiveLeagueGames. Upsert live matches/players/draft. Append `live_match_ticks` / `live_player_ticks` (`source = GetLiveLeagueGames`). Add `GetLiveLeagueGames` to `ingest_sources`. Store `live_duration_max` from the scoreboard clock. Finish detection is **in Postgres**: increment `live_league_missed_polls` for `phase = live` rows that have this ingest source and are absent from the response; reset to 0 when seen. Empty-list guard: do not increment. A match leaves `live` only when **every feed that listed it** has crossed `settings.live_missing_threshold`. If `live_duration_max > 0` (horn happened): `phase = awaiting_history`, `waiting_for = history`. If the clock never left 0 (empty lobby / ghost listing): `phase = not_started`, `last_error_kind = not_started` — do **not** poll GetMatchHistory. A later live sighting flaps `not_started` back to `live`. Walk/history listing still promotes `not_started` to `awaiting_details` if Valve later publishes the id. Does **not** enqueue details or download.
+GetLiveLeagueGames. Upsert live matches/players/draft. Append `live_match_ticks` / `live_player_ticks` (`source = GetLiveLeagueGames`). Add `GetLiveLeagueGames` to `ingest_sources`. Store `live_duration_max` from the scoreboard clock. Finish detection is **in Postgres**: increment `live_league_missed_polls` for `phase = live` rows that have this ingest source and are absent from the response; reset to 0 when seen. Empty-list guard: do not increment. A match leaves `live` only when **every feed that listed it** has crossed `settings.live_missing_threshold`. If `live_duration_max > 0` (horn happened): `phase = awaiting_history`, `waiting_for = history`. If the clock never left 0 (empty lobby / ghost listing): `phase = not_started`, `last_error_kind = not_started` — do **not** poll GetMatchHistory. Either live feed can drop a still-running match (Steam glitch) and list it again: a later sighting flaps `not_started`, `awaiting_history`, `awaiting_details`, and `failed` back to `live` (clears `finished_at` / history waiter). GetLiveLeagueGames may only `noteLiveFeedSeen` when the scoreboard hash is unchanged — that path must flap too, because the in-memory hash survives a finish on the other worker. `details_ready` / replay / parse stay put. Walk/history listing still promotes `not_started` to `awaiting_details` if Valve later publishes the id. Does **not** enqueue details or download.
 
 ### Top live (`poll_top_live`)
 
-GetTopLiveGame (`partner=0`). Keep `league_id > 0`. Upsert `server_steam_id` (Steam uint64 as decimal text — `Number` rounds it), `ingest_sources += GetTopLiveGame`, `phase = live` unless already past details. Fields this feed does **not** have (`series_*`, team names, lobby, logos) are written as SQL NULL so `COALESCE(excluded, matches)` keeps the GetLiveLeagueGames values. Same miss-counter pattern on `top_live_missed_polls`. Same finish rule as the live poller (both feeds must be done if both listed the match).
+GetTopLiveGame (`partner=0`). Keep `league_id > 0`. Upsert `server_steam_id` (Steam uint64 as decimal text — `Number` rounds it), `ingest_sources += GetTopLiveGame`, `phase = live` unless already past details. A later sighting uses the same flap as GetLiveLeagueGames (`touchMatchLive` always, no hash short-circuit). Fields this feed does **not** have (`series_*`, team names, lobby, logos) are written as SQL NULL so `COALESCE(excluded, matches)` keeps the GetLiveLeagueGames values. Same miss-counter pattern on `top_live_missed_polls`. Same finish rule as the live poller (both feeds must be done if both listed the match).
 
 A match seen in **both** feeds is one `matches` row: `ingest_sources` accumulates both names, GetLiveLeagueGames fills roster / draft / lobby / logos / series, GetTopLiveGame fills `server_steam_id` (which unlocks GetRealtimeStats). Nothing from either feed is dropped.
 
@@ -110,7 +110,7 @@ Shared by live-finished and historical matches. At most five run at once
 historical (priority 10) on a free shard.
 
 1. If `seq_fetched_at` is null and `match_seq_num` is set: GetMatchHistoryBySequenceNum from that seq (`settings.seq_batch_size`). Persist every known-league row in the window. Set `seq_fetched_at` on those ids so overlapping jobs skip the same window.
-2. GC `CMsgGCMatchDetailsRequest`. Persist `CMsgDOTAMatch`, copy cluster/salt, set `match_replays.source_url` and `details_fetched_at`.
+2. GC `CMsgGCMatchDetailsRequest`. Persist `CMsgDOTAMatch`, copy cluster/salt, set `match_replays.source_url` and `details_fetched_at`. Result 15 (`EResult.AccessDenied`) is match-level (same session still serves other ids): `match_replays.status = unavailable`, `matches.phase = replay_unavailable`, `last_error_kind = unavailable`, job succeeds. Do **not** throw — a retry would hold a `details:{n}` shard.
 3. Enqueue `download_replay`. Live origin: `run_at = replay_available_at` (`finished_at + settings.replay_live_delay_ms`, seed 30 s) if that instant is still in the future. Historical runs immediately.
 
 `waiting_for` flips `seq` → `gc` → `replay`.
@@ -121,7 +121,9 @@ Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffM
 
 ### Replay parse
 
-Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 10). Spec: [`replay-parser.md`](./replay-parser.md).
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 3 — a demo decode
+holds the decompressed replay in memory; 10-wide claims OOM a 4 GiB
+cgroup). Spec: [`replay-parser.md`](./replay-parser.md).
 
 ---
 
@@ -144,6 +146,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - Proxy / GC-account / API-key transport and soft errors go into `resource_attempts`. Disable when the last `*_error_window` attempts are at least `*_error_threshold` percent failures. Do not disable on the first blip.
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
+- GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.
 - 200 history misses → `phase = failed`, `last_error_kind = history_timeout`.
@@ -180,11 +183,11 @@ migrate containers are uncapped.
 | Service | CPU | Memory |
 |---|---|---|
 | postgres | 0.50 | 2048M |
-| clickhouse | 0.90 | 6144M |
+| clickhouse | 0.70 | 4096M |
 | worker-live | 0.30 | 768M |
 | worker-historical | 0.30 | 768M |
 | worker-match-processing | 0.80 | 1536M |
-| parser | 0.50 | 2048M |
+| parser | 0.70 | 4096M |
 | api | 0.10 | 384M |
 | prometheus | 0.15 | 768M |
 | grafana | 0.05 | 256M |

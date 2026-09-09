@@ -74,10 +74,10 @@ func (s *Store) Parallelism(ctx context.Context) (int, error) {
 	var raw string
 	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = 'parser_parallelism'`).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 10, nil
+		return 3, nil
 	}
 	if err != nil {
-		return 10, err
+		return 3, err
 	}
 	n := 0
 	for _, c := range raw {
@@ -87,7 +87,7 @@ func (s *Store) Parallelism(ctx context.Context) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	if n < 1 {
-		return 10, nil
+		return 3, nil
 	}
 	return n, nil
 }
