@@ -184,12 +184,12 @@ export async function touchMatchLive(
 	row: {
 		matchId: number
 		leagueId: number
-		leagueNodeId: number
+		leagueNodeId: number | null
 		seriesId: number | null
-		seriesType: number
-		radiantSeriesWins: number
-		direSeriesWins: number
-		streamDelayS: number
+		seriesType: number | null
+		radiantSeriesWins: number | null
+		direSeriesWins: number | null
+		streamDelayS: number | null
 		radiantTeamId: number | null
 		direTeamId: number | null
 		radiantTeamName: string | null

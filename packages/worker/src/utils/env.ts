@@ -8,6 +8,9 @@ const extra = z.object({
 	// <template:extend>
 	WORKER_PORT: z.coerce.number().default(3001),
 	// </template:extend>
+	WORKER_ROLE: z
+		.enum(['all', 'live', 'historical', 'match-processing'])
+		.default('all'),
 })
 
 export default baseEnv.extend(extra.shape).parse(process.env)

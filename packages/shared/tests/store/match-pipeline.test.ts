@@ -11,6 +11,7 @@ import {
 	recordHistoryPollMisses,
 	touchMatchLive,
 	upsertHistoryMatches,
+	upsertTeam,
 } from '#src/store/matches'
 import { db, sql } from '#src/utils/db'
 
@@ -19,14 +20,23 @@ const BOTH_ID = 9_900_060_002
 const HIST_ID = 9_900_060_003
 const WAIT_ID = 9_900_060_004
 const IDLE_ID = 9_900_060_005
+const MERGE_ID = 9_900_060_006
 const LEAGUE_ID = 9_900_061
+const RADIANT_TEAM = 9_900_062
+const DIRE_TEAM = 9_900_063
 
 async function cleanup(): Promise<void> {
 	await db.execute(sql`
 		DELETE FROM matches
-		WHERE match_id IN (${LIVE_ID}, ${BOTH_ID}, ${HIST_ID}, ${WAIT_ID}, ${IDLE_ID})
+		WHERE match_id IN (
+			${LIVE_ID}, ${BOTH_ID}, ${HIST_ID}, ${WAIT_ID}, ${IDLE_ID}, ${MERGE_ID}
+		)
 	`)
 	await db.execute(sql`DELETE FROM leagues WHERE league_id = ${LEAGUE_ID}`)
+	await db.execute(sql`
+		DELETE FROM teams
+		WHERE team_id IN (${RADIANT_TEAM}, ${DIRE_TEAM})
+	`)
 }
 
 afterAll(cleanup)
@@ -203,6 +213,75 @@ describe('live finish detection', () => {
 			const both = await finishMissingLiveMatches(tx, 2, 1000)
 			expect(both.filter((id) => id === BOTH_ID)).toEqual([BOTH_ID])
 		})
+	})
+
+	test('merges GetLiveLeagueGames and GetTopLiveGame onto one row', async () => {
+		await cleanup()
+		await db.execute(sql`
+			INSERT INTO leagues (league_id, name, status)
+			VALUES (${LEAGUE_ID}, 'pipeline test', 'LIVE')
+			ON CONFLICT (league_id) DO NOTHING
+		`)
+		await db.transaction(async (tx) => {
+			await upsertTeam(tx, RADIANT_TEAM, 'NaVi')
+			await upsertTeam(tx, DIRE_TEAM, 'LGD')
+			await touchMatchLive(tx, {
+				matchId: MERGE_ID,
+				leagueId: LEAGUE_ID,
+				leagueNodeId: 44,
+				seriesId: null,
+				seriesType: 1,
+				radiantSeriesWins: 1,
+				direSeriesWins: 0,
+				streamDelayS: 120,
+				radiantTeamId: RADIANT_TEAM,
+				direTeamId: DIRE_TEAM,
+				radiantTeamName: 'NaVi',
+				direTeamName: 'LGD',
+				lobbyId: 7_001,
+				ingest: INGEST.liveLeague,
+			})
+			await touchMatchLive(tx, {
+				matchId: MERGE_ID,
+				leagueId: LEAGUE_ID,
+				leagueNodeId: null,
+				seriesId: null,
+				seriesType: null,
+				radiantSeriesWins: null,
+				direSeriesWins: null,
+				streamDelayS: 90,
+				radiantTeamId: null,
+				direTeamId: null,
+				radiantTeamName: null,
+				direTeamName: null,
+				ingest: INGEST.topLive,
+				serverSteamId: '90123456789012345',
+			})
+		})
+		const [row] = await db.execute(sql`
+			SELECT
+				phase, source, ingest_sources, lobby_id, server_steam_id,
+				radiant_team_id, dire_team_id, radiant_team_name, dire_team_name,
+				series_id, series_type, radiant_series_wins, dire_series_wins,
+				league_node_id, stream_delay_s
+			FROM matches WHERE match_id = ${MERGE_ID}
+		`)
+		expect(row?.phase).toBe('live')
+		expect(row?.source).toBe('live')
+		expect(row?.ingest_sources).toEqual(
+			expect.arrayContaining([INGEST.liveLeague, INGEST.topLive]),
+		)
+		expect(Number(row?.lobby_id)).toBe(7_001)
+		expect(String(row?.server_steam_id)).toBe('90123456789012345')
+		expect(Number(row?.radiant_team_id)).toBe(RADIANT_TEAM)
+		expect(Number(row?.dire_team_id)).toBe(DIRE_TEAM)
+		expect(row?.radiant_team_name).toBe('NaVi')
+		expect(row?.dire_team_name).toBe('LGD')
+		expect(Number(row?.series_type)).toBe(1)
+		expect(Number(row?.radiant_series_wins)).toBe(1)
+		expect(Number(row?.dire_series_wins)).toBe(0)
+		expect(Number(row?.league_node_id)).toBe(44)
+		expect(Number(row?.stream_delay_s)).toBe(90)
 	})
 })
 

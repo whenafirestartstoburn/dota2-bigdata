@@ -2,7 +2,7 @@
 
 Internal platform for discovering professional / league Dota 2 matches, storing live and post-match data, and downloading replays. Postgres holds operational state (visible with ordinary SQL). ClickHouse holds high-volume snapshots. Replays stream into Amazon S3 (`S3_*` in `.env`).
 
-Jobs run on [graphile-worker](https://worker.graphile.org) in Postgres — queue, retries, and cron are tables, not a separate broker.
+Jobs run on [graphile-worker](https://worker.graphile.org) in Postgres — queue, retries, and cron are tables, not a separate broker. Compose runs three worker containers (`WORKER_ROLE=live|historical|match-processing`) against that shared queue. Spec: [`docs/specs/worker-architecture.md`](docs/specs/worker-architecture.md).
 
 ## Stack
 
@@ -23,7 +23,9 @@ docker compose up --build
 ```
 
 - API: http://localhost:3000 (`/healthz`, `/api/health`)
-- Worker health: http://localhost:3001/healthz
+- Live worker: http://localhost:3001/healthz
+- Historical worker: http://localhost:3004/healthz
+- Match-processing worker: http://localhost:3005/healthz
 - Parser health: http://localhost:3002/healthz
 - Postgres: `postgres://dota:dota@localhost:5432/dota`
 - ClickHouse HTTP: http://localhost:8123
@@ -34,19 +36,24 @@ Without docker (infra still from compose):
 docker compose up postgres clickhouse migrate clickhouse-migrate -d
 cp .env.example .env
 bun install
-bun run worker    # terminal 1
-bun run api       # terminal 2
+bun run worker    # all roles in one process; or worker:live / worker:historical / worker:processing
+bun run api       # another terminal
 ```
 
 ## Jobs
 
-| Job | Schedule | What it does |
-|---|---|---|
-| `fetch_leagues` | hourly + once on startup | `GetLeagueInfoList`, upsert `leagues` with `UPCOMING \| LIVE \| FINISHED` |
-| `poll_live_games` | every 3s (self-rescheduling `jobKey`) | `GetLiveLeagueGames`, current state in Postgres, tick history in ClickHouse |
-| `process_league` | via HTTP | full match list, seq details, enqueue replay downloads |
-| `download_replay` | queue `dota-gc` | GC match details → `replay{cluster}.valve.net` → S3 |
-| parser (Go) | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*`, status `parsed` |
+| Job | Worker | Schedule | What it does |
+|---|---|---|---|
+| `poll_live_games` | live | every 3s (`jobKey`) | `GetLiveLeagueGames`, current state in Postgres, ticks in ClickHouse |
+| `poll_top_live` | live | every 3s | `GetTopLiveGame` (`league_id > 0`) → `server_steam_id`; merges onto the same `matches` row |
+| `poll_realtime_stats` | live | every 3s | `GetRealtimeStats` for live rows that have `server_steam_id` |
+| `fetch_leagues` | historical | hourly + startup | `GetLeagueInfoList`, upsert `leagues` |
+| `walk_league_history` | historical | continuous | `GetMatchHistory` pages (discovery only) |
+| `poll_finished_history` | historical | every 5s | `GetMatchHistory` waiter after a live match leaves the feed |
+| `process_league` | historical | via HTTP | reset + walk one league |
+| `fetch_match_details` | match-processing | on demand | seq window then GC → replay URL |
+| `download_replay` | match-processing | after URL | Valve CDN → S3 |
+| parser (Go) | parser | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*` |
 
 League status is **ours**, not Valve's `status` integer (that flag is stored as `valve_status`). A league is `LIVE` if it currently appears in live games, or now is between `start_timestamp` and `end_timestamp`; `UPCOMING` if start is in the future; `FINISHED` if the window ended, Valve marked it concluded (`status=5`), or activity is stale.
 
@@ -111,6 +118,6 @@ Keep `revocation_code` if you enroll Guard later. A Web API key on the account i
 
 ## Accounts, keys, proxies
 
-Rows in `steam_accounts`, `steam_api_keys`, `proxies`. The worker seeds one account from `STEAM_SEED_*` on boot. Extra accounts: `bun run steam:guard add`. Replace resources by updating those tables — not env-only configs.
+Rows in `steam_accounts`, `steam_api_keys`, `proxies`. Each worker process seeds one account from `STEAM_SEED_*` on boot. Extra accounts: `bun run steam:guard add`. Replace resources by updating those tables — not env-only configs.
 
 Do not commit `.env`. Passwords and secrets are redacted in pino logs.

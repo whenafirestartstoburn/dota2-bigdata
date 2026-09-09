@@ -2,22 +2,45 @@
 
 Companions: [`data-schema.md`](./data-schema.md), [`adr-technology.md`](./adr-technology.md).
 
-One worker process, one Postgres, one ClickHouse, one S3. Jobs share that process and run at their own frequencies (live poll ~3 s, league list hourly, history walk continuously at `steam_api_min_interval_ms`, plus on-demand GC / download). The HTTP API stays a thin test harness plus admin purchase (`POST /api/buy-account`, [`marketplace-buy-account.md`](./marketplace-buy-account.md)). Worker also replenishes API keys / GC accounts from `marketplace_products` when `settings` say the ready pool is short. Collection must work if the API is down.
+One image (`packages/worker`), three processes, one Postgres, one
+ClickHouse, one S3. graphile-worker tables are a **shared** queue: a
+process only registers the task identifiers it owns, so a live poll
+never runs on the historical container. The 1 rps mutex stays in
+Postgres (`SELECT … FOR UPDATE` on `steam_api_keys`), so three
+processes cannot double-fire the same key.
+
+`WORKER_ROLE` selects the process: `live`, `historical`,
+`match-processing`. Unset / `all` registers every task (local
+`bun run worker`). Compose always sets a role.
+
+The HTTP API stays a thin test harness plus admin purchase
+(`POST /api/buy-account`,
+[`marketplace-buy-account.md`](./marketplace-buy-account.md)).
+`match-processing` replenishes API keys / GC accounts from
+`marketplace_products` when `settings` say the ready pool is short.
+Collection must work if the API is down.
 
 ```
                     ┌──────────────────┐
-                    │ Steam Web API    │  ≤ 1 rps / key  (shared limiter)
+                    │ Steam Web API    │  ≤ 1 rps / key  (PG mutex)
                     └────────┬─────────┘
+           ┌─────────────────┼─────────────────┐
+           ▼                 ▼                 ▼
+   worker-live     worker-historical   worker-match-processing
+   live feeds      GetMatchHistory     seq + GC + download
+           └─────────────────┼─────────────────┘
                              ▼
-                       ┌──────────┐
-                       │  worker  │  live + historical + GC + download
-                       └────┬─────┘
-                            │
           ┌─────────────────┼─────────────────┐
           ▼                 ▼                 ▼
      Postgres           ClickHouse            S3 .dem.bz2
      (matches, jobs)    (ticks, replay_*)     (download)
 ```
+
+| Role | Jobs | graphile concurrency |
+|---|---|---|
+| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats` | 4 |
+| `historical` | `walk_league_history`, `poll_finished_history`, `fetch_leagues`, `process_league`, `sync_catalogs` | 4 |
+| `match-processing` | `fetch_match_details`, `download_replay`, `replenish_accounts`, `retest_disabled_resources` | 35 |
 
 graphile `priority`: lower number runs first. Live poll / live details / live replay = 0, historical details = 10, history walk / historical replay = 20. `fetch_match_details` uses five named queues (`details:0`…`details:4`, `match_id % 5`) so at most five details jobs run at once. `download_replay` uses ten live and ten historical queues (`replay-live:0`…`replay-live:9`, `replay-historical:0`…`replay-historical:9`, `match_id % 10`). On a free shard, live (priority 0) is picked before historical (priority 10 / 20).
 
@@ -61,7 +84,9 @@ GetLiveLeagueGames. Upsert live matches/players/draft. Append `live_match_ticks`
 
 ### Top live (`poll_top_live`)
 
-GetTopLiveGame (`partner=0`). Keep `league_id > 0`. Upsert `server_steam_id` (Steam uint64 as decimal text — `Number` rounds it), `ingest_sources += GetTopLiveGame`, `phase = live` unless already past details. Same miss-counter pattern on `top_live_missed_polls`. Same finish rule as the live poller (both feeds must be done if both listed the match).
+GetTopLiveGame (`partner=0`). Keep `league_id > 0`. Upsert `server_steam_id` (Steam uint64 as decimal text — `Number` rounds it), `ingest_sources += GetTopLiveGame`, `phase = live` unless already past details. Fields this feed does **not** have (`series_*`, team names, lobby, logos) are written as SQL NULL so `COALESCE(excluded, matches)` keeps the GetLiveLeagueGames values. Same miss-counter pattern on `top_live_missed_polls`. Same finish rule as the live poller (both feeds must be done if both listed the match).
+
+A match seen in **both** feeds is one `matches` row: `ingest_sources` accumulates both names, GetLiveLeagueGames fills roster / draft / lobby / logos / series, GetTopLiveGame fills `server_steam_id` (which unlocks GetRealtimeStats). Nothing from either feed is dropped.
 
 ### Realtime stats (`poll_realtime_stats`)
 
@@ -133,9 +158,36 @@ Catalog: [`metrics.md`](./metrics.md).
 
 ## Deployment
 
-One `worker` service in compose. graphile-worker concurrency 35 (so live polls are not blocked while five details queues and twenty replay-download shards are busy). All task identifiers in that process.
+Three compose services, same image, `WORKER_ROLE` set:
 
-API `POST /api/leagues/process-finished` forces `walk_league_history` for an id (reset exhausted).
+| Service | Host health | Role |
+|---|---|---|
+| `worker-live` | `:3001` | live discovery |
+| `worker-historical` | `:3004` | GetMatchHistory discovery |
+| `worker-match-processing` | `:3005` | seq / GC / replay / replenish |
+
+Cron (`fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC) is registered only on `historical` (or `all`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
+
+API `POST /api/leagues/process-finished` forces `walk_league_history` for an id (reset exhausted); the historical process picks it up.
+
+### Resource budget
+
+Sized for `dota2-bigdata` (4 vCPU, 16 GiB). Limits across **all**
+long-running compose services sum to 3.6 CPU and 14720 MiB (≤ 90% of
+the instance) so a simultaneous cap cannot starve the kernel. One-shot
+migrate containers are uncapped.
+
+| Service | CPU | Memory |
+|---|---|---|
+| postgres | 0.50 | 2048M |
+| clickhouse | 0.90 | 6144M |
+| worker-live | 0.30 | 768M |
+| worker-historical | 0.30 | 768M |
+| worker-match-processing | 0.80 | 1536M |
+| parser | 0.50 | 2048M |
+| api | 0.10 | 384M |
+| prometheus | 0.15 | 768M |
+| grafana | 0.05 | 256M |
 
 ### Catalogs (`sync_catalogs`)
 

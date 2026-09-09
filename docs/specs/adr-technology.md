@@ -102,13 +102,13 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Jobs: graphile-worker
 
-**Decision:** [graphile-worker](https://worker.graphile.org) in the **same Postgres**. Queues, retries, cron, and `jobKey` dedupe are tables. One worker process runs every job (live, historical, GC details, download, parse) at that job's own frequency.
+**Decision:** [graphile-worker](https://worker.graphile.org) in the **same Postgres**. Queues, retries, cron, and `jobKey` dedupe are tables. Three worker processes share that queue; each registers only its `WORKER_ROLE` task identifiers (live discovery, historical discovery, match processing). Parse stays a separate Go process.
 
-**Why.** The 1 rps limiter and job state already live in Postgres. A Redis/NATS broker would be a second failover and a second place to look when a match is stuck. `jobKey` + `preserve_run_at` is how live poll and replay delays work.
+**Why.** The 1 rps limiter and job state already live in Postgres. A Redis/NATS broker would be a second failover and a second place to look when a match is stuck. `jobKey` + `preserve_run_at` is how live poll and replay delays work. Splitting processes keeps a 20-shard download storm from delaying the 3 s live poll without a second broker.
 
 **Rejected.** BullMQ / Redis. Kafka (overkill for “one GetMatchDetails”). Temporal (ops surface we do not need). In-process `setInterval` only — no retries, no inspectable queue.
 
-**Consequence.** graphile-worker **creates its own schema at runtime**. It is not in dbmate dumps. Live poll is a self-rescheduling job, not a second process.
+**Consequence.** graphile-worker **creates its own schema at runtime**. It is not in dbmate dumps. Live poll is a self-rescheduling job. A process ignores identifiers it does not register.
 
 ## Domain async: Promise
 

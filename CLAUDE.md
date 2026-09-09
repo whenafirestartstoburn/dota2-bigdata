@@ -18,8 +18,11 @@
 
 | `packages/parser` | Go replay parser (own Source 2 decoder, ClickHouse `replay_*`) |
 
-Prometheus + Grafana live in compose (`:9090`, `:3003`). Worker and parser
-serve `GET /metrics`. Catalog: `docs/specs/metrics.md`.
+Prometheus + Grafana live in compose (`:9090`, `:3003`). The three worker
+roles (`worker-live` `:3001`, `worker-historical` `:3004`,
+`worker-match-processing` `:3005`) and parser serve `GET /metrics`.
+Catalog: `docs/specs/metrics.md`. Same image, `WORKER_ROLE` selects the
+task list. Spec: `docs/specs/worker-architecture.md`.
 
 ## Запуск
 
@@ -60,6 +63,9 @@ cd packages/cli && bun run test
 cd packages/worker && bun run test
 ```
 <!-- </template:commands> -->
+
+Локально один процесс (`WORKER_ROLE=all` по умолчанию) или по ролям:
+`bun run worker:live` / `worker:historical` / `worker:processing`.
 
 TypeScript tests live in `packages/<pkg>/tests/`, mirroring `src/`
 (not next to production files). Go parser tests stay `*_test.go` beside

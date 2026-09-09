@@ -19,14 +19,17 @@ accounts, download 404s, parse backlog.
 
 | Process | Path | Port in compose |
 |---|---|---|
-| worker | `GET /metrics` | `worker:8080` (host `3001`) |
+| worker-live | `GET /metrics` | `worker-live:8080` (host `3001`) |
+| worker-historical | `GET /metrics` | `worker-historical:8080` (host `3004`) |
+| worker-match-processing | `GET /metrics` | `worker-match-processing:8080` (host `3005`) |
 | parser | `GET /metrics` | `parser:8080` (host `3002`) |
 
 `/healthz` and `/readyz` stay liveness / dependency checks. Prometheus is
 not a substitute for them.
 
-Local `bun run worker` / parser binary serve the same paths on
-`WORKER_PORT` / `PARSER_PORT`.
+Local `bun run worker` (all roles) / `worker:live` /
+`worker:historical` / `worker:processing` and the parser binary serve
+the same paths on `WORKER_PORT` / `PARSER_PORT`.
 
 ## Cardinality
 
@@ -133,7 +136,8 @@ rows are in use, and whether this worker holds a session.
 
 ## Compose
 
-`prometheus` scrapes `worker:8080` and `parser:8080` every 15s. Grafana
+`prometheus` scrapes the three worker roles and `parser:8080` every 15s
+(`job=worker` plus `role=` live / historical / match-processing). Grafana
 listens on host `3003` (container 3000; `3000` is already the API).
 Datasource uid `prometheus`. Dashboards:
 

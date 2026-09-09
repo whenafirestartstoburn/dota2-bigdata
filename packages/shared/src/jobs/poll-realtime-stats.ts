@@ -63,12 +63,12 @@ export async function runPollRealtimeStats(): Promise<{
 				await touchMatchLive(tx, {
 					matchId,
 					leagueId,
-					leagueNodeId: stats.match.league_node_id ?? 0,
+					leagueNodeId: stats.match.league_node_id || null,
 					seriesId: null,
-					seriesType: 0,
-					radiantSeriesWins: 0,
-					direSeriesWins: 0,
-					streamDelayS: 0,
+					seriesType: null,
+					radiantSeriesWins: null,
+					direSeriesWins: null,
+					streamDelayS: null,
 					radiantTeamId: sides.radiant.teamId,
 					direTeamId: sides.dire.teamId,
 					radiantTeamName: sides.radiant.name,
@@ -151,7 +151,10 @@ export async function runPollRealtimeStats(): Promise<{
 	return { scanned, wrote }
 }
 
-function parseTeamScore(teams: readonly unknown[], teamNumber: number): number {
+export function parseTeamScore(
+	teams: readonly unknown[],
+	teamNumber: number,
+): number {
 	for (const item of teams) {
 		const row = asRecord(item)
 		if (row == null) continue
@@ -166,7 +169,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>
 }
 
-function parseRealtimeTeams(teams: readonly unknown[]): {
+export function parseRealtimeTeams(teams: readonly unknown[]): {
 	radiant: {
 		teamId: number | null
 		name: string | null
@@ -237,7 +240,7 @@ function parseRealtimeTeams(teams: readonly unknown[]): {
 	return out
 }
 
-function collectRealtimeDraft(
+export function collectRealtimeDraft(
 	picks: Array<{ team: number; hero: number }> | undefined,
 	bans: Array<{ team: number; hero: number }> | undefined,
 ) {

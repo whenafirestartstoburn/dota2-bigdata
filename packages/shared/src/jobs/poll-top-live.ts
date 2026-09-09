@@ -13,6 +13,15 @@ import {
 import { db } from '#src/utils/db'
 import { logger } from '#src/utils/logger'
 
+export function proTopLiveMatchId(game: {
+	match_id: unknown
+	league_id: number
+}): number | null {
+	const matchId = asPgInt8(game.match_id)
+	if (matchId == null || matchId <= 0 || game.league_id <= 0) return null
+	return matchId
+}
+
 export async function runPollTopLive(): Promise<{
 	games: number
 	finished: number
@@ -32,19 +41,19 @@ export async function runPollTopLive(): Promise<{
 
 	await db.transaction(async (tx) => {
 		for (const game of games) {
-			const matchId = asPgInt8(game.match_id)
+			const matchId = proTopLiveMatchId(game)
 			const leagueId = game.league_id
-			if (matchId == null || matchId <= 0 || leagueId <= 0) continue
+			if (matchId == null) continue
 			seen.push(matchId)
 			await ensureLeagueStub(leagueId, tx)
 			await touchMatchLive(tx, {
 				matchId,
 				leagueId,
-				leagueNodeId: 0,
+				leagueNodeId: null,
 				seriesId: null,
-				seriesType: 0,
-				radiantSeriesWins: 0,
-				direSeriesWins: 0,
+				seriesType: null,
+				radiantSeriesWins: null,
+				direSeriesWins: null,
 				streamDelayS: game.delay,
 				radiantTeamId: null,
 				direTeamId: null,

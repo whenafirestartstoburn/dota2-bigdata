@@ -130,7 +130,7 @@ function matchIdOf(payload: unknown): number {
 	return id
 }
 
-export const taskList = {
+export const allTasks = {
 	fetch_leagues: traced(
 		'fetch_leagues',
 		async () => {
@@ -255,3 +255,15 @@ export const taskList = {
 		},
 	),
 } satisfies TaskList
+
+export function taskListFor(names: readonly string[]): TaskList {
+	const picked: TaskList = {}
+	for (const name of names) {
+		const task = allTasks[name as keyof typeof allTasks]
+		if (task === undefined) {
+			throw new Error(`unknown worker task ${name}`)
+		}
+		picked[name] = task
+	}
+	return picked
+}
