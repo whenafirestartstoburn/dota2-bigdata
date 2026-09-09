@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { PRIORITY } from '@app/shared/src/components/jobs'
+import { PRIORITY, SCHEDULED_JOB } from '@app/shared/src/components/jobs'
 import {
 	concurrencyFor,
 	cronFor,
@@ -30,7 +30,9 @@ describe('parseWorkerMode', () => {
 describe('task ownership', () => {
 	test('roles partition every registered graphile task', () => {
 		const owned = WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])
-		expect(owned.sort()).toEqual(Object.keys(allTasks).sort())
+		expect([...owned, SCHEDULED_JOB].sort()).toEqual(
+			Object.keys(allTasks).sort(),
+		)
 		const seen = new Set<string>()
 		for (const name of owned) {
 			expect(seen.has(name)).toBe(false)
@@ -39,15 +41,18 @@ describe('task ownership', () => {
 	})
 
 	test('taskListFor keeps only the requested identifiers', () => {
+		const withHop = (names: readonly string[]) =>
+			[...names, SCHEDULED_JOB].sort()
 		const live = taskListFor(taskNamesFor('live'))
-		expect(Object.keys(live).sort()).toEqual([...WORKER_TASKS.live].sort())
+		expect(Object.keys(live).sort()).toEqual(withHop(WORKER_TASKS.live))
 		expect(live.poll_live_games).toBeDefined()
+		expect(live[SCHEDULED_JOB]).toBeDefined()
 		expect(live.fetch_match_details).toBeUndefined()
 		expect(live.walk_league_history).toBeUndefined()
 
 		const historical = taskListFor(taskNamesFor('historical'))
 		expect(Object.keys(historical).sort()).toEqual(
-			[...WORKER_TASKS.historical].sort(),
+			withHop(WORKER_TASKS.historical),
 		)
 		expect(historical.walk_league_history).toBeDefined()
 		expect(historical.poll_finished_history).toBeDefined()
@@ -55,7 +60,7 @@ describe('task ownership', () => {
 
 		const processing = taskListFor(taskNamesFor('match-processing'))
 		expect(Object.keys(processing).sort()).toEqual(
-			[...WORKER_TASKS['match-processing']].sort(),
+			withHop(WORKER_TASKS['match-processing']),
 		)
 		expect(processing.fetch_match_details).toBeDefined()
 		expect(processing.download_replay).toBeDefined()
@@ -63,9 +68,10 @@ describe('task ownership', () => {
 	})
 
 	test('all registers the union and processing concurrency', () => {
-		expect(taskNamesFor('all')).toEqual(
-			WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]]),
-		)
+		expect(taskNamesFor('all')).toEqual([
+			...WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]]),
+			SCHEDULED_JOB,
+		])
 		expect(concurrencyFor('live')).toBe(4)
 		expect(concurrencyFor('historical')).toBe(4)
 		expect(concurrencyFor('match-processing')).toBe(35)

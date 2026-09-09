@@ -2,6 +2,9 @@ import {
 	jobNumber,
 	PRIORITY,
 	readJobPayload,
+	runScheduledJob,
+	SCHEDULED_JOB,
+	scheduleQueuedJobRetry,
 } from '@app/shared/src/components/jobs'
 import { getAppSettings } from '@app/shared/src/components/settings'
 import { runFetchLeagues } from '@app/shared/src/jobs/fetch-leagues'
@@ -18,7 +21,7 @@ import { runRetestDisabledResources } from '@app/shared/src/jobs/retest-resource
 import { runSyncCatalogs } from '@app/shared/src/jobs/sync-catalogs'
 import { runWalkLeagueHistory } from '@app/shared/src/jobs/walk-league-history'
 import { jobsInProgress, observeJob } from '@app/shared/src/metrics/observe'
-import { errorMessage } from '@app/shared/src/store/coerce'
+import { asString, errorMessage } from '@app/shared/src/store/coerce'
 import { logger } from '@app/shared/src/utils/logger'
 import { runWithTrace } from '@app/shared/src/utils/trace'
 import type { JobHelpers, Task, TaskList } from 'graphile-worker'
@@ -52,6 +55,31 @@ function traced(name: string, fn: Task, opts?: { skipNoKey?: boolean }): Task {
 						return
 					}
 					observeJob(name, 'error', started)
+					const queueName =
+						asString(readJobPayload(payload)._queueName) ??
+						(await helpers.getQueueName())
+					if (queueName != null && queueName !== '') {
+						const retried = await scheduleQueuedJobRetry({
+							identifier: name,
+							payload,
+							queueName,
+							jobKey: helpers.job.key,
+							priority: helpers.job.priority,
+							failedTry: Math.max(helpers.job.attempts, 1),
+						})
+						if (retried) {
+							logger.warn(
+								{ err: errorMessage(error), queue: queueName },
+								`${name} scheduled for retry off-queue`,
+							)
+							return
+						}
+						logger.error(
+							{ err: errorMessage(error), queue: queueName },
+							`${name} gave up; leaving the named queue`,
+						)
+						return
+					}
 					throw error
 				} finally {
 					jobsInProgress.dec({ job: name })
@@ -254,6 +282,9 @@ export const allTasks = {
 			}
 		},
 	),
+	[SCHEDULED_JOB]: traced(SCHEDULED_JOB, async (payload) => {
+		await runScheduledJob(payload)
+	}),
 } satisfies TaskList
 
 export function taskListFor(names: readonly string[]): TaskList {

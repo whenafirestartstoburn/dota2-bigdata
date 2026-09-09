@@ -1,4 +1,4 @@
-import { PRIORITY } from '@app/shared/src/components/jobs'
+import { PRIORITY, SCHEDULED_JOB } from '@app/shared/src/components/jobs'
 
 export const WORKER_ROLES = ['live', 'historical', 'match-processing'] as const
 
@@ -53,10 +53,11 @@ export function parseWorkerMode(value: string | undefined): WorkerMode {
 }
 
 export function taskNamesFor(mode: WorkerMode): readonly string[] {
-	if (mode === 'all') {
-		return WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])
-	}
-	return WORKER_TASKS[mode]
+	const names =
+		mode === 'all'
+			? WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])
+			: [...WORKER_TASKS[mode]]
+	return [...names, SCHEDULED_JOB]
 }
 
 export function concurrencyFor(mode: WorkerMode): number {

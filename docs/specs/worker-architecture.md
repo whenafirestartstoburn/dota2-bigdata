@@ -38,11 +38,13 @@ Collection must work if the API is down.
 
 | Role | Jobs | graphile concurrency |
 |---|---|---|
-| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats` | 4 |
-| `historical` | `walk_league_history`, `poll_finished_history`, `fetch_leagues`, `process_league`, `sync_catalogs` | 4 |
-| `match-processing` | `fetch_match_details`, `download_replay`, `replenish_accounts`, `retest_disabled_resources` | 35 |
+| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats` (+ `run_scheduled_job`) | 4 |
+| `historical` | `walk_league_history`, `poll_finished_history`, `fetch_leagues`, `process_league`, `sync_catalogs` (+ `run_scheduled_job`) | 4 |
+| `match-processing` | `fetch_match_details`, `download_replay`, `replenish_accounts`, `retest_disabled_resources` (+ `run_scheduled_job`) | 35 |
 
 graphile `priority`: lower number runs first. Live poll / live details / live replay = 0, historical details = 10, history walk / historical replay = 20. `fetch_match_details` uses five named queues (`details:0`…`details:4`, `match_id % 5`) so at most five details jobs run at once. `download_replay` uses ten live and ten historical queues (`replay-live:0`…`replay-live:9`, `replay-historical:0`…`replay-historical:9`, `match_id % 10`). On a free shard, live (priority 0) is picked before historical (priority 10 / 20).
+
+Named queues hold **only immediate work** (graphile `maxAttempts = 1`). A future `runAt` or a thrown retry parks as `run_scheduled_job` with no `queue_name` (`jobKey = later:…`). When that instant comes, the hop enqueues back onto the named shard. Every worker role registers the hop. Delayed hops still count toward `history_details_enqueue_limit` / `history_replay_enqueue_limit`. Graphile must not retry in-place on a named queue — that held the shard after a crash.
 
 Match truth lives on `matches` (phase, `waiting_for`, counters, last error / key / account / proxy). graphile-worker tables are the queue, not the pipeline status.
 
@@ -101,7 +103,7 @@ Coalesce by **league**: one newest GetMatchHistory page per due `league_id` (`ph
 
 ### Historical discovery (`walk_league_history`)
 
-One GetMatchHistory page (`settings.history_page_size`, newest or older cursor). Persist listed matches (`source` stays `live` if already live; otherwise `historical`). `ingest_sources += GetMatchHistory`. Set `phase = awaiting_details` when the row is still `discovered`, `awaiting_history`, or `not_started`. Enqueue `fetch_match_details` for any rows still missing `seq_fetched_at` or `details_fetched_at` (live first), capped by `settings.history_details_enqueue_limit` (runnable jobs only — exhausted retries do not fill the cap). An empty page marks the league `history_exhausted` and the next tick picks another league (never self-requeue the same empty id). After every tick, self-requeue on `jobKey = walk_league_history` at `settings.steam_api_min_interval_ms`; the shared 1 rps limiter still yields to live. Older pages of the current league stay on the payload; otherwise `pickNextHistoryLeague` (never-walked first, then newest leagues: `most_recent_activity`, `start_timestamp`, `league_id` desc). A 5-minute cron with `preserve_run_at` is only a watchdog. Does **not** call GetMatchHistoryBySequenceNum and does **not** enqueue download.
+One GetMatchHistory page (`settings.history_page_size`, newest or older cursor). Persist listed matches (`source` stays `live` if already live; otherwise `historical`). `ingest_sources += GetMatchHistory`. Set `phase = awaiting_details` when the row is still `discovered`, `awaiting_history`, or `not_started`. Enqueue `fetch_match_details` for any rows still missing `seq_fetched_at` or `details_fetched_at` (live first), capped by `settings.history_details_enqueue_limit` (runnable jobs only — exhausted retries and jobs waiting on a locked `details:*` queue do not fill the cap). An empty page marks the league `history_exhausted` and the next tick picks another league (never self-requeue the same empty id). After every tick, self-requeue on `jobKey = walk_league_history` at `settings.steam_api_min_interval_ms`; the shared 1 rps limiter still yields to live. Older pages of the current league stay on the payload; otherwise `pickNextHistoryLeague` (never-walked first, then newest leagues: `most_recent_activity`, `start_timestamp`, `league_id` desc). A 5-minute cron with `preserve_run_at` is only a watchdog. Does **not** call GetMatchHistoryBySequenceNum and does **not** enqueue download.
 
 ### Match details (`fetch_match_details`)
 
@@ -121,7 +123,7 @@ Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffM
 
 ### Replay parse
 
-Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 3 — a demo decode
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 5 — a demo decode
 holds the decompressed replay in memory; 10-wide claims OOM a 4 GiB
 cgroup). Spec: [`replay-parser.md`](./replay-parser.md).
 
@@ -146,6 +148,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - Proxy / GC-account / API-key transport and soft errors go into `resource_attempts`. Disable when the last `*_error_window` attempts are at least `*_error_threshold` percent failures. Do not disable on the first blip.
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
+- A thrown job on a named queue does **not** graphile-retry on that shard. The wrapper parks `run_scheduled_job` (30 s, 1 m, 3 m, …) and hops back when due. After the stamped budget the job leaves the queue.
 - GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.
@@ -179,6 +182,11 @@ Sized for `dota2-bigdata` (4 vCPU, 16 GiB). Limits across **all**
 long-running compose services sum to 3.6 CPU and 14720 MiB (≤ 90% of
 the instance) so a simultaneous cap cannot starve the kernel. One-shot
 migrate containers are uncapped.
+
+Long-running services use `restart: unless-stopped`. An OOM kill or
+crash comes back; `docker stop` / a deliberate compose down does not.
+Migrate one-shots stay `restart: no`. A `parsing` row older than 30
+minutes is released to `stored` so a restarted parser can claim it.
 
 | Service | CPU | Memory |
 |---|---|---|

@@ -96,8 +96,8 @@ Collector cadence (was env):
 | `history_slow_poll_ms` | 60000 | waiter interval after the fast budget |
 | `history_slow_poll_limit` | 100 | slow-poll attempts before `history_timeout` |
 | `history_page_size` | 100 | GetMatchHistory page (Valve max 100) |
-| `history_details_enqueue_limit` | 5 | queued historical details jobs (run cap is 5 `details:*` queues) |
-| `history_replay_enqueue_limit` | 50 | queued historical download_replay jobs (run cap is 10 `replay-historical:*` queues) |
+| `history_details_enqueue_limit` | 5 | runnable historical details jobs plus parked `run_scheduled_job` hops (locked-queue waiters and exhausted retries do not count; run cap is 5 `details:*` queues) |
+| `history_replay_enqueue_limit` | 50 | queued historical download_replay jobs plus parked hops (run cap is 10 `replay-historical:*` queues) |
 | `seq_batch_size` | 100 | GetMatchHistoryBySequenceNum window |
 | `steam_api_min_interval_ms` | 1000 | 1 rps mutex per Web API key |
 | `history_newest_refresh_ms` | 3600000 | re-fetch newest history page |

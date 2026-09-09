@@ -1,4 +1,5 @@
 x-worker: &worker
+  restart: unless-stopped
   build:
     context: .
     dockerfile: packages/worker/Dockerfile
@@ -20,6 +21,7 @@ x-worker: &worker
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: dota
       POSTGRES_PASSWORD: dota
@@ -43,6 +45,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
     environment:
       CLICKHOUSE_USER: dota
       CLICKHOUSE_PASSWORD: dota
@@ -167,6 +170,7 @@ services:
           memory: 512M
 
   parser:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: packages/parser/Dockerfile
@@ -204,6 +208,7 @@ services:
           memory: 1024M
 
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: packages/api/Dockerfile
@@ -239,6 +244,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
+    restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=15d
@@ -263,6 +269,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.5.2
+    restart: unless-stopped
     ports:
       - "3003:3000"
     environment:

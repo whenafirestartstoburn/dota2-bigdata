@@ -26,10 +26,11 @@ commit also sets `matches.phase = parsed` and clears `waiting_for`.
 
 ## Parallelism
 
-`settings.parser_parallelism` (default `3`). The service polls that row
+`settings.parser_parallelism` (default `5`). The service polls that row
 and runs that many in-flight parses. Live-priority `stored` rows go first.
 Each parse holds the decompressed `.dem` plus entity state; 10-wide
-claims do not fit a 4 GiB parser cgroup.
+claims do not fit a 4 GiB parser cgroup. 5-wide is the width that still
+fits ~1.5–2 GiB of three-to-five overlapping decodes.
 
 ## Claim
 
@@ -48,22 +49,42 @@ schema version are skipped (idempotent). A newer binary re-parses.
 ClickHouse has no cross-table transaction and we do not change the engine.
 Each attempt allocates a unique `parse_run_id` (uint64). Every `replay_*`
 row of that attempt carries it. Postgres `match_replays.parse_run_id` is
-the published run.
+the **published** run — that is what makes a write visible.
 
-1. Parse the whole demo into memory. A decode error writes nothing.
-2. Insert all `replay_*` tables with the new `parse_run_id`.
-3. If any insert fails: `ALTER TABLE … DELETE WHERE parse_run_id = {id}`
-   on every replay table, mark the row `failed`, stop.
-4. Write Postgres (objectives, draft clocks, player summaries) in one
-   transaction. On failure: the same CH deletes, mark `failed`.
-5. Only then `UPDATE match_replays SET status = 'parsed', parser_version,
-   parse_run_id, parsed_at`.
-6. After publish, delete any *previous* `parse_run_id` for that `match_id`
-   so re-parse does not leave a readable duplicate set.
+High-volume tables (`replay_combat_log`, `replay_actions`,
+`replay_intervals`) are flushed to ClickHouse in batches **during**
+decode. Smaller tables (draft, chat, wards, epilogue, …) flush when
+their buffer fills or at end-of-demo. A batch is a few thousand rows
+(seed 8 192), not one INSERT per event. After a successful flush the
+Go slice is reused so extract RAM stays O(batch), not O(match).
 
-Queries that must not see a half-written match join
-`replay_*.parse_run_id = match_replays.parse_run_id` (or filter
-`parser_version` as the schema spec already said). Do not use `FINAL`.
+The Source 2 entity world still lives in process until EOF — batching
+does not shrink that. It only removes the second peak (60k combat
+structs + 80k actions held until the end).
+
+1. Allocate `parse_run_id`. Decode the stream. Whenever a table hits
+   the batch size, `INSERT` those rows with that id and drop the
+   buffer. Decode / insert error: `Abort(parse_run_id)` (`ALTER TABLE
+   … DELETE WHERE parse_run_id = {id}` on every `replay_*` table),
+   mark the row `failed`, stop. Readers never see this id — Postgres
+   still has the previous published run, or none.
+2. End of demo: flush leftovers, then write Postgres (objectives,
+   draft clocks, player summaries) in one transaction. On failure:
+   the same `Abort`, mark `failed`.
+3. Only then `UPDATE match_replays SET status = 'parsed',
+   parser_version, parse_run_id, parsed_at`.
+4. After publish, delete any *previous* `parse_run_id` for that
+   `match_id` so re-parse does not leave a readable duplicate set.
+
+`Abort` is a MergeTree mutation: rows vanish from queries quickly,
+parts merge later. That is the same contract as today’s failed
+`Commit`. Do not query `replay_*` by `match_id` alone while a parse
+is in flight; join
+`replay_*.parse_run_id = match_replays.parse_run_id`. Do not use
+`FINAL`.
+
+`parser_version` is the extract/schema revision of this binary (starts at
+`1`). Bump it when columns or extract rules change.
 
 `parser_version` is the extract/schema revision of this binary (starts at
 `1`). Bump it when columns or extract rules change.
