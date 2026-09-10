@@ -123,10 +123,10 @@ Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffM
 
 ### Replay parse
 
-Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 6). A demo decode keeps only the entity classes the extract reads (heroes,
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (prod `20`). A demo decode keeps only the entity classes the extract reads (heroes,
 resource, rules, items, …) and flushes high-volume `replay_*` rows in
-batches. The 4 GiB cgroup held ~1.85 GiB RSS at 10-wide before that.
-Parser CPU is 0.90 (Prometheus / Grafana cut to 0.05 / 0.04). Spec:
+batches. Parser cgroup is 3.00 CPU / 8 GiB so that width can run;
+0.90 / 4 GiB made anything past ~6 CFS-bound. Spec:
 [`replay-parser.md`](./replay-parser.md).
 
 ---
@@ -198,7 +198,7 @@ minutes is released to `stored` so a restarted parser can claim it.
 | worker-live | 0.30 | 768M |
 | worker-historical | 0.30 | 768M |
 | worker-match-processing | 0.80 | 1536M |
-| parser | 0.90 | 4096M |
+| parser | 3.00 | 8192M |
 | api | 0.10 | 384M |
 | prometheus | 0.05 | 768M |
 | grafana | 0.04 | 256M |

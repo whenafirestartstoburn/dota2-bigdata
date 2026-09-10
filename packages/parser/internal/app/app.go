@@ -187,7 +187,11 @@ func (a *App) handle(ctx context.Context, job *store.Claimed) {
 		metrics.ObserveJob("publish", time.Since(start).Seconds())
 		return
 	}
-	_ = a.ch.DropPrevious(ctx, res.MatchID, res.ParseRunID)
+	// Empty ALTER DELETE still enqueues a mutation. Skip until a prior
+	// publish exists — that queue is what filled the disk at high width.
+	if job.ParserVersion != nil {
+		_ = a.ch.DropPrevious(ctx, res.MatchID, res.ParseRunID)
+	}
 	metrics.ObserveJob("success", time.Since(start).Seconds())
 	log.Info("parsed",
 		"run", res.ParseRunID,
