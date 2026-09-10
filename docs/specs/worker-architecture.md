@@ -123,7 +123,7 @@ Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffM
 
 ### Replay parse
 
-Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (prod `20`). A demo decode keeps only the entity classes the extract reads (heroes,
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (prod `8`). A demo decode keeps only the entity classes the extract reads (heroes,
 resource, rules, items, …) and flushes high-volume `replay_*` rows in
 batches. Parser cgroup is 3.00 CPU / 8 GiB so that width can run;
 0.90 / 4 GiB made anything past ~6 CFS-bound. Spec:
@@ -162,6 +162,9 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 
 Worker and parser expose Prometheus on `GET /metrics`. Compose scrapes them
 into Prometheus; Grafana on host `:3003` loads provisioned dashboards.
+Postgres inventory gauges (`dota_matches`, `dota_replays`, account
+pools, …) are scraped only on `match-processing` (or `WORKER_ROLE=all`)
+so the same row counts are not stored under three `role=` labels.
 Catalog: [`metrics.md`](./metrics.md).
 
 ## Deployment

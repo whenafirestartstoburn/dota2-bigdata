@@ -26,7 +26,7 @@ commit also sets `matches.phase = parsed` and clears `waiting_for`.
 
 ## Parallelism
 
-`settings.parser_parallelism` (default `6`, prod `20`). The service
+`settings.parser_parallelism` (default `6`, prod `8`). The service
 polls that row and runs that many in-flight parses. Live-priority
 `stored` rows go first. Each parse still holds the **kept** Source 2
 entity world until EOF (heroes, player resource, gamerules, team data,
@@ -34,13 +34,12 @@ items, abilities, wards, wearables). Creeps / projectiles / particles
 are decoded only far enough to consume the bitstream, then dropped.
 High-volume extract rows flush to ClickHouse in batches (seed 8 192).
 
-Width 20 needs the parser cgroup at **3.00 CPU / 8 GiB**. The old
+Width 8 needs the parser cgroup at **3.00 CPU / 8 GiB**. The old
 0.90 / 4 GiB cap made 6-wide look “full” and 10-wide on 0.70 only
-thrashed CFS. The host is 4 cores: 20-wide shares ~3 cores, so
-per-match wall time rises; throughput still goes up because S3 and
-ClickHouse waits overlap. Skip `DropPrevious` when the row has never
-published a `parser_version` — empty `ALTER DELETE` mutations are
-what filled the disk at high width.
+thrashed CFS. The host is 4 cores: 20-wide on ~2.5 usable cores
+raised wall time to 3–4 min and cut throughput. Skip `DropPrevious`
+when the row has never published a `parser_version` — empty
+`ALTER DELETE` mutations are what filled the disk at high width.
 
 ## Claim
 

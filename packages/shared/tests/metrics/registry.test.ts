@@ -74,7 +74,16 @@ describe('prometheus text', () => {
 		)
 	})
 
+	test('inventory gauges have no series until a scrape fills them', () => {
+		resetMetrics()
+		const text = renderMetrics()
+		expect(text).toContain('# TYPE dota_matches gauge')
+		expect(text).not.toContain('dota_matches{')
+		expect(text).not.toContain('dota_replays{')
+	})
+
 	test('seeds idle GC series at zero', () => {
+		resetMetrics()
 		const text = renderMetrics()
 		expect(text).toContain(
 			'dota_gc_requests_total{method="match_details",result="success"} 0',

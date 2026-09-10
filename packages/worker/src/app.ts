@@ -4,6 +4,10 @@ import { seedSteamResources } from '@app/shared/src/components/seed'
 import { runSyncCatalogsOnBoot } from '@app/shared/src/jobs/sync-catalogs'
 import { pingClickhouse } from '@app/shared/src/components/clickhouse'
 import { metricsResponse } from '@app/shared/src/metrics/http'
+import {
+	seedIdleGcSeries,
+	seedIdleHistorySeries,
+} from '@app/shared/src/metrics/observe'
 import { db, sql } from '@app/shared/src/utils/db'
 import { logger } from '@app/shared/src/utils/logger'
 import env from '#src/utils/env'
@@ -12,6 +16,7 @@ import { graphileLogger } from '#src/graphile-logger'
 import {
 	concurrencyFor,
 	cronFor,
+	scrapesInventory,
 	startupJobsFor,
 	syncsCatalogsOnBoot,
 	taskNamesFor,
@@ -22,6 +27,8 @@ import { taskListFor } from '#src/tasks'
 // </template:imports>
 
 const role = env.WORKER_ROLE
+if (role === 'all' || role === 'match-processing') seedIdleGcSeries()
+if (role === 'all' || role === 'historical') seedIdleHistorySeries()
 const taskNames = taskNamesFor(role)
 const taskList = taskListFor(taskNames)
 const crontab = cronFor(role)
@@ -58,7 +65,7 @@ const health = Bun.serve({
 	port: env.WORKER_PORT,
 	routes: {
 		'/healthz': () => Response.json({ status: 'ok', role }),
-		'/metrics': () => metricsResponse(),
+		'/metrics': () => metricsResponse({ inventory: scrapesInventory(role) }),
 		'/readyz': async () => {
 			try {
 				await db.execute(sql`SELECT 1`)

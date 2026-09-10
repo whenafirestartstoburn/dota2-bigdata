@@ -266,13 +266,16 @@ const GC_LOGON_RESULTS = [
 	'error',
 ]
 
-function seedGcMetrics(): void {
+export function seedIdleHistorySeries(): void {
 	if (historyWalkMatches.get() === 0) historyWalkMatches.inc({}, 0)
 	for (const result of HISTORY_WALK_RESULTS) {
 		if (historyWalkPages.get({ result }) === 0) {
 			historyWalkPages.inc({ result }, 0)
 		}
 	}
+}
+
+export function seedIdleGcSeries(): void {
 	if (gcSessionUp.get() === 0) gcSessionUp.setValue(0)
 	for (const result of GC_REQUEST_RESULTS) {
 		if (gcRequests.get({ method: 'match_details', result }) === 0) {
@@ -287,5 +290,9 @@ function seedGcMetrics(): void {
 	gcDuration.ensure({ method: 'match_details' })
 }
 
-onMetricsReset(seedGcMetrics)
-seedGcMetrics()
+function seedIdleCatalog(): void {
+	seedIdleHistorySeries()
+	seedIdleGcSeries()
+}
+
+onMetricsReset(seedIdleCatalog)

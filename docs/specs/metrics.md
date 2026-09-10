@@ -105,8 +105,16 @@ counters; only the worker serves them.
 | `dota_history_walk_matches_total` | counter | | matches listed on GetMatchHistory walk pages |
 | `dota_history_walk_pages_total` | counter | `result` | walk ticks: `hits` / `empty` / `skipped` |
 
-Inventory gauges are **reset and rewritten** on each `/metrics` scrape
-from Postgres (and `settings`):
+Inventory gauges are **reset and rewritten** from Postgres (and
+`settings`) only on `worker-match-processing` (or `WORKER_ROLE=all`).
+Live and historical omit them so Prometheus does not store the same
+row counts under three `role=` labels. Process-local counters
+(Web API, jobs, downloads) stay on the role that increments them.
+
+Idle GC / walk zero series are seeded only on the role that owns that
+plane (`match-processing` / `historical`).
+
+Inventory gauges:
 
 | Name | Labels | Meaning |
 |---|---|---|
@@ -137,7 +145,8 @@ rows are in use, and whether this worker holds a session.
 ## Compose
 
 `prometheus` scrapes the three worker roles and `parser:8080` every 15s
-(`job=worker` plus `role=` live / historical / match-processing). Grafana
+(`job=worker` plus `role=` live / historical / match-processing).
+Inventory series exist only on `role=match-processing`. Grafana
 listens on host `3003` (container 3000; `3000` is already the API).
 Datasource uid `prometheus`. Dashboards:
 

@@ -5,6 +5,7 @@ import {
 	cronFor,
 	parseWorkerMode,
 	startupJobsFor,
+	scrapesInventory,
 	syncsCatalogsOnBoot,
 	taskNamesFor,
 	WORKER_ROLES,
@@ -91,6 +92,13 @@ describe('boot per role', () => {
 		expect(syncsCatalogsOnBoot('all')).toBe(true)
 		expect(syncsCatalogsOnBoot('live')).toBe(false)
 		expect(syncsCatalogsOnBoot('match-processing')).toBe(false)
+	})
+
+	test('only match-processing (and all) scrape Postgres inventory gauges', () => {
+		expect(scrapesInventory('match-processing')).toBe(true)
+		expect(scrapesInventory('all')).toBe(true)
+		expect(scrapesInventory('live')).toBe(false)
+		expect(scrapesInventory('historical')).toBe(false)
 	})
 
 	test('startup jobs stay inside the role task list', () => {

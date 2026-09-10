@@ -74,6 +74,11 @@ export function syncsCatalogsOnBoot(mode: WorkerMode): boolean {
 	return mode === 'historical' || mode === 'all'
 }
 
+/** Postgres inventory gauges are global — one scrape target, not × roles. */
+export function scrapesInventory(mode: WorkerMode): boolean {
+	return mode === 'match-processing' || mode === 'all'
+}
+
 export function startupJobsFor(mode: WorkerMode): StartupJob[] {
 	const jobs: StartupJob[] = []
 	const want = new Set(taskNamesFor(mode))
