@@ -26,11 +26,16 @@ commit also sets `matches.phase = parsed` and clears `waiting_for`.
 
 ## Parallelism
 
-`settings.parser_parallelism` (default `5`). The service polls that row
+`settings.parser_parallelism` (default `6`). The service polls that row
 and runs that many in-flight parses. Live-priority `stored` rows go first.
-Each parse holds the decompressed `.dem` plus entity state; 10-wide
-claims do not fit a 4 GiB parser cgroup. 5-wide is the width that still
-fits ~1.5–2 GiB of three-to-five overlapping decodes.
+Each parse still holds the **kept** Source 2 entity world until EOF
+(heroes, player resource, gamerules, team data, items, abilities,
+wards, wearables). Creeps / projectiles / particles are decoded only
+far enough to consume the bitstream, then dropped. High-volume extract
+rows flush to ClickHouse in batches (seed 8 192). Parser CPU quota is
+0.90 (taken from Prometheus / Grafana). 10-wide on 0.70 saturated CFS
+and made wall time worse; 6-wide is the width that still fits the
+4 GiB cgroup without that collapse.
 
 ## Claim
 
@@ -58,9 +63,10 @@ their buffer fills or at end-of-demo. A batch is a few thousand rows
 (seed 8 192), not one INSERT per event. After a successful flush the
 Go slice is reused so extract RAM stays O(batch), not O(match).
 
-The Source 2 entity world still lives in process until EOF — batching
-does not shrink that. It only removes the second peak (60k combat
-structs + 80k actions held until the end).
+Unused entity classes are not kept in `ents` — batching plus that
+discard is what keeps RSS O(kept world + one batch), not O(match).
+Creeps still cost decode CPU (variable-length fields must be read);
+they do not cost a cloned baseline tree.
 
 1. Allocate `parse_run_id`. Decode the stream. Whenever a table hits
    the batch size, `INSERT` those rows with that id and drop the
@@ -84,10 +90,9 @@ is in flight; join
 `FINAL`.
 
 `parser_version` is the extract/schema revision of this binary (starts at
-`1`). Bump it when columns or extract rules change.
-
-`parser_version` is the extract/schema revision of this binary (starts at
-`1`). Bump it when columns or extract rules change.
+`1`). Bump it when columns or extract rules change. **3** after
+`account_id` on every `replay_*` row (and combat attacker/target
+accounts). Re-parse is how old matches get the stamps.
 
 ## What we store
 
@@ -97,10 +102,11 @@ the first schema dropped:
 
 | Table | Added |
 |---|---|
-| every `replay_*` | `parse_run_id` |
+| every `replay_*` | `parse_run_id`, `account_id` (Steam 32-bit; 0 if unknown) |
+| `replay_combat_log` | `attacker_account_id`, `target_account_id` |
 | `replay_actions` | unit / target / ability / position / queued |
 | `replay_pings` | `ping_type`, `target` |
-| `replay_cosmetics` | `account_id` |
+| `replay_cosmetics` | `account_id` (also on the shared prefix) |
 | `replay_alerts` | item/ability/courier/outpost/roshan/… user messages |
 | `replay_intervals` | `hp`, `max_hp`, `mana`, `max_mana`, `respawn` |
 
@@ -109,7 +115,9 @@ not dropped.
 
 Event → table map (every combat type, every stored user message, and
 what we deliberately skip): [`replay-mapping.md`](./replay-mapping.md).
-`parser_version` is **2** after `replay_alerts` and interval vitals.
+`parser_version` is **3** after `account_id` on every `replay_*` row
+(and combat `attacker_account_id` / `target_account_id`). Version 2
+was `replay_alerts` and interval vitals.
 
 ## Out of scope
 

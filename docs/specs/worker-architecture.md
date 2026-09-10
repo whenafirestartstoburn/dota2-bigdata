@@ -123,9 +123,11 @@ Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffM
 
 ### Replay parse
 
-Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 5 — a demo decode
-holds the decompressed replay in memory; 10-wide claims OOM a 4 GiB
-cgroup). Spec: [`replay-parser.md`](./replay-parser.md).
+Separate Go process (`packages/parser`). Polls `match_replays` with `status = stored`, downloads the S3 object, decodes the demo with our Source 2 parser, commits ClickHouse `replay_*` under a `parse_run_id`, then sets `match_replays.status = parsed` **and** `matches.phase = parsed`. Parallelism is `settings.parser_parallelism` (seed 6). A demo decode keeps only the entity classes the extract reads (heroes,
+resource, rules, items, …) and flushes high-volume `replay_*` rows in
+batches. The 4 GiB cgroup held ~1.85 GiB RSS at 10-wide before that.
+Parser CPU is 0.90 (Prometheus / Grafana cut to 0.05 / 0.04). Spec:
+[`replay-parser.md`](./replay-parser.md).
 
 ---
 
@@ -179,9 +181,10 @@ API `POST /api/leagues/process-finished` forces `walk_league_history` for an id 
 ### Resource budget
 
 Sized for `dota2-bigdata` (4 vCPU, 16 GiB). Limits across **all**
-long-running compose services sum to 3.6 CPU and 14720 MiB (≤ 90% of
-the instance) so a simultaneous cap cannot starve the kernel. One-shot
-migrate containers are uncapped.
+long-running compose services sum to 3.69 CPU and 14720 MiB (~92% of
+the instance). Parser took CPU from Prometheus / Grafana so
+six in-flight decodes are less CFS-throttled. One-shot migrate
+containers are uncapped.
 
 Long-running services use `restart: unless-stopped`. An OOM kill or
 crash comes back; `docker stop` / a deliberate compose down does not.
@@ -195,10 +198,10 @@ minutes is released to `stored` so a restarted parser can claim it.
 | worker-live | 0.30 | 768M |
 | worker-historical | 0.30 | 768M |
 | worker-match-processing | 0.80 | 1536M |
-| parser | 0.70 | 4096M |
+| parser | 0.90 | 4096M |
 | api | 0.10 | 384M |
-| prometheus | 0.15 | 768M |
-| grafana | 0.05 | 256M |
+| prometheus | 0.05 | 768M |
+| grafana | 0.04 | 256M |
 
 ### Catalogs (`sync_catalogs`)
 

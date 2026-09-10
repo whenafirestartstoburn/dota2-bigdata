@@ -287,14 +287,15 @@ function appendTicks(
 
 	for (const side of ['radiant', 'dire'] as const) {
 		const players = board?.[side]?.players ?? []
-		for (const item of players) {
+		for (const [index, item] of players.entries()) {
 			if (typeof item !== 'object' || item === null) continue
 			const row = item as Record<string, unknown>
+			const ident = resolveLivePlayerTick(game.players, side, index, row)
 			playerTickRows.push({
 				match_id: String(game.match_id),
 				captured_at: capturedAt,
-				player_slot: asUInt32(row.player_slot),
-				account_id: String(asUInt32(row.account_id)),
+				player_slot: asUInt32(ident.playerSlot),
+				account_id: String(asUInt32(ident.accountId)),
 				hero_id: asNumber(row.hero_id) ?? 0,
 				kills: asUInt32(row.kills),
 				deaths: asUInt32(row.death ?? row.deaths),
@@ -321,6 +322,42 @@ function appendTicks(
 			})
 		}
 	}
+}
+
+/** Scoreboard rows often omit account_id; 0–4 slots are per-side. */
+export function resolveLivePlayerTick(
+	roster: LiveLeagueGame['players'],
+	side: 'radiant' | 'dire',
+	index: number,
+	row: Record<string, unknown>,
+): { playerSlot: number; accountId: number } {
+	const team = side === 'radiant' ? 0 : 1
+	const rawSlot = asNumber(row.player_slot)
+	const playerSlot = slotFromScoreboard(side, index, rawSlot)
+	let accountId = asNumber(row.account_id) ?? 0
+	if (accountId > 0) {
+		return { playerSlot, accountId }
+	}
+	const mates = roster.filter((player) => player.team === team)
+	const heroId = asNumber(row.hero_id) ?? 0
+	const byHero =
+		heroId > 0 ? mates.find((player) => player.hero_id === heroId) : undefined
+	const hit = byHero ?? mates[index]
+	if (hit) accountId = hit.account_id
+	return { playerSlot, accountId }
+}
+
+function slotFromScoreboard(
+	side: 'radiant' | 'dire',
+	index: number,
+	raw: number | null,
+): number {
+	if (raw != null && raw >= 128 && raw <= 132) return raw
+	if (raw != null && raw >= 5 && raw <= 9) return 128 + (raw - 5)
+	if (raw != null && raw >= 0 && raw <= 4) {
+		return side === 'radiant' ? raw : 128 + raw
+	}
+	return valvePlayerSlot(side === 'radiant' ? 0 : 1, index)
 }
 
 function collectDraft(game: LiveLeagueGame) {

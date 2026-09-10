@@ -148,6 +148,17 @@ func getBool(e *replay.Entity, names ...string) bool {
 	return v
 }
 
+func getString(e *replay.Entity, names ...string) string {
+	switch x := getAny(e, names...).(type) {
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return ""
+	}
+}
+
 func rulesPath(suffix string) []string {
 	return []string{
 		"m_pGameRules." + suffix,
@@ -232,19 +243,18 @@ func canonHero(s string) string {
 }
 
 func heroSuffixFromClass(class string) string {
-	const p = "CDOTA_Unit_Hero_"
-	if strings.HasPrefix(class, p) {
-		return canonHero(class[len(p):])
+	if !strings.Contains(strings.ToLower(class), "hero") {
+		return ""
 	}
-	return ""
+	return heroKey(class)
 }
 
 func heroSuffixFromNPC(name string) string {
-	const p = "npc_dota_hero_"
-	if strings.HasPrefix(name, p) {
-		return canonHero(name[len(p):])
+	lower := strings.ToLower(name)
+	if !strings.Contains(lower, "hero") && !strings.HasPrefix(lower, "npc_dota_hero_") {
+		return ""
 	}
-	return ""
+	return heroKey(name)
 }
 
 func boolU8(v bool) uint8 {

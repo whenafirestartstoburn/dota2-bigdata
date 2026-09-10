@@ -7,9 +7,10 @@ This is the catalog of what a parsed `.dem` becomes. The Go extract
 (`packages/parser/internal/parse`) writes only these tables. Re-parse is
 always possible: the file stays in S3.
 
-`parser_version` **2** is the revision that added `replay_alerts` and
-interval vitals. Filter `replay_*.parser_version` / join
-`match_replays.parse_run_id` as the commit spec already said.
+`parser_version` **3** stamps `account_id` on every `replay_*` row.
+Version 2 added `replay_alerts` and interval vitals. Filter
+`replay_*.parser_version` / join `match_replays.parse_run_id` as the
+commit spec already said.
 
 ---
 
@@ -24,6 +25,7 @@ Every `replay_*` row:
 | `time` | Game clock seconds; negative in pregame |
 | `tick` | Demo tick |
 | `slot` | 0–9 (`Int8`); `-1` if unknown. Not Valve 128–132 |
+| `account_id` | Steam 32-bit player; `0` if unknown / not a player |
 | `parser_version` | Extract/schema revision of the binary |
 | `parse_run_id` | Unpublished until `match_replays.parse_run_id` matches |
 

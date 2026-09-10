@@ -46,7 +46,13 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 		clock = int32(m.GetTimestamp() - s.gameStart)
 	}
 	attackerSlot := s.slotForName(attacker)
+	if attackerSlot < 0 {
+		attackerSlot = s.slotForName(source)
+	}
 	targetSlot := s.slotForName(target)
+	if targetSlot < 0 {
+		targetSlot = s.slotForName(targetSource)
+	}
 	slot := attackerSlot
 	if slot < 0 {
 		slot = targetSlot
@@ -60,6 +66,8 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 		Inflictor:                inflictor,
 		AttackerSlot:             attackerSlot,
 		TargetSlot:               targetSlot,
+		AttackerAccountID:        s.accountForSlot(attackerSlot),
+		TargetAccountID:          s.accountForSlot(targetSlot),
 		Value:                    int32(m.GetValue()),
 		ValueName:                valueName,
 		GoldReason:               uint16(m.GetGoldReason()),
@@ -147,7 +155,9 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 	if len(assist) > 3 {
 		row.AssistPlayer3 = uint32(assist[3])
 	}
-	s.out.CombatLog = append(s.out.CombatLog, row)
+	if err := s.addCombat(row); err != nil {
+		return err
+	}
 
 	if typ == "PURCHASE" && clock <= 90 && valueName != "" {
 		s.out.Inventory = append(s.out.Inventory, model.Inventory{
@@ -178,10 +188,10 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 	return nil
 }
 
-func (s *Session) emitIntervals() {
+func (s *Session) emitIntervals() error {
 	pr := s.playerResource
 	if pr == nil {
-		return
+		return nil
 	}
 	clock := s.clock()
 	for i := 0; i < s.playerCount; i++ {
@@ -236,10 +246,11 @@ func (s *Session) emitIntervals() {
 		if hero != nil {
 			pl.heroClass = hero.GetClassName()
 			if suf := heroSuffixFromClass(pl.heroClass); suf != "" {
-				pl.heroNPC = "npc_dota_hero_" + suf
-				s.nameToSlot["npc_dota_hero_"+suf] = pl.slot
-				// also snake_case form
-				s.nameToSlot[npcFromClass(pl.heroClass)] = pl.slot
+				pl.heroNPC = npcFromClass(pl.heroClass)
+				if pl.heroNPC == "npc_dota_hero_" {
+					pl.heroNPC = "npc_dota_hero_" + suf
+				}
+				s.rememberHero(pl)
 			}
 			row.Unit = hero.GetClassName()
 			row.LifeState = uint8(getInt(hero, "m_lifeState"))
@@ -271,8 +282,11 @@ func (s *Session) emitIntervals() {
 		if row.Variant == 0 {
 			row.Variant = variant
 		}
-		s.out.Intervals = append(s.out.Intervals, row)
+		if err := s.addInterval(row); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func npcFromClass(class string) string {
@@ -500,10 +514,13 @@ func (s *Session) trackCosmetic(e *replay.Entity) {
 		return
 	}
 	s.cosmetics[key] = struct{}{}
+	h := s.header(s.clock(), s.slotForAccount(acc))
+	if acc != 0 {
+		h.AccountID = acc
+	}
 	s.out.Cosmetics = append(s.out.Cosmetics, model.Cosmetic{
-		Header:    s.header(s.clock(), -1),
-		ItemID:    item,
-		AccountID: acc,
+		Header: h,
+		ItemID: item,
 	})
 }
 
@@ -535,7 +552,7 @@ func (s *Session) onOrder(m *valve.CDOTAUserMsg_SpectatorPlayerUnitOrders) error
 	if units := m.GetUnits(); len(units) > 0 {
 		unit = units[0]
 	}
-	s.out.Actions = append(s.out.Actions, model.Action{
+	return s.addAction(model.Action{
 		Header:      s.header(s.clock(), slot),
 		OrderType:   uint16(m.GetOrderType()),
 		UnitIndex:   unit,
@@ -546,7 +563,6 @@ func (s *Session) onOrder(m *valve.CDOTAUserMsg_SpectatorPlayerUnitOrders) error
 		PosZ:        z,
 		Queued:      boolU8(m.GetQueue()),
 	})
-	return nil
 }
 
 func (s *Session) onLocationPing(m *valve.CDOTAUserMsg_LocationPing) error {
@@ -627,8 +643,26 @@ func (s *Session) onChatWheel(m *valve.CDOTAUserMsg_ChatWheel) error {
 }
 
 func (s *Session) onSayText2(m *valve.CUserMessageSayText2) error {
+	slot := int8(-1)
+	if name := m.GetParam1(); name != "" {
+		if found, ok := s.nameToSlot[name]; ok {
+			slot = found
+		} else {
+			slot = s.slotForName(name)
+		}
+	}
+	if slot < 0 {
+		if idx := int32(m.GetEntityindex()); idx > 0 {
+			if e := s.parser.FindEntity(idx); e != nil && !e.Discarded() {
+				slot = s.slotForName(e.GetClassName())
+				if slot < 0 {
+					slot = s.slotForName(npcFromClass(e.GetClassName()))
+				}
+			}
+		}
+	}
 	s.out.Chat = append(s.out.Chat, model.Chat{
-		Header: s.header(s.clock(), -1),
+		Header: s.header(s.clock(), slot),
 		Kind:   "chat",
 		Key:    m.GetMessagename(),
 		Unit:   m.GetParam1(),

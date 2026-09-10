@@ -115,9 +115,9 @@ export async function updateLeagueHistoryCursor(
 				${patch.exhausted ?? null}::boolean,
 				history_exhausted
 			),
-			last_match_seq_num = COALESCE(
-				${patch.lastMatchSeqNum ?? null}::bigint,
-				last_match_seq_num
+			last_match_seq_num = GREATEST(
+				last_match_seq_num,
+				${patch.lastMatchSeqNum ?? null}::bigint
 			),
 			history_checked_at = now(),
 			updated_at = now()

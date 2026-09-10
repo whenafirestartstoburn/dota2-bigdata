@@ -1,3 +1,11 @@
+/** Universe 1 + individual account. Steam64 = this + Steam32. */
+export const STEAM64_BASE = 76561197960265728n
+
+export function steamId64FromAccount(accountId: number): string | null {
+	if (!Number.isSafeInteger(accountId) || accountId <= 0) return null
+	return (STEAM64_BASE + BigInt(accountId)).toString()
+}
+
 /** Signed int64 exclusive bound; `2**63` is exact in IEEE-754. */
 const INT8_ABS_LIMIT = 2 ** 63
 

@@ -62,7 +62,7 @@ Valve `GetLeagueInfoList` plus our lifecycle.
 | `start_timestamp`, `end_timestamp`, `most_recent_activity` | Unix seconds from Valve |
 | `valve_status` | Publication flag (5 ≈ concluded), **not** “games are being played” |
 | `status` | `UPCOMING` / `LIVE` / `FINISHED` — **derived**, see workers spec |
-| `last_match_seq_num` | Highest `match_seq_num` stored for this league |
+| `last_match_seq_num` | Highest `match_seq_num` from GetMatchHistory pages (and backfill `max(matches.match_seq_num)`) |
 | `history_head_match_id` | Newest listed `match_id` (detect new games on the next run) |
 | `history_tail_match_id` | `start_at_match_id` for walking **older** pages |
 | `history_exhausted` | Older pagination returned nothing |
@@ -85,7 +85,7 @@ Valve `series_id` is often 0 on live games. Analysts still need a grouping key.
 | `series_type` | 0 none, 1 Bo3, 2 Bo5, … |
 | `radiant_wins`, `dire_wins` | Last observed |
 | `first_match_id`, `last_match_id` | |
-| `started_at`, `ended_at` | From match `start_time` |
+| `started_at`, `ended_at` | `started_at` from first match `start_time`. `ended_at` when a Bo3/Bo5 side reaches 2/3 wins (live `radiant_series_wins`). Type 0 stays open so the 8-hour synthetic grouping still works. |
 
 Synthetic id: when Valve id is 0, hash `(league_id, least(t1,t2), greatest(t1,t2), first_match_id)` into a bigint in a reserved high range so it never collides with Valve ids. Matches keep `series_id` FK.
 
@@ -124,7 +124,6 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `radiant_team_name`, `dire_team_name` | snapshot |
 | `radiant_team_complete`, `dire_team_complete` | details |
 | `radiant_captain`, `dire_captain` | details |
-| `positive_votes`, `negative_votes` | details (keep; cheap) |
 | `patch` | derived from `start_time` vs `patches` |
 | `stream_delay_s` | live |
 | `phase` | `discovered` → `live` → `awaiting_history` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` → `parsed` / `replay_unavailable` / `failed` / `not_started`. Never rewrite a later phase backwards except a live flap (`not_started`, `awaiting_history`, `awaiting_details`, `failed` go back to `live` if either live feed lists the id again — including an unchanged GetLiveLeagueGames hash that only calls `noteLiveFeedSeen`). |
@@ -140,7 +139,7 @@ One row per game. Denormalize **team names at game time** (orgs rename). Do not 
 | `last_realtime_at` | last successful GetRealtimeStats |
 | `finished_at` | live disappear **after** `live_duration_max > 0`, else `to_timestamp(start_time + duration)`; stays null for `not_started` |
 | `replay_available_at` | live: `finished_at + settings.replay_live_delay_ms` (seed 30 s, first try); historical: `now()`. 404 retries: 1 m, 1 m, 3 m × 20, 1 h × 24, then `replay_unavailable`. |
-| `last_error`, `last_error_kind`, `last_error_at`, `attempts`, `next_attempt_at` | 8.1: kind is `network` / `rate_limit` / `auth` / `not_ready` / `unavailable` / `history_timeout` / `not_started` / `other` |
+| `last_error`, `last_error_kind`, `last_error_at`, `attempts` | 8.1: kind is `network` / `rate_limit` / `auth` / `not_ready` / `unavailable` / `history_timeout` / `not_started` / `other`. Replay retries use `match_replays.next_attempt_at`. |
 | `created_at`, `updated_at` | |
 
 Indexes: `(league_id, start_time DESC)`, `(phase)`, `(match_seq_num)`, `(source, phase)`, partial `(replay_available_at)` where phase is awaiting replay.
@@ -157,9 +156,9 @@ Box score from **GetMatchHistoryBySequenceNum / GC `CMsgDOTAMatch.Player`**, ove
 
 **Damage:** `hero_damage`, `tower_damage`, `hero_healing`, `scaled_hero_damage`, `scaled_tower_damage`, `scaled_hero_healing`, `scaled_kills` / `scaled_deaths` / `scaled_assists` (GC). Per-type pre/post reduction is child table `match_player_damage_breakdown`.
 
-**Items:** `item_0`…`item_5`, `item_6`…`item_10` + `item_10_lvl` (GC extra slots), `item_neutral`, `item_neutral2`, `backpack_0`…`backpack_3`, `aghanims_scepter`, `aghanims_shard`, `moonshard`. Valve `-1` (empty) is stored as `0`.
+**Items:** `item_0`…`item_5`, `item_6`…`item_10` + `item_10_lvl` (GC extra slots), `item_neutral`, `item_neutral2`, `backpack_0`…`backpack_2`, `aghanims_scepter`, `aghanims_shard`, `moonshard`. Valve `-1` (empty) is stored as `0`.
 
-**Other details:** `ability_upgrades integer[]` plus timed rows in `match_player_ability_upgrades`; `leaver_status`, `party_id` (bigint), `party_size`, `hero_pick_order`, `hero_was_randomed`, `lane_selection_flags`, `support_ability_value`, `disable_duration`; `additional_units` — child table `match_player_units`
+**Other details:** `ability_upgrades integer[]` plus timed rows in `match_player_ability_upgrades`; `leaver_status`, `party_id` (bigint), `hero_pick_order`, `hero_was_randomed`, `lane_selection_flags`, `support_ability_value`, `disable_duration`; `additional_units` — child table `match_player_units`
 
 **Parse summaries** (filled after replay, still one row per player): `lane`, `lane_role`, `is_roaming`, `stuns`, `teamfight_participation`, `towers_killed`, `roshans_killed`, `observers_placed`, `sentries_placed`, `camps_stacked`, `creeps_stacked`, `rune_pickups`, `firstblood_claimed`
 
@@ -190,7 +189,7 @@ Unique `(match_id, seq)`. GC broadcaster channels (country, language, caster acc
 | Column | Notes |
 |---|---|
 | `account_id` unique | 32-bit Steam account id |
-| `steam_id` | 64-bit, optional |
+| `steam_id` | Steam64 text: `76561197960265728 + account_id` |
 | `persona_name` | last seen |
 | `is_pro` | true once seen in a league match |
 | `current_team_id` | last team in a stored match (best-effort) |
@@ -233,7 +232,7 @@ Unique `(match_id, ord)`.
 | `is_pick` | false = ban |
 | `hero_id` | |
 | `team` | 0 radiant, 1 dire |
-| `player_slot` | if known (replay draft timings) |
+| `player_slot` | Valve slot (0–4 / 128–132). Replay draft often has `-1`; filled from `match_players.hero_id` on picks. |
 | `clock` | seconds into draft, from replay when parsed |
 
 Live GetLiveLeagueGames only has unordered per-side lists; write them with a local `ord`, then **replace** the rows when details/replay have the real order.
@@ -357,6 +356,11 @@ Same grain, one row per player on the scoreboard.
 
 `match_id, captured_at, player_slot` + `account_id, hero_id, kills, deaths, assists, last_hits, denies, gold, net_worth, level, gold_per_min, xp_per_min, x, y` (`position_x` / `position_y` from GetLiveLeagueGames), `item0`…`item8` (0–5 inventory; 6–8 backpack from GetRealtimeStats), `ultimate_state`, `ultimate_cooldown`, `respawn_timer`.
 
+`player_slot` is Valve 0–4 / 128–132 (same as `match_players`). The
+scoreboard often omits `account_id`; resolve it from the top-level
+`players[]` roster by side + `hero_id` (else per-side index). A 0–4
+scoreboard slot on dire is `128 + slot`, not radiant slot 0.
+
 `ORDER BY (match_id, captured_at, player_slot)`
 
 GetLiveLeagueGames fills this table on its own. GetTopLiveGame + GetRealtimeStats add a second `source` and extra fields; they are not required for a live row to exist.
@@ -373,9 +377,16 @@ start_time  DateTime('UTC')          -- match start, for partition
 time        Int32    Codec(Delta, ZSTD(1))   -- game clock; negative in pregame
 tick        UInt32   Codec(Delta, ZSTD(1))
 slot        Int8                     -- 0-9 (Int8 cannot hold Valve 128-132); -1 if unknown
+account_id  UInt32   Codec(Delta, ZSTD(1))   -- Steam 32-bit; 0 if unknown / not a player
 parser_version  UInt16
 parse_run_id    UInt64   -- unpublished until match_replays.parse_run_id matches
 ```
+
+`account_id` is the player entity (`players.account_id`). Do not store
+Postgres `players.id`. Valve's user-message `player_id` (0–23 resource
+index) is extract-time only. `slot` 0–4 radiant / 5–9 dire; join
+`match_players` with `player_slot = if(slot < 5, slot, slot + 123)`.
+Creeps, buildings, and global chat stay `account_id = 0`, `slot = -1`.
 
 `PARTITION BY toYYYYMM(start_time) ORDER BY (match_id, time, tick)`
 
@@ -412,6 +423,8 @@ Bulk of parse volume (~5×10⁴–2×10⁵ rows/match).
 | `type` LowCardinality(String) | `DAMAGE`, `HEAL`, `DEATH`, `MODIFIER_ADD`, `MODIFIER_REMOVE`, `PURCHASE`, `GOLD`, `XP`, `BUYBACK`, `GAME_STATE`, `FIRST_BLOOD`, `TEAM_BUILDING_KILL`, `ITEM`, `ABILITY`, … (strip `DOTA_COMBATLOG_` prefix at insert) |
 | `attacker`, `target`, `inflictor`, `sourcename`, `targetsourcename` String Codec(ZSTD(1)) | npc names |
 | `attacker_slot`, `target_slot` Int8 | |
+| `account_id` UInt32 | primary actor (attacker, else target); 0 if neither is a hero |
+| `attacker_account_id`, `target_account_id` UInt32 | 0 if that side is not a player hero |
 | `value` Int32 Codec(T64, ZSTD(1)) | damage / gold / xp / item id |
 | `value_name` LowCardinality(String) | item name on `PURCHASE` |
 | `gold_reason`, `xp_reason` UInt16 | |

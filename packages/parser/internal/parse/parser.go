@@ -31,6 +31,8 @@ type player struct {
 	slot       int8  // 0-9 for ClickHouse Int8
 	valveSlot  int32 // 0-4 radiant / 128-132 dire
 	steamID    uint64
+	accountID  uint32
+	name       string
 	heroID     int32
 	heroClass  string
 	heroNPC    string
@@ -53,7 +55,8 @@ type Session struct {
 	runID  uint64
 	parser *replay.Session
 
-	out *model.Result
+	out  *model.Result
+	sink Sink
 
 	tickInterval float32
 	gameStart    float32
@@ -71,7 +74,9 @@ type Session struct {
 	playerCount    int
 	playersReady   bool
 	nameToSlot     map[string]int8
+	heroKeyToSlot  map[string]int8
 	idToSlot       map[int]int8
+	accounts       [10]uint32
 
 	draftSeen   [48]int32
 	draftOrd    uint16
@@ -99,11 +104,16 @@ func newRunID() uint64 {
 
 // ParseReader consumes a (possibly compressed) demo stream.
 func ParseReader(ctx context.Context, job Job, r io.Reader) (*model.Result, error) {
+	return ParseReaderWithSink(ctx, job, r, nil)
+}
+
+// ParseReaderWithSink is ParseReader plus mid-decode ClickHouse flushes.
+func ParseReaderWithSink(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.Result, error) {
 	stream, err := wrapDemo(r)
 	if err != nil {
 		return nil, err
 	}
-	return parseStream(ctx, job, stream)
+	return parseStream(ctx, job, stream, sink)
 }
 
 // ParseFile opens path (.dem / .dem.bz2 / .dem.zst) and parses it.
@@ -113,10 +123,10 @@ func ParseFile(ctx context.Context, job Job, path string) (*model.Result, error)
 		return nil, err
 	}
 	defer closer.Close()
-	return parseStream(ctx, job, r)
+	return parseStream(ctx, job, r, nil)
 }
 
-func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, error) {
+func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.Result, error) {
 	if job.StartTime.IsZero() {
 		job.StartTime = time.Unix(0, 0).UTC()
 	}
@@ -124,25 +134,31 @@ func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, erro
 	if err != nil {
 		return nil, fmt.Errorf("demo: %w", err)
 	}
+	combatCap, intervalCap, actionCap := 80_000, 20_000, 40_000
+	if sink != nil {
+		combatCap, intervalCap, actionCap = flushBatch, flushBatch, flushBatch
+	}
 	s := &Session{
-		job:          job,
-		runID:        newRunID(),
-		parser:       p,
-		tickInterval: 1.0 / 30.0,
-		nameToSlot:   make(map[string]int8, 32),
-		idToSlot:     make(map[int]int8, 24),
-		abilitySeen:  make(map[string]uint8, 128),
-		wards:        make(map[int32]*wardWatch, 64),
-		cosmetics:    make(map[uint64]struct{}, 64),
-		laneUntil:    600,
+		job:           job,
+		runID:         newRunID(),
+		parser:        p,
+		sink:          sink,
+		tickInterval:  1.0 / 30.0,
+		nameToSlot:    make(map[string]int8, 32),
+		heroKeyToSlot: make(map[string]int8, 16),
+		idToSlot:      make(map[int]int8, 24),
+		abilitySeen:   make(map[string]uint8, 128),
+		wards:         make(map[int32]*wardWatch, 64),
+		cosmetics:     make(map[uint64]struct{}, 64),
+		laneUntil:     600,
 		out: &model.Result{
 			MatchID:       job.MatchID,
 			StartTime:     job.StartTime,
 			ParseRunID:    0,
 			ParserVersion: version.Schema,
-			CombatLog:     make([]model.CombatLog, 0, 80_000),
-			Intervals:     make([]model.Interval, 0, 20_000),
-			Actions:       make([]model.Action, 0, 40_000),
+			CombatLog:     make([]model.CombatLog, 0, combatCap),
+			Intervals:     make([]model.Interval, 0, intervalCap),
+			Actions:       make([]model.Action, 0, actionCap),
 			Pings:         make([]model.Ping, 0, 2_000),
 			Wards:         make([]model.Ward, 0, 128),
 			Chat:          make([]model.Chat, 0, 256),
@@ -161,9 +177,9 @@ func parseStream(ctx context.Context, job Job, r io.Reader) (*model.Result, erro
 	s.wire()
 	if err := p.Start(); err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return s.out, ctx.Err()
 		}
-		return nil, fmt.Errorf("parse match %d build %d: %w", job.MatchID, p.GameBuild, err)
+		return s.out, fmt.Errorf("parse match %d build %d: %w", job.MatchID, p.GameBuild, err)
 	}
 	s.finishSummaries()
 	return s.out, nil
@@ -176,9 +192,17 @@ func (s *Session) header(clock int32, slot int8) model.Header {
 		Time:          clock,
 		Tick:          uint32(s.parser.Tick),
 		Slot:          slot,
+		AccountID:     s.accountForSlot(slot),
 		ParserVersion: version.Schema,
 		ParseRunID:    s.runID,
 	}
+}
+
+func (s *Session) accountForSlot(slot int8) uint32 {
+	if slot < 0 || int(slot) >= len(s.accounts) {
+		return 0
+	}
+	return s.accounts[slot]
 }
 
 func (s *Session) clock() int32 {
@@ -198,8 +222,7 @@ func (s *Session) wire() {
 	}
 	s.parser.OnEntity(s.onEntity)
 	s.parser.Hooks.PacketEntities = func(_ *valve.CSVCMsg_PacketEntities) error {
-		s.tickWorld()
-		return nil
+		return s.tickWorld()
 	}
 	s.parser.Hooks.CombatLog = s.onCombat
 	s.parser.Hooks.UnitOrders = s.onOrder
@@ -220,7 +243,7 @@ func (s *Session) wire() {
 }
 
 func (s *Session) onEntity(e *replay.Entity, op replay.Op) error {
-	if e == nil {
+	if e == nil || e.Discarded() {
 		return nil
 	}
 	class := e.GetClassName()
@@ -256,14 +279,17 @@ func (s *Session) onEntity(e *replay.Entity, op replay.Op) error {
 	return nil
 }
 
-func (s *Session) tickWorld() {
+func (s *Session) tickWorld() error {
 	s.updateClock()
 	s.discoverPlayers()
 	s.pollDraft()
 	if s.playersReady && s.intervalInit && s.gameTime+0.001 >= s.nextInterval {
-		s.emitIntervals()
+		if err := s.emitIntervals(); err != nil {
+			return err
+		}
 		s.nextInterval += intervalSeconds
 	}
+	return nil
 }
 
 func (s *Session) updateClock() {
@@ -316,43 +342,136 @@ func (s *Session) updateClock() {
 }
 
 func (s *Session) discoverPlayers() {
-	if s.playersReady || s.playerResource == nil {
+	if s.playerResource == nil {
 		return
 	}
-	added := 0
-	waiting := false
-	for i := 0; i < 24 && added < 10; i++ {
+	if !s.playersReady {
+		s.tryBindPlayers()
+	}
+	s.refreshPlayerIds()
+}
+
+func (s *Session) tryBindPlayers() {
+	type cand struct {
+		index    int
+		team     int32
+		teamSlot int32
+		steam    uint64
+		name     string
+	}
+	var found []cand
+	for i := 0; i < 24; i++ {
 		team := getInt(s.playerResource, vecPath("m_vecPlayerData", i, "m_iPlayerTeam"))
 		if team == 14 {
-			waiting = true
-			break
+			return
 		}
 		if team != 2 && team != 3 {
 			continue
 		}
 		teamSlot := getInt(s.playerResource, vecPath("m_vecPlayerTeamData", i, "m_iTeamSlot"))
-		steam := getUint64(s.playerResource, vecPath("m_vecPlayerData", i, "m_iPlayerSteamID"))
-		valve := int32(teamSlot)
-		if team == 3 {
-			valve = 128 + teamSlot
-		}
-		pl := &player{
-			index:     i,
-			team:      team,
-			teamSlot:  teamSlot,
-			slot:      int8(added),
-			valveSlot: valve,
-			steamID:   steam,
-		}
-		s.players[added] = pl
-		s.idToSlot[i] = pl.slot
-		added++
+		found = append(found, cand{
+			index:    i,
+			team:     team,
+			teamSlot: teamSlot,
+			steam:    getUint64(s.playerResource, vecPath("m_vecPlayerData", i, "m_iPlayerSteamID")),
+			name: getString(
+				s.playerResource,
+				vecPath("m_vecPlayerData", i, "m_iszPlayerName"),
+				vecPath("m_vecPlayerData", i, "m_iszPlayerNameInternal"),
+			),
+		})
 	}
-	if waiting || added < 10 {
+	var rad, dire []cand
+	for _, c := range found {
+		if c.team == 2 {
+			rad = append(rad, c)
+		} else {
+			dire = append(dire, c)
+		}
+	}
+	if len(rad) < 5 || len(dire) < 5 {
 		return
 	}
-	s.playerCount = added
+	rad = rad[:5]
+	dire = dire[:5]
+	type bound struct {
+		cand
+		slot  int8
+		valve int32
+	}
+	out := make([]bound, 0, 10)
+	var seen [10]bool
+	unique := true
+	for _, c := range append(append([]cand{}, rad...), dire...) {
+		slot, _, ok := replaySlot(c.team, c.teamSlot)
+		if !ok || seen[slot] {
+			unique = false
+			break
+		}
+		seen[slot] = true
+	}
+	push := func(c cand, fallback int8, fallbackValve int32) {
+		slot, valve := fallback, fallbackValve
+		if unique {
+			if s, v, ok := replaySlot(c.team, c.teamSlot); ok {
+				slot, valve = s, v
+			}
+		}
+		out = append(out, bound{cand: c, slot: slot, valve: valve})
+	}
+	for i, c := range rad {
+		push(c, int8(i), int32(i))
+	}
+	for i, c := range dire {
+		push(c, int8(5+i), 128+int32(i))
+	}
+	for _, c := range out {
+		pl := &player{
+			index:     c.index,
+			team:      c.team,
+			teamSlot:  c.teamSlot,
+			slot:      c.slot,
+			valveSlot: c.valve,
+			steamID:   c.steam,
+			accountID: AccountFromSteam(c.steam),
+			name:      c.name,
+		}
+		s.players[c.slot] = pl
+		s.idToSlot[c.index] = c.slot
+		if c.name != "" {
+			s.nameToSlot[c.name] = c.slot
+		}
+		if pl.accountID != 0 {
+			s.accounts[c.slot] = pl.accountID
+		}
+	}
+	s.playerCount = 10
 	s.playersReady = true
+}
+
+func (s *Session) refreshPlayerIds() {
+	if !s.playersReady || s.playerResource == nil {
+		return
+	}
+	for i := 0; i < s.playerCount; i++ {
+		pl := s.players[i]
+		if pl == nil {
+			continue
+		}
+		steam := getUint64(s.playerResource, vecPath("m_vecPlayerData", pl.index, "m_iPlayerSteamID"))
+		if steam != 0 {
+			pl.steamID = steam
+			pl.accountID = AccountFromSteam(steam)
+			s.accounts[pl.slot] = pl.accountID
+		}
+		if pl.name == "" {
+			name := getString(s.playerResource, vecPath("m_vecPlayerData", pl.index, "m_iszPlayerName"))
+			if name != "" {
+				pl.name = name
+				s.nameToSlot[name] = pl.slot
+			}
+		}
+	}
 }
 
 func (s *Session) playerByIndex(i int) *player {
@@ -371,18 +490,21 @@ func (s *Session) slotForName(name string) int8 {
 	if slot, ok := s.nameToSlot[name]; ok {
 		return slot
 	}
-	want := heroSuffixFromNPC(name)
-	if want == "" {
+	key := heroKey(name)
+	if key == "" {
 		return -1
+	}
+	if slot, ok := s.heroKeyToSlot[key]; ok {
+		return slot
 	}
 	for _, pl := range s.players[:s.playerCount] {
 		if pl == nil {
 			continue
 		}
-		if pl.heroNPC != "" && heroSuffixFromNPC(pl.heroNPC) == want {
+		if pl.heroNPC != "" && heroKey(pl.heroNPC) == key {
 			return pl.slot
 		}
-		if pl.heroClass != "" && heroSuffixFromClass(pl.heroClass) == want {
+		if pl.heroClass != "" && heroKey(pl.heroClass) == key {
 			return pl.slot
 		}
 	}
@@ -396,16 +518,42 @@ func (s *Session) slotForPlayerID(id int32) int8 {
 	if slot, ok := s.idToSlot[int(id)]; ok {
 		return slot
 	}
-	if int(id) < s.playerCount {
+	if id <= 9 && s.playersReady {
 		if pl := s.players[id]; pl != nil {
 			return pl.slot
 		}
 	}
-	// fallback: 0-4 radiant, 5-9 dire
-	if id <= 9 {
-		return int8(id)
+	return -1
+}
+
+func (s *Session) slotForAccount(acc uint32) int8 {
+	if acc == 0 {
+		return -1
+	}
+	for i := 0; i < s.playerCount; i++ {
+		if pl := s.players[i]; pl != nil && pl.accountID == acc {
+			return pl.slot
+		}
 	}
 	return -1
+}
+
+func (s *Session) rememberHero(pl *player) {
+	if pl == nil {
+		return
+	}
+	if pl.heroClass != "" {
+		if key := heroKey(pl.heroClass); key != "" {
+			s.heroKeyToSlot[key] = pl.slot
+			s.nameToSlot[pl.heroClass] = pl.slot
+		}
+	}
+	if pl.heroNPC != "" {
+		if key := heroKey(pl.heroNPC); key != "" {
+			s.heroKeyToSlot[key] = pl.slot
+			s.nameToSlot[pl.heroNPC] = pl.slot
+		}
+	}
 }
 
 func (s *Session) dataTeam(team int32) *replay.Entity {

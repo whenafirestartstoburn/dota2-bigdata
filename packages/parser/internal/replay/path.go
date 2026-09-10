@@ -368,6 +368,19 @@ func readPaths(r *bits, dst []cursor) []cursor {
 }
 
 func applyPaths(r *bits, l *layout, t *tree, buf []cursor) []cursor {
+	return walkPaths(r, l, buf, func(c *cursor, dec decoder) {
+		t.set(c, dec(r))
+	})
+}
+
+// skipPaths consumes field updates without keeping the values.
+func skipPaths(r *bits, l *layout, buf []cursor) []cursor {
+	return walkPaths(r, l, buf, func(_ *cursor, dec decoder) {
+		_ = dec(r)
+	})
+}
+
+func walkPaths(r *bits, l *layout, buf []cursor, each func(*cursor, decoder)) []cursor {
 	buf = readPaths(r, buf[:0])
 	for i := range buf {
 		c := &buf[i]
@@ -381,7 +394,7 @@ func applyPaths(r *bits, l *layout, t *tree, buf []cursor) []cursor {
 					die("%v (%s.%s)", rec, l.name, field)
 				}
 			}()
-			t.set(c, l.decoderAt(c, 0)(r))
+			each(c, l.decoderAt(c, 0))
 		}()
 	}
 	return buf

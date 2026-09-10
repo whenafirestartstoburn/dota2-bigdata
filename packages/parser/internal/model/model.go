@@ -9,6 +9,7 @@ type Header struct {
 	Time          int32     `ch:"time"`
 	Tick          uint32    `ch:"tick"`
 	Slot          int8      `ch:"slot"`
+	AccountID     uint32    `ch:"account_id"`
 	ParserVersion uint16    `ch:"parser_version"`
 	ParseRunID    uint64    `ch:"parse_run_id"`
 }
@@ -21,6 +22,8 @@ type CombatLog struct {
 	Inflictor                string  `ch:"inflictor"`
 	AttackerSlot             int8    `ch:"attacker_slot"`
 	TargetSlot               int8    `ch:"target_slot"`
+	AttackerAccountID        uint32  `ch:"attacker_account_id"`
+	TargetAccountID          uint32  `ch:"target_account_id"`
 	Value                    int32   `ch:"value"`
 	ValueName                string  `ch:"value_name"`
 	GoldReason               uint16  `ch:"gold_reason"`
@@ -230,8 +233,7 @@ type Neutral struct {
 
 type Cosmetic struct {
 	Header
-	ItemID    uint32 `ch:"item_id"`
-	AccountID uint32 `ch:"account_id"`
+	ItemID uint32 `ch:"item_id"`
 }
 
 type Alert struct {
@@ -251,8 +253,8 @@ type Epilogue struct {
 	Value string `ch:"value"`
 }
 
-// Result is the full in-memory parse of one replay. Nothing is written
-// until this exists and ClickHouse insert of every table succeeds.
+// Result is one parse attempt. High-volume slices may already have been
+// flushed to ClickHouse when a Sink is attached; leftovers stay here.
 type Result struct {
 	MatchID       uint64
 	StartTime     time.Time

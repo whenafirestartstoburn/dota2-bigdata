@@ -53,8 +53,6 @@ export type MatchFacts = {
 	direTeamComplete: number | null
 	radiantCaptain: number | null
 	direCaptain: number | null
-	positiveVotes: number | null
-	negativeVotes: number | null
 	matchFlags: number | null
 	matchOutcome: number | null
 	gameBalance: number | null
@@ -154,7 +152,6 @@ export type PlayerFacts = {
 	backpack0: number | null
 	backpack1: number | null
 	backpack2: number | null
-	backpack3: number | null
 	selectedFacet: number | null
 	aghanimsScepter: number | null
 	aghanimsShard: number | null
@@ -163,7 +160,6 @@ export type PlayerFacts = {
 	abilityUpgradeRows: AbilityUpgradeFacts[]
 	leaverStatus: number | null
 	partyId: number | null
-	partySize: number | null
 	claimedFarmGold: number | null
 	supportGold: number | null
 	claimedDenies: number | null
@@ -280,8 +276,6 @@ export function extractMatchFacts(raw: Record<string, unknown>): MatchFacts {
 		direTeamComplete: asComplete(raw.dire_team_complete),
 		radiantCaptain: asNumber(raw.radiant_captain),
 		direCaptain: asNumber(raw.dire_captain),
-		positiveVotes: asNumber(raw.positive_votes),
-		negativeVotes: asNumber(raw.negative_votes),
 		matchFlags: asNumber(raw.match_flags) ?? asNumber(raw.flags),
 		matchOutcome: asNumber(raw.match_outcome),
 		gameBalance: asNumber(raw.game_balance),
@@ -547,7 +541,6 @@ function extractPlayer(
 		backpack0: asItemId(row.backpack_0),
 		backpack1: asItemId(row.backpack_1),
 		backpack2: asItemId(row.backpack_2),
-		backpack3: asItemId(row.backpack_3),
 		selectedFacet: asNumber(row.selected_facet) ?? asNumber(row.hero_variant),
 		aghanimsScepter: asNumber(row.aghanims_scepter),
 		aghanimsShard: asNumber(row.aghanims_shard),
@@ -556,7 +549,6 @@ function extractPlayer(
 		abilityUpgradeRows,
 		leaverStatus: asNumber(row.leaver_status),
 		partyId: asNumber(row.party_id),
-		partySize: asNumber(row.party_size),
 		claimedFarmGold: asNumber(row.claimed_farm_gold),
 		supportGold: asNumber(row.support_gold),
 		claimedDenies: asNumber(row.claimed_denies),
@@ -632,7 +624,6 @@ export function partialPlayerFacts(
 		backpack0: null,
 		backpack1: null,
 		backpack2: null,
-		backpack3: null,
 		selectedFacet: null,
 		aghanimsScepter: null,
 		aghanimsShard: null,
@@ -641,7 +632,6 @@ export function partialPlayerFacts(
 		abilityUpgradeRows: [],
 		leaverStatus: null,
 		partyId: null,
-		partySize: null,
 		claimedFarmGold: null,
 		supportGold: null,
 		claimedDenies: null,

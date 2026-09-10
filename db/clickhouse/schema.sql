@@ -86,7 +86,8 @@ CREATE TABLE dota.replay_ability_levels
     `ability_id` String CODEC(ZSTD(1)),
     `ability_level` UInt8,
     `target` String CODEC(ZSTD(1)),
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -109,7 +110,8 @@ CREATE TABLE dota.replay_actions
     `pos_x` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `pos_y` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `pos_z` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
-    `queued` UInt8 DEFAULT 0
+    `queued` UInt8 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -131,7 +133,8 @@ CREATE TABLE dota.replay_alerts
     `value2` Int32 DEFAULT 0,
     `x` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `y` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
-    `key` String DEFAULT '' CODEC(ZSTD(1))
+    `key` String DEFAULT '' CODEC(ZSTD(1)),
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -153,7 +156,8 @@ CREATE TABLE dota.replay_announcements
     `player3` Int16 DEFAULT -1,
     `value2` UInt32 DEFAULT 0,
     `value3` UInt32 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -172,7 +176,8 @@ CREATE TABLE dota.replay_chat
     `key` String CODEC(ZSTD(1)),
     `unit` String DEFAULT '' CODEC(ZSTD(1)),
     `channel` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -274,7 +279,10 @@ CREATE TABLE dota.replay_combat_log
     `tracked_stat_id` UInt32 DEFAULT 0,
     `modifier_purged_duration` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `heal_from_regen` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0,
+    `attacker_account_id` UInt32 DEFAULT 0,
+    `target_account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -313,7 +321,8 @@ CREATE TABLE dota.replay_draft
     `clock` Int32,
     `extra_time_radiant` Int32 DEFAULT 0,
     `extra_time_dire` Int32 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -330,7 +339,8 @@ CREATE TABLE dota.replay_epilogue
     `parser_version` UInt16,
     `key` LowCardinality(String),
     `value` String CODEC(ZSTD(3)),
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -381,7 +391,8 @@ CREATE TABLE dota.replay_intervals
     `max_hp` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
     `mana` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
     `max_mana` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
-    `respawn` UInt16 DEFAULT 0
+    `respawn` UInt16 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -400,7 +411,8 @@ CREATE TABLE dota.replay_inventory
     `item_slot` Int8,
     `charges` UInt16,
     `secondary_charges` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -420,7 +432,8 @@ CREATE TABLE dota.replay_neutrals
     `value` Int32,
     `is_neutral_active_drop` UInt8 DEFAULT 0,
     `is_neutral_passive_drop` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -439,7 +452,8 @@ CREATE TABLE dota.replay_pings
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
     `parse_run_id` UInt64 DEFAULT 0,
     `ping_type` UInt16 DEFAULT 0,
-    `target` Int32 DEFAULT -1
+    `target` Int32 DEFAULT -1,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -460,7 +474,8 @@ CREATE TABLE dota.replay_wards
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
     `z` Float32 CODEC(Gorilla, ZSTD(1)),
     `ehandle` UInt32,
-    `parse_run_id` UInt64 DEFAULT 0
+    `parse_run_id` UInt64 DEFAULT 0,
+    `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
@@ -489,4 +504,5 @@ INSERT INTO dota.schema_migrations (version) VALUES
     ('20260830000002'),
     ('20260905220000'),
     ('20260905233000'),
-    ('20260906010000');
+    ('20260906010000'),
+    ('20260911010000');

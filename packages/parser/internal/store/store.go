@@ -74,10 +74,10 @@ func (s *Store) Parallelism(ctx context.Context) (int, error) {
 	var raw string
 	err := s.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = 'parser_parallelism'`).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 5, nil
+		return 6, nil
 	}
 	if err != nil {
-		return 5, err
+		return 6, err
 	}
 	n := 0
 	for _, c := range raw {
@@ -87,7 +87,7 @@ func (s *Store) Parallelism(ctx context.Context) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	if n < 1 {
-		return 5, nil
+		return 6, nil
 	}
 	return n, nil
 }
@@ -208,6 +208,19 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 			`, res.MatchID, int(d.Ord), d.IsPick == 1, d.HeroID, int16(d.Team), slotArg, clock); err != nil {
 				return fmt.Errorf("match_draft: %w", err)
 			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE match_draft AS d
+			SET player_slot = p.player_slot
+			FROM match_players AS p
+			WHERE d.match_id = $1
+				AND p.match_id = d.match_id
+				AND d.is_pick
+				AND d.hero_id <> 0
+				AND p.hero_id = d.hero_id
+				AND d.player_slot IS NULL
+		`, res.MatchID); err != nil {
+			return fmt.Errorf("match_draft slots: %w", err)
 		}
 	}
 

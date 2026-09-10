@@ -22,11 +22,18 @@ func (o Op) Has(p Op) bool { return o&p != 0 }
 
 // Entity is one networked object in the current snapshot.
 type Entity struct {
-	index  int32
-	serial int32
-	class  *class
-	active bool
-	state  *tree
+	index     int32
+	serial    int32
+	class     *class
+	active    bool
+	discarded bool
+	state     *tree
+}
+
+// Discarded is true when the bitstream was consumed but the property
+// tree was dropped (creeps, projectiles, …).
+func (e *Entity) Discarded() bool {
+	return e == nil || e.discarded
 }
 
 func (e *Entity) GetIndex() int32  { return e.index }
@@ -40,7 +47,7 @@ func (e *Entity) GetClassName() string {
 
 // Get returns the current value of a dotted sendtable path, or nil.
 func (e *Entity) Get(name string) any {
-	if e == nil || e.class == nil {
+	if e == nil || e.class == nil || e.state == nil {
 		return nil
 	}
 	fp, ok := e.class.pathOf(name)
@@ -138,6 +145,19 @@ func (s *Session) readEntity(r *bits, index int32) (next int32, e *Entity, op Op
 			if cl == nil {
 				die("unknown class id %d", classID)
 			}
+			if !KeepClass(cl.name) {
+				e = &Entity{
+					index:     next,
+					serial:    serial,
+					class:     cl,
+					active:    true,
+					discarded: true,
+				}
+				s.ents[next] = e
+				s.pathBuf = skipPaths(r, cl.layout, s.pathBuf)
+				op = OpCreated | OpEntered
+				return next, e, op
+			}
 			e = &Entity{
 				index:  next,
 				serial: serial,
@@ -158,6 +178,10 @@ func (s *Session) readEntity(r *bits, index int32) (next int32, e *Entity, op Op
 		if !e.active {
 			e.active = true
 			op |= OpEntered
+		}
+		if e.discarded {
+			s.pathBuf = skipPaths(r, e.class.layout, s.pathBuf)
+			return next, e, op
 		}
 		s.pathBuf = applyPaths(r, e.class.layout, e.state, s.pathBuf)
 		return next, e, op

@@ -167,7 +167,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 		gcLogonAttempts: requiredPositiveInt(map, KEYS.gcLogonAttempts),
 		apiKeyRateLimitMs: requiredPositiveInt(map, KEYS.apiKeyRateLimitMs),
 		gcAccountRateLimitMs: requiredPositiveInt(map, KEYS.gcAccountRateLimitMs),
-		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 5),
+		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 6),
 	}
 }
 

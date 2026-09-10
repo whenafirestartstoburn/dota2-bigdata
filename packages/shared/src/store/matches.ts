@@ -1,6 +1,11 @@
 import { eq } from 'drizzle-orm'
 import { leagues, matches } from '#src/db/schema'
-import { asItemId, asNumber, asSteamId64 } from '#src/store/coerce'
+import {
+	asItemId,
+	asNumber,
+	asSteamId64,
+	steamId64FromAccount,
+} from '#src/store/coerce'
 import {
 	type DraftPick,
 	type MatchFacts,
@@ -131,10 +136,11 @@ export async function upsertPlayer(
 	if (row.accountId <= 0) return
 	await tx.execute(sql`
 		INSERT INTO players (
-			account_id, persona_name, is_pro, current_team_id,
+			account_id, steam_id, persona_name, is_pro, current_team_id,
 			last_match_id, last_match_at, updated_at
 		) VALUES (
 			${row.accountId},
+			${steamId64FromAccount(row.accountId)},
 			${row.personaName ?? null},
 			${row.isPro ?? false},
 			${row.teamId ?? null},
@@ -143,6 +149,7 @@ export async function upsertPlayer(
 			now()
 		)
 		ON CONFLICT (account_id) DO UPDATE SET
+			steam_id = COALESCE(players.steam_id, excluded.steam_id),
 			persona_name = COALESCE(excluded.persona_name, players.persona_name),
 			is_pro = players.is_pro OR excluded.is_pro,
 			current_team_id = COALESCE(excluded.current_team_id, players.current_team_id),
@@ -229,7 +236,7 @@ export async function upsertSeriesForMatch(
 		INSERT INTO series (
 			series_id, league_id, radiant_team_id, dire_team_id, series_type,
 			radiant_wins, dire_wins, first_match_id, last_match_id,
-			started_at, updated_at
+			started_at, ended_at, updated_at
 		) VALUES (
 			${seriesId},
 			${input.leagueId},
@@ -241,6 +248,18 @@ export async function upsertSeriesForMatch(
 			${input.matchId},
 			${input.matchId},
 			${startedAt},
+			CASE
+				WHEN GREATEST(
+					${input.radiantWins ?? 0},
+					${input.direWins ?? 0}
+				) >= CASE ${input.seriesType ?? 0}
+					WHEN 1 THEN 2
+					WHEN 2 THEN 3
+					ELSE NULL
+				END
+				THEN now()
+				ELSE NULL
+			END,
 			now()
 		)
 		ON CONFLICT (series_id) DO UPDATE SET
@@ -248,6 +267,18 @@ export async function upsertSeriesForMatch(
 			radiant_wins = GREATEST(series.radiant_wins, excluded.radiant_wins),
 			dire_wins = GREATEST(series.dire_wins, excluded.dire_wins),
 			last_match_id = excluded.last_match_id,
+			ended_at = CASE
+				WHEN GREATEST(
+					GREATEST(series.radiant_wins, excluded.radiant_wins),
+					GREATEST(series.dire_wins, excluded.dire_wins)
+				) >= CASE COALESCE(excluded.series_type, series.series_type)
+					WHEN 1 THEN 2
+					WHEN 2 THEN 3
+					ELSE NULL
+				END
+				THEN COALESCE(series.ended_at, now())
+				ELSE series.ended_at
+			END,
 			updated_at = now()
 	`)
 	return seriesId
@@ -686,7 +717,6 @@ export async function upsertMatchPlayers(
 				backpack_0: asItemId(player.backpack0),
 				backpack_1: asItemId(player.backpack1),
 				backpack_2: asItemId(player.backpack2),
-				backpack_3: asItemId(player.backpack3),
 				selected_facet: player.selectedFacet,
 				aghanims_scepter: player.aghanimsScepter,
 				aghanims_shard: player.aghanimsShard,
@@ -694,7 +724,6 @@ export async function upsertMatchPlayers(
 				ability_upgrades: player.abilityUpgrades,
 				leaver_status: player.leaverStatus,
 				party_id: player.partyId,
-				party_size: player.partySize,
 				claimed_farm_gold: player.claimedFarmGold,
 				support_gold: player.supportGold,
 				claimed_denies: player.claimedDenies,
@@ -763,7 +792,6 @@ export async function upsertMatchPlayers(
 			backpack_0 = COALESCE(excluded.backpack_0, match_players.backpack_0),
 			backpack_1 = COALESCE(excluded.backpack_1, match_players.backpack_1),
 			backpack_2 = COALESCE(excluded.backpack_2, match_players.backpack_2),
-			backpack_3 = COALESCE(excluded.backpack_3, match_players.backpack_3),
 			selected_facet = COALESCE(excluded.selected_facet, match_players.selected_facet),
 			aghanims_scepter = COALESCE(excluded.aghanims_scepter, match_players.aghanims_scepter),
 			aghanims_shard = COALESCE(excluded.aghanims_shard, match_players.aghanims_shard),
@@ -771,7 +799,6 @@ export async function upsertMatchPlayers(
 			ability_upgrades = COALESCE(excluded.ability_upgrades, match_players.ability_upgrades),
 			leaver_status = COALESCE(excluded.leaver_status, match_players.leaver_status),
 			party_id = COALESCE(excluded.party_id, match_players.party_id),
-			party_size = COALESCE(excluded.party_size, match_players.party_size),
 			claimed_farm_gold = COALESCE(excluded.claimed_farm_gold, match_players.claimed_farm_gold),
 			support_gold = COALESCE(excluded.support_gold, match_players.support_gold),
 			claimed_denies = COALESCE(excluded.claimed_denies, match_players.claimed_denies),
@@ -870,6 +897,7 @@ export async function upsertMatchPlayers(
 			`)
 		}
 	}
+	await fillDraftPlayerSlots(tx, matchId)
 }
 
 export async function replaceMatchDraft(
@@ -891,6 +919,24 @@ export async function replaceMatchDraft(
 				clock: row.clock ?? null,
 			})),
 		)}
+	`)
+	await fillDraftPlayerSlots(tx, matchId)
+}
+
+export async function fillDraftPlayerSlots(
+	tx: Executor,
+	matchId: number,
+): Promise<void> {
+	await tx.execute(sql`
+		UPDATE match_draft AS d
+		SET player_slot = p.player_slot
+		FROM match_players AS p
+		WHERE d.match_id = ${matchId}
+			AND p.match_id = d.match_id
+			AND d.is_pick
+			AND d.hero_id <> 0
+			AND p.hero_id = d.hero_id
+			AND d.player_slot IS NULL
 	`)
 }
 
@@ -1001,8 +1047,6 @@ export async function saveMatchFacts(
 			dire_team_complete = COALESCE(${facts.direTeamComplete}, dire_team_complete),
 			radiant_captain = COALESCE(${facts.radiantCaptain}, radiant_captain),
 			dire_captain = COALESCE(${facts.direCaptain}, dire_captain),
-			positive_votes = COALESCE(${facts.positiveVotes}, positive_votes),
-			negative_votes = COALESCE(${facts.negativeVotes}, negative_votes),
 			match_flags = COALESCE(${facts.matchFlags}, match_flags),
 			match_outcome = COALESCE(${facts.matchOutcome}, match_outcome),
 			game_balance = COALESCE(${facts.gameBalance}, game_balance),

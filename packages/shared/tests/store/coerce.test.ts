@@ -16,6 +16,7 @@ import {
 	asTrimmedString,
 	asUInt32,
 	errorMessage,
+	steamId64FromAccount,
 } from '#src/store/coerce'
 
 describe('asNumber', () => {
@@ -67,6 +68,14 @@ describe('asPgInt8', () => {
 		expect(asPgInt8(29996980048346770)).toBe(29996980048346770)
 		expect(asPgInt8(13052751837648703000)).toBeNull()
 		expect(asPgInt8(-(2 ** 63))).toBe(-(2 ** 63))
+	})
+})
+
+describe('steamId64FromAccount', () => {
+	test('adds the Steam64 universe to a Steam32 account id', () => {
+		expect(steamId64FromAccount(1)).toBe('76561197960265729')
+		expect(steamId64FromAccount(0)).toBeNull()
+		expect(steamId64FromAccount(-3)).toBeNull()
 	})
 })
 

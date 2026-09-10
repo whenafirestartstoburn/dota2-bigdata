@@ -159,17 +159,22 @@ func (a *App) handle(ctx context.Context, job *store.Claimed) {
 		return
 	}
 	defer body.Close()
-	res, err := parse.ParseReader(ctx, parse.Job{
+	flush := sink.NewFlusher(ctx, a.ch)
+	res, err := parse.ParseReaderWithSink(ctx, parse.Job{
 		MatchID:   job.MatchID,
 		StartTime: job.StartTime,
-	}, body)
+	}, body, flush)
 	if err != nil {
+		if res != nil {
+			_ = a.ch.Abort(ctx, res.ParseRunID)
+		}
 		log.Error("parse", "err", err)
 		_ = a.pg.Fail(ctx, job.MatchID, err)
 		metrics.ObserveJob("parse", time.Since(start).Seconds())
 		return
 	}
-	if err := a.ch.Commit(ctx, res); err != nil {
+	if err := flush.Finish(res); err != nil {
+		_ = a.ch.Abort(ctx, res.ParseRunID)
 		log.Error("clickhouse", "err", err)
 		_ = a.pg.Fail(ctx, job.MatchID, err)
 		metrics.ObserveJob("clickhouse", time.Since(start).Seconds())

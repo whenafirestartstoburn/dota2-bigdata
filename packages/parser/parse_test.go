@@ -57,6 +57,24 @@ func TestParseAttachedDemos(t *testing.T) {
 			if !seenType {
 				t.Fatal("no combat-log types")
 			}
+			for _, row := range res.Intervals {
+				if row.Slot < 0 || row.Slot > 9 {
+					t.Fatalf("interval slot %d", row.Slot)
+				}
+			}
+			heroRows, stamped := 0, 0
+			for _, row := range res.CombatLog {
+				if row.AttackerHero != 1 {
+					continue
+				}
+				heroRows++
+				if row.AttackerSlot >= 0 || row.AttackerAccountID != 0 {
+					stamped++
+				}
+			}
+			if heroRows > 50 && stamped*2 < heroRows {
+				t.Fatalf("combat hero rows poorly attributed: %d/%d", stamped, heroRows)
+			}
 			t.Logf("%s counts=%v", filepath.Base(path), res.Counts())
 		})
 	}

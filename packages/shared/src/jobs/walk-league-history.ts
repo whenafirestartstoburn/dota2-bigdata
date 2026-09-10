@@ -110,11 +110,17 @@ export async function runWalkLeagueHistory(
 	const oldest = listed.at(-1)?.match_id ?? tail
 	const empty = listed.length === 0
 	const noMore = page.resultsRemaining <= 0 || empty || oldest === tail
+	const lastMatchSeqNum = listed.reduce<number | null>((max, match) => {
+		const seq = match.match_seq_num
+		if (typeof seq !== 'number' || !Number.isFinite(seq)) return max
+		return max == null || seq > max ? seq : max
+	}, null)
 
 	if (fetchNewest) {
 		await updateLeagueHistoryCursor(leagueId, {
 			headMatchId: newest ?? null,
 			tailMatchId: oldest ?? tail,
+			lastMatchSeqNum,
 			// Empty newest page: Valve has nothing for this league (or hides it).
 			// Leave exhausted=false and we spin forever — head stays null, so
 			// every visit is fetchNewest again and self-requeues the same id.
@@ -123,6 +129,7 @@ export async function runWalkLeagueHistory(
 	} else {
 		await updateLeagueHistoryCursor(leagueId, {
 			tailMatchId: oldest ?? tail,
+			lastMatchSeqNum,
 			exhausted: empty || noMore,
 		})
 	}
