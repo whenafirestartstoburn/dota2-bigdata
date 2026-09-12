@@ -20,6 +20,8 @@ const rows = await db.execute(sql`
 	FROM match_replays r
 	JOIN matches m ON m.match_id = r.match_id
 	WHERE r.source_url IS NOT NULL
+		AND r.source_url NOT LIKE '%://replay1.valve.net/%'
+		AND (r.cluster IS NULL OR r.cluster > 1)
 		AND r.status = 'pending'
 		AND m.source = 'historical'
 		AND (r.next_attempt_at IS NULL OR r.next_attempt_at <= now())

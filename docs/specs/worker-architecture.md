@@ -119,7 +119,9 @@ historical (priority 10) on a free shard.
 
 ### Replay download
 
-Requires `source_url` already on `match_replays`. No GC. 404 → `replayBackoffMs` (1 m, 1 m, 3 m × 20, 1 h × 24) then `match_replays.status = unavailable`, `matches.phase = replay_unavailable`, `last_error_kind = unavailable`. Stops at `stored` in S3; parse is a later job. Sets `matches.phase = replay_stored`. Run cap is ten live + ten historical (`REPLAY_PARALLELISM`); historical enqueue is still `settings.history_replay_enqueue_limit`.
+Requires `source_url` already on `match_replays`. No GC. Cluster 0/1
+(`replay1.valve.net`) has no Valve CDN host — mark `unavailable`
+immediately, do not retry. 404 → `replayBackoffMs` (1 m, 1 m, 3 m × 20, 1 h × 24) then `match_replays.status = unavailable`, `matches.phase = replay_unavailable`, `last_error_kind = unavailable`. Stops at `stored` in S3; parse is a later job. Sets `matches.phase = replay_stored`. Run cap is ten live + ten historical (`REPLAY_PARALLELISM`); historical enqueue is still `settings.history_replay_enqueue_limit`.
 
 ### Replay parse
 

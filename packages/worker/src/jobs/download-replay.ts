@@ -9,6 +9,7 @@ import {
 	matchOrigin,
 } from '@app/shared/src/jobs/fetch-match-details'
 import { observeReplayDownload } from '@app/shared/src/metrics/observe'
+import { unpublishedReplayCdnReason } from '@app/shared/src/steam/web-api'
 import { asNumber, asString } from '@app/shared/src/store/coerce'
 import { ERROR_KIND } from '@app/shared/src/store/match-phase'
 import { getMatch } from '@app/shared/src/store/matches'
@@ -60,6 +61,22 @@ async function downloadReplay(
 	}
 
 	const cluster = asNumber(existing?.cluster) ?? 0
+	const unpublished = unpublishedReplayCdnReason(cluster, url)
+	if (unpublished != null) {
+		await updateReplay(matchId, {
+			status: 'unavailable',
+			error: unpublished,
+			nextAttemptAt: null,
+		})
+		await markMatchReplayPhase(matchId, 'replay_unavailable', {
+			error: unpublished,
+			errorKind: ERROR_KIND.unavailable,
+		})
+		logger.info({ matchId, cluster, url }, 'replay CDN host unpublished')
+		observeReplayDownload('not_found', started)
+		return { status: 'unavailable' }
+	}
+
 	const salt = asNumber(existing?.replay_salt) ?? 0
 	const key = replayObjectKey(matchId, cluster, salt)
 

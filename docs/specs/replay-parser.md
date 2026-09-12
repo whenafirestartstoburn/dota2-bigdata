@@ -40,6 +40,10 @@ thrashed CFS. The host is 4 cores: 20-wide on ~2.5 usable cores
 raised wall time to 3–4 min and cut throughput. Skip `DropPrevious`
 when the row has never published a `parser_version` — empty
 `ALTER DELETE` mutations are what filled the disk at high width.
+A mutation still rewrites every MergeTree **part** that contains a
+matching row, so it reserves that part’s size (multi-GiB on
+`replay_combat_log` / `replay_actions`), not the handful of deleted
+rows.
 
 ## Claim
 

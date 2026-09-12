@@ -13,7 +13,10 @@ import {
 	matchOrigin,
 	persistSeqMatches,
 } from '@app/shared/src/jobs/fetch-match-details'
-import { replayUrl } from '@app/shared/src/steam/web-api'
+import {
+	replayUrl,
+	unpublishedReplayCdnReason,
+} from '@app/shared/src/steam/web-api'
 import {
 	asDate,
 	asNumber,
@@ -54,6 +57,9 @@ export async function runFetchMatchDetails(input: {
 	const existingUrl = asString(replay?.source_url)
 
 	if (cluster != null && salt != null && existingUrl != null) {
+		if (await markUnpublishedReplayCdn(input.matchId, cluster, existingUrl)) {
+			return { saved: 0, url: existingUrl }
+		}
 		await enqueueDownloadReplay(
 			input.matchId,
 			origin,
@@ -148,6 +154,9 @@ export async function runFetchMatchDetails(input: {
 		steamAccountId: locator.accountId,
 		proxyId: locator.proxyId,
 	})
+	if (await markUnpublishedReplayCdn(input.matchId, cluster, url)) {
+		return { saved: 1, url }
+	}
 	await enqueueDownloadReplay(
 		input.matchId,
 		origin,
@@ -155,6 +164,26 @@ export async function runFetchMatchDetails(input: {
 	)
 	logger.info({ matchId: input.matchId, url }, 'GC match details + replay url')
 	return { saved: 1, url }
+}
+
+async function markUnpublishedReplayCdn(
+	matchId: number,
+	cluster: number,
+	url: string,
+): Promise<boolean> {
+	const reason = unpublishedReplayCdnReason(cluster, url)
+	if (reason == null) return false
+	await updateReplay(matchId, {
+		status: 'unavailable',
+		error: reason,
+		nextAttemptAt: null,
+	})
+	await markMatchReplayPhase(matchId, 'replay_unavailable', {
+		error: reason,
+		errorKind: ERROR_KIND.unavailable,
+	})
+	logger.info({ matchId, cluster, url }, 'replay CDN host unpublished')
+	return true
 }
 
 function downloadAt(value: unknown): Date | undefined {
