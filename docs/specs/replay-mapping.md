@@ -7,10 +7,12 @@ This is the catalog of what a parsed `.dem` becomes. The Go extract
 (`packages/parser/internal/parse`) writes only these tables. Re-parse is
 always possible: the file stays in S3.
 
-`parser_version` **3** stamps `account_id` on every `replay_*` row.
-Version 2 added `replay_alerts` and interval vitals. Filter
-`replay_*.parser_version` / join `match_replays.parse_run_id` as the
-commit spec already said.
+`parser_version` **4** stamps PURCHASE `value_name` from
+`CombatLogNames[value]`, lane samples from resolved `CBodyComponent`
+positions, and barracks bitmasks from rax kills. Version 3 stamped
+`account_id` on every `replay_*` row. Version 2 added `replay_alerts`
+and interval vitals. Filter `replay_*.parser_version` / join
+`match_replays.parse_run_id` as the commit spec already said.
 
 ---
 
@@ -22,7 +24,7 @@ Every `replay_*` row:
 |---|---|
 | `match_id` | Valve match id |
 | `start_time` | Match start (UTC); partition key |
-| `time` | Game clock seconds; negative in pregame |
+| `time` | Game clock seconds; negative in pregame. Combat log: proto `timestamp` (field 15) minus game-start when the stamp looks absolute (`> 1000`) |
 | `tick` | Demo tick |
 | `slot` | 0–9 (`Int8`); `-1` if unknown. Not Valve 128–132 |
 | `account_id` | Steam 32-bit player; `0` if unknown / not a player |
@@ -80,12 +82,100 @@ dropped.**
 | `NEUTRAL_ITEM_EARNED` | also `replay_neutrals` when the name looks neutral | |
 | `STAT_TRACKER_PLAYER` | `tracked_stat_id` | |
 
-Every scalar on `CMsgDOTACombatLogEntry` is a column (see
-`db/clickhouse/schema.sql`). `greevils_greed_stack` / `tracked_death` /
-`tracked_sourcename` are leftover defaults (not on the proto); do not
-read them.
-
 String names resolve through the `CombatLogNames` string table.
+
+### `CMsgDOTACombatLogEntry` columns
+
+Every stored proto scalar is a column. Bools become `UInt8` (`0`/`1`).
+Name indexes become resolved strings. Three leftovers are **not** on
+the proto and stay at default: `greevils_greed_stack`, `tracked_death`,
+`tracked_sourcename`. Do not read them.
+
+| Proto field | # | Column | Notes |
+|---|---|---|---|
+| `type` | 1 | `type` | `DOTA_COMBATLOG_` prefix stripped |
+| `target_name` | 2 | `target` | CombatLogNames |
+| `target_source_name` | 3 | `targetsourcename` | |
+| `attacker_name` | 4 | `attacker` | |
+| `damage_source_name` | 5 | `sourcename` | |
+| `inflictor_name` | 6 | `inflictor` | also seeds `value_name` on `ITEM` / `BUYBACK` / `MODIFIER_*` |
+| `is_attacker_illusion` | 7 | `attacker_illusion` | |
+| `is_attacker_hero` | 8 | `attacker_hero` | |
+| `is_target_illusion` | 9 | `target_illusion` | |
+| `is_target_hero` | 10 | `target_hero` | |
+| `is_visible_radiant` | 11 | `visible_radiant` | |
+| `is_visible_dire` | 12 | `visible_dire` | |
+| `value` | 13 | `value` | amount / item id / game-state id. On `PURCHASE` also indexes CombatLogNames → `value_name` |
+| `health` | 14 | `health` | target HP after the event |
+| `timestamp` | 15 | `time` **and** `timestamp_raw` | `timestamp_raw` = the float as sent. `time` = Int32 game clock (subtract game-start when `timestamp > 1000`) |
+| `stun_duration` | 16 | `stun_duration` | |
+| `slow_duration` | 17 | `slow_duration` | |
+| `is_ability_toggle_on` | 18 | `is_ability_toggle_on` | |
+| `is_ability_toggle_off` | 19 | `is_ability_toggle_off` | |
+| `ability_level` | 20 | `ability_level` | |
+| `location_x` | 21 | `location_x` | |
+| `location_y` | 22 | `location_y` | |
+| `gold_reason` | 23 | `gold_reason` | |
+| `timestamp_raw` | 24 | — | **not stored.** CH `timestamp_raw` is proto field 15 |
+| `modifier_duration` | 25 | `modifier_duration` | |
+| `xp_reason` | 26 | `xp_reason` | |
+| `last_hits` | 27 | `last_hits` | |
+| `attacker_team` | 28 | `attacker_team` | `DOTA_GC_TEAM` |
+| `target_team` | 29 | `target_team` | |
+| `obs_wards_placed` | 30 | `obs_wards_placed` | |
+| `assist_player0`…`3` | 31–34 | `assist_player0`…`3` | first four of `assist_players`; `0` if absent |
+| `stack_count` | 35 | `stack_count` | |
+| `hidden_modifier` | 36 | `hidden_modifier` | |
+| `is_target_building` | 37 | `is_target_building` | |
+| `neutral_camp_type` | 38 | `neutral_camp_type` | |
+| `rune_type` | 39 | `rune_type` | |
+| `assist_players` | 40 | `assist_players` | full array; also copied into `assist_player0`…`3` |
+| `is_heal_save` | 41 | `is_heal_save` | |
+| `is_ultimate_ability` | 42 | `is_ultimate_ability` | |
+| `attacker_hero_level` | 43 | `attacker_hero_level` | |
+| `target_hero_level` | 44 | `target_hero_level` | |
+| `xpm` | 45 | `xpm` | |
+| `gpm` | 46 | `gpm` | |
+| `event_location` | 47 | `event_location` | |
+| `target_is_self` | 48 | `target_is_self` | |
+| `damage_type` | 49 | `damage_type` | |
+| `invisibility_modifier` | 50 | `invisibility_modifier` | |
+| `damage_category` | 51 | `damage_category` | |
+| `networth` | 52 | `networth` | |
+| `building_type` | 53 | `building_type` | |
+| `modifier_elapsed_duration` | 54 | `modifier_elapsed_duration` | |
+| `silence_modifier` | 55 | `silence_modifier` | |
+| `heal_from_lifesteal` | 56 | `heal_from_lifesteal` | |
+| `modifier_purged` | 57 | `modifier_purged` | |
+| `spell_evaded` | 58 | `spell_evaded` | |
+| `motion_controller_modifier` | 59 | `motion_controller_modifier` | |
+| `long_range_kill` | 60 | `long_range_kill` | |
+| `modifier_purge_ability` | 61 | `modifier_purge_ability` | |
+| `modifier_purge_npc` | 62 | `modifier_purge_npc` | |
+| `root_modifier` | 63 | `root_modifier` | |
+| `total_unit_death_count` | 64 | `total_unit_death_count` | |
+| `aura_modifier` | 65 | `aura_modifier` | |
+| `armor_debuff_modifier` | 66 | `armor_debuff_modifier` | |
+| `no_physical_damage_modifier` | 67 | `no_physical_damage_modifier` | |
+| `modifier_ability` | 68 | `modifier_ability` | |
+| `modifier_hidden` | 69 | `modifier_hidden` | |
+| `inflictor_is_stolen_ability` | 70 | `inflictor_is_stolen_ability` | |
+| `kill_eater_event` | 71 | `kill_eater_event` | |
+| `unit_status_label` | 72 | `unit_status_label` | |
+| `spell_generated_attack` | 73 | `spell_generated_attack` | |
+| `at_night_time` | 74 | `at_night_time` | |
+| `attacker_has_scepter` | 75 | `attacker_has_scepter` | |
+| `neutral_camp_team` | 76 | `neutral_camp_team` | |
+| `regenerated_health` | 77 | `regenerated_health` | |
+| `will_reincarnate` | 78 | `will_reincarnate` | |
+| `uses_charges` | 79 | `uses_charges` | |
+| `tracked_stat_id` | 80 | `tracked_stat_id` | |
+| `modifier_purged_duration` | 81 | `modifier_purged_duration` | |
+| `heal_from_regen` | 82 | `heal_from_regen` | |
+
+Derived, not on the proto: `slot` / `attacker_slot` / `target_slot`
+(name → 0–9), `account_id` / `attacker_account_id` /
+`target_account_id` (slot → Steam 32-bit), `value_name` (CombatLogNames).
 
 ---
 
@@ -97,7 +187,7 @@ Source: `CDOTA_PlayerResource` + `CDOTA_DataRadiant` / `CDOTA_DataDire`
 | Column | Source field (typical) |
 |---|---|
 | `hero_id`, `variant`, `facet_hero_id` | `m_nSelectedHeroID`, `m_iHeroFacetKey` |
-| `x`, `y` | hero origin |
+| `x`, `y` | hero `CBodyComponent` cell+vec (serializers are bound after the full sendtable packet so nested `m_cellX` exists) |
 | `gold`, `lh`, `xp`, `networth`, `denies` | `m_vecDataTeam` |
 | `level`, `kills`, `deaths`, `assists` | `m_vecPlayerTeamData` |
 | `life_state` | hero `m_lifeState` |
@@ -114,7 +204,8 @@ Not stored on the interval (elsewhere or out of scope): per-slot items
 (`replay_inventory` on change), courier, building HP time series.
 
 Lane for PG `match_players` is derived after parse from pre-10:00 `(x,y)`
-samples, not stored as a CH series.
+samples (at least 4), not stored as a CH series. Zero lanes with zero
+interval `x,y` mean the body-component serializer was not bound.
 
 ---
 
@@ -196,8 +287,14 @@ only.
 
 ## Draft → `replay_draft` (+ PG `match_draft`)
 
-Gamerules pick/ban arrays while `m_nGameState == 2`, then
-`CDemoFileInfo` picks/bans if the live arrays were empty.
+Gamerules pick/ban arrays while `m_nGameState == 2` go to ClickHouse
+`replay_draft` (the live timeline). `CDemoFileInfo` picks/bans are the
+official ~24-row sequence.
+
+Postgres `match_draft`: if details already wrote a complete sequence
+(20–32 rows, ≥10 picks), **do not replace it** — only stamp `clock`
+from the file-info / compact replay sequence. Replace only when the PG
+row set is missing or incomplete (live provisional lists).
 
 `is_pick`, `hero_id`, `team` (0 radiant / 1 dire), `ord`, `clock`,
 `extra_time_*`.
@@ -232,6 +329,9 @@ item entity exists.
 | `purchase` | combat `PURCHASE` whose name looks like a tier/neutral item |
 | `neutral_item` | create of `CDOTA_Item_*` whose class contains `neutral` / `tier` |
 | `found` | `DOTA_UM_FoundNeutralItem` (`key`/`value` = item ability id); also `replay_alerts.kind = found_neutral` with `value2` = tier |
+
+`is_neutral_active_drop` / `is_neutral_passive_drop` exist on the
+table and stay `0` — extract does not set them.
 
 ---
 
@@ -281,19 +381,25 @@ orders. One generic row: `kind`, `player2`, `value`, `value2`, `x`, `y`,
 
 ---
 
-## Epilogue → `replay_epilogue`
+## Metadata → `replay_meta*`
 
-Key/value leftovers from `CDemoFileInfo` and `DOTA_UM_MatchMetadata`.
-Not a query surface: winner / teams also exist on Postgres `matches`.
-`match_metadata` is the JSON of `CDOTAMatchMetadata` (graphs Valve
-already computed). Prefer typed tables above for anything we named.
+`CDemoFileInfo` + `CDOTAMatchMetadata` (`DOTA_UM_MatchMetadata`). Typed
+columns, not a JSON dump. `replay_epilogue` is gone.
 
-| `key` | Source |
+| Table | Source |
 |---|---|
-| `playback_time` / `playback_ticks` / `playback_frames` | file info |
-| `match_id`, `game_winner`, `radiant_team_id`, `dire_team_id` | `CGameInfo.dota` |
-| `player_info`, `picks_bans` | file info JSON |
-| `metadata_version`, `match_metadata` | match metadata file |
+| `replay_meta` | file playback_* + `CGameInfo.dota` winner/teams + metadata version / lobby |
+| `replay_meta_teams` | `CDOTAMatchMetadata.Team` graphs + CM |
+| `replay_meta_players` | `Team.Player` scalars, `ability_upgrades`, `level_up_times`, graphs |
+| `replay_meta_kills` | `Team.kills` (`KillInfo`: type, victim, killers, time, bounty) |
+| `replay_meta_player_kills` | `Team.Player.kills` (per-victim counts) |
+| `replay_meta_purchases` | `Team.Player.items` (`item_id`, `purchase_time`) |
+| `replay_meta_inventory` | `Team.Player.inventory_snapshot` |
+| `replay_meta_tips` | `match_tips` |
+
+`player_info` names are Postgres `match_players`. `picks_bans` still
+merge into `replay_draft` / `match_draft`. Event / cavern / gem /
+contract blobs are not stored.
 
 ---
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -88,6 +87,10 @@ type Session struct {
 	lastItems [10][21]uint64
 
 	laneUntil int32
+
+	raxRadiant uint16
+	raxDire    uint16
+	raxSeen    bool
 }
 
 func newRunID() uint64 {
@@ -151,6 +154,8 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 		wards:         make(map[int32]*wardWatch, 64),
 		cosmetics:     make(map[uint64]struct{}, 64),
 		laneUntil:     600,
+		raxRadiant:    63,
+		raxDire:       63,
 		out: &model.Result{
 			MatchID:       job.MatchID,
 			StartTime:     job.StartTime,
@@ -169,7 +174,6 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 			Neutrals:      make([]model.Neutral, 0, 64),
 			Cosmetics:     make([]model.Cosmetic, 0, 64),
 			Alerts:        make([]model.Alert, 0, 256),
-			Epilogue:      make([]model.Epilogue, 0, 16),
 			Objectives:    make([]model.Objective, 0, 32),
 		},
 	}
@@ -186,11 +190,15 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 }
 
 func (s *Session) header(clock int32, slot int8) model.Header {
+	var tick uint32
+	if s.parser != nil {
+		tick = uint32(s.parser.Tick)
+	}
 	return model.Header{
 		MatchID:       s.job.MatchID,
 		StartTime:     s.job.StartTime,
 		Time:          clock,
-		Tick:          uint32(s.parser.Tick),
+		Tick:          tick,
 		Slot:          slot,
 		AccountID:     s.accountForSlot(slot),
 		ParserVersion: version.Schema,
@@ -570,24 +578,21 @@ func (s *Session) onFileInfo(m *valve.CDemoFileInfo) error {
 	if m == nil {
 		return nil
 	}
-	s.addEpilogue("playback_time", fmt.Sprintf("%g", m.GetPlaybackTime()))
-	s.addEpilogue("playback_ticks", fmt.Sprintf("%d", m.GetPlaybackTicks()))
-	s.addEpilogue("playback_frames", fmt.Sprintf("%d", m.GetPlaybackFrames()))
+	s.ensureMeta()
+	s.out.Meta.PlaybackTime = m.GetPlaybackTime()
+	s.out.Meta.PlaybackTicks = uint32(m.GetPlaybackTicks())
+	s.out.Meta.PlaybackFrames = uint32(m.GetPlaybackFrames())
 	if gi := m.GetGameInfo(); gi != nil && gi.GetDota() != nil {
 		d := gi.GetDota()
-		s.addEpilogue("match_id", fmt.Sprintf("%d", d.GetMatchId()))
-		s.addEpilogue("game_winner", fmt.Sprintf("%d", d.GetGameWinner()))
-		s.addEpilogue("radiant_team_id", fmt.Sprintf("%d", d.GetRadiantTeamId()))
-		s.addEpilogue("dire_team_id", fmt.Sprintf("%d", d.GetDireTeamId()))
+		s.out.Meta.GameWinner = uint8(d.GetGameWinner())
+		s.out.Meta.RadiantTeamID = d.GetRadiantTeamId()
+		s.out.Meta.DireTeamID = d.GetDireTeamId()
 		if s.job.MatchID == 0 && d.GetMatchId() != 0 {
 			s.job.MatchID = d.GetMatchId()
 			s.out.MatchID = d.GetMatchId()
+			s.out.Meta.MatchID = d.GetMatchId()
 		}
-		if raw, err := json.Marshal(d.GetPlayerInfo()); err == nil {
-			s.addEpilogue("player_info", string(raw))
-		}
-		if raw, err := json.Marshal(d.GetPicksBans()); err == nil && len(d.GetPicksBans()) > 0 {
-			s.addEpilogue("picks_bans", string(raw))
+		if len(d.GetPicksBans()) > 0 {
 			s.mergeFileInfoDraft(d.GetPicksBans())
 		}
 	}
@@ -598,25 +603,17 @@ func (s *Session) onMetadata(m *valve.CDOTAMatchMetadataFile) error {
 	if m == nil {
 		return nil
 	}
-	s.addEpilogue("metadata_version", fmt.Sprintf("%d", m.GetVersion()))
-	if raw, err := json.Marshal(m.GetMetadata()); err == nil {
-		s.addEpilogue("match_metadata", string(raw))
-	}
+	s.ensureMeta()
+	s.out.Meta.MetadataVersion = m.GetVersion()
+	s.applyMetadata(m.GetMetadata())
 	return nil
 }
 
-func (s *Session) addEpilogue(key, value string) {
-	s.out.Epilogue = append(s.out.Epilogue, model.Epilogue{
-		Header: s.header(s.clock(), -1),
-		Key:    key,
-		Value:  value,
-	})
-}
-
 func (s *Session) mergeFileInfoDraft(picks []*valve.CGameInfo_CDotaGameInfo_CHeroSelectEvent) {
-	if len(s.out.Draft) > 0 || len(picks) == 0 {
+	if len(picks) == 0 {
 		return
 	}
+	s.out.PickBans = s.out.PickBans[:0]
 	for i, pb := range picks {
 		if pb == nil {
 			continue
@@ -625,13 +622,17 @@ func (s *Session) mergeFileInfoDraft(picks []*valve.CGameInfo_CDotaGameInfo_CHer
 		if pb.GetTeam() == 3 || pb.GetTeam() == 1 {
 			team = 1
 		}
-		s.out.Draft = append(s.out.Draft, model.Draft{
+		row := model.Draft{
 			Header: s.header(s.clock(), -1),
 			IsPick: boolU8(pb.GetIsPick()),
 			HeroID: int32(pb.GetHeroId()),
 			Team:   team,
 			Ord:    uint16(i),
 			Clock:  s.clock(),
-		})
+		}
+		s.out.PickBans = append(s.out.PickBans, row)
+		if len(s.out.Draft) == 0 {
+			s.out.Draft = append(s.out.Draft, row)
+		}
 	}
 }

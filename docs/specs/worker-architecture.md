@@ -27,7 +27,7 @@ Collection must work if the API is down.
            ┌─────────────────┼─────────────────┐
            ▼                 ▼                 ▼
    worker-live     worker-historical   worker-match-processing
-   live feeds      GetMatchHistory     seq + GC + download
+   live feeds      GetMatchHistory     GC + download
            └─────────────────┼─────────────────┘
                              ▼
           ┌─────────────────┼─────────────────┐
@@ -56,7 +56,7 @@ Hard rules:
 
 - **1 request per second per API key**, including retries (`settings.steam_api_min_interval_ms`).
 - Never parallelise two Web API calls on the same key.
-- Professional matches only. Do **not** walk `GetMatchHistoryBySequenceNum` from seq 0.
+- Professional matches only. Do **not** call `GetMatchHistoryBySequenceNum` on the ingest path. Discovery is `GetMatchHistory` (`league_id`); box score and replay locator are GC `CMsgDOTAMatch`.
 
 Live writes `next_live_poll_at`; historical waits past that instant. GC is **not** in the 100k budget.
 
@@ -74,7 +74,7 @@ A job does one unit of work, then re-enqueues itself if more remains.
 | `poll_finished_history` | every `settings.history_fast_poll_ms` (seed 5 s) | one newest GetMatchHistory page per due league with `awaiting_history` matches |
 | `fetch_leagues` | hourly + startup | GetLeagueInfoList |
 | `walk_league_history` | continuous self-requeue (`steam_api_min_interval_ms`) | one GetMatchHistory page (discovery only) |
-| `fetch_match_details` | on demand | GetMatchHistoryBySequenceNum (if needed) **then** GC `CMsgGCMatchDetailsRequest` → persist + replay URL |
+| `fetch_match_details` | on demand | GC `CMsgGCMatchDetailsRequest` → persist `CMsgDOTAMatch` + replay URL |
 | `download_replay` | after URL is stored | GET that URL → stream `.dem.bz2` to S3 |
 | `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit |
 | `retest_disabled_resources` | every `settings.retest_interval_ms` + startup | probe disabled proxies / GC accounts / API keys with `retest_count` below the matching `*_retest_max`; restore on success; give up after max |
@@ -103,7 +103,7 @@ Coalesce by **league**: one newest GetMatchHistory page per due `league_id` (`ph
 
 ### Historical discovery (`walk_league_history`)
 
-One GetMatchHistory page (`settings.history_page_size`, newest or older cursor). Persist listed matches (`source` stays `live` if already live; otherwise `historical`). `ingest_sources += GetMatchHistory`. Set `phase = awaiting_details` when the row is still `discovered`, `awaiting_history`, or `not_started`. Enqueue `fetch_match_details` for any rows still missing `seq_fetched_at` or `details_fetched_at` (live first), capped by `settings.history_details_enqueue_limit` (runnable jobs only — exhausted retries and jobs waiting on a locked `details:*` queue do not fill the cap). An empty page marks the league `history_exhausted` and the next tick picks another league (never self-requeue the same empty id). After every tick, self-requeue on `jobKey = walk_league_history` at `settings.steam_api_min_interval_ms`; the shared 1 rps limiter still yields to live. Older pages of the current league stay on the payload; otherwise `pickNextHistoryLeague` (never-walked first, then newest leagues: `most_recent_activity`, `start_timestamp`, `league_id` desc). A 5-minute cron with `preserve_run_at` is only a watchdog. Does **not** call GetMatchHistoryBySequenceNum and does **not** enqueue download.
+One GetMatchHistory page (`settings.history_page_size`, newest or older cursor). Persist listed matches (`source` stays `live` if already live; otherwise `historical`). `ingest_sources += GetMatchHistory`. Set `phase = awaiting_details` when the row is still `discovered`, `awaiting_history`, or `not_started`. Enqueue `fetch_match_details` for rows still missing `details_fetched_at` (live first, then `leagues.tier` desc, then `start_time` desc), capped by `settings.history_details_enqueue_limit` (runnable jobs only — exhausted retries and jobs waiting on a locked `details:*` queue do not fill the cap). An empty page marks the league `history_exhausted` and the next tick picks another league (never self-requeue the same empty id). After every tick, self-requeue on `jobKey = walk_league_history` at `settings.steam_api_min_interval_ms`; the shared 1 rps limiter still yields to live. Older pages of the current league stay on the payload; otherwise `pickNextHistoryLeague` (`tier` desc, then newest: `most_recent_activity`, `start_timestamp`, `league_id` desc). A 5-minute cron with `preserve_run_at` is only a watchdog. Does **not** call GetMatchHistoryBySequenceNum and does **not** enqueue download.
 
 ### Match details (`fetch_match_details`)
 
@@ -111,11 +111,10 @@ Shared by live-finished and historical matches. At most five run at once
 (`details:{match_id % 5}`). Live origin is priority 0 and is picked before
 historical (priority 10) on a free shard.
 
-1. If `seq_fetched_at` is null and `match_seq_num` is set: GetMatchHistoryBySequenceNum from that seq (`settings.seq_batch_size`). Persist every known-league row in the window. Set `seq_fetched_at` on those ids so overlapping jobs skip the same window.
-2. GC `CMsgGCMatchDetailsRequest`. Persist `CMsgDOTAMatch`, copy cluster/salt, set `match_replays.source_url` and `details_fetched_at`. Result 15 (`EResult.AccessDenied`) is match-level (same session still serves other ids): `match_replays.status = unavailable`, `matches.phase = replay_unavailable`, `last_error_kind = unavailable`, job succeeds. Do **not** throw — a retry would hold a `details:{n}` shard.
-3. Enqueue `download_replay`. Live origin: `run_at = replay_available_at` (`finished_at + settings.replay_live_delay_ms`, seed 30 s) if that instant is still in the future. Historical runs immediately.
+1. GC `CMsgGCMatchDetailsRequest`. Persist `CMsgDOTAMatch` (same PG columns seq-num used to write: box score, draft, `item_6..8` as backpack, `match_outcome` → `radiant_win`). Copy cluster/salt, set `match_replays.source_url` and `details_fetched_at`. Result 15 (`EResult.AccessDenied`) is match-level (same session still serves other ids): `match_replays.status = unavailable`, `matches.phase = replay_unavailable`, `last_error_kind = unavailable`, job succeeds. Do **not** throw — a retry would hold a `details:{n}` shard.
+2. Enqueue `download_replay`. Live origin: `run_at = replay_available_at` (`finished_at + settings.replay_live_delay_ms`, seed 30 s) if that instant is still in the future. Historical runs immediately.
 
-`waiting_for` flips `seq` → `gc` → `replay`.
+`waiting_for` flips `gc` → `replay`. `match_seq_num` comes from GetMatchHistory, not GC. Captains / leftover backpack / neutrals / Aghs flags that GC omitted are filled on parse from replay metadata.
 
 ### Replay download
 
@@ -177,7 +176,7 @@ Three compose services, same image, `WORKER_ROLE` set:
 |---|---|---|
 | `worker-live` | `:3001` | live discovery |
 | `worker-historical` | `:3004` | GetMatchHistory discovery |
-| `worker-match-processing` | `:3005` | seq / GC / replay / replenish |
+| `worker-match-processing` | `:3005` | GC / replay / replenish |
 
 Cron (`fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC) is registered only on `historical` (or `all`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
 

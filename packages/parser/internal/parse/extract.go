@@ -27,10 +27,17 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 	targetSource := lookupCL(s.parser, m.GetTargetSourceName())
 	valueName := ""
 	switch typ {
-	case "PURCHASE", "ITEM", "BUYBACK":
-		valueName = inflictor
+	case "PURCHASE":
+		// Valve stores the item in CombatLogNames[value], not inflictor.
+		// Index 0 is "dota_unknown"; treating that as a hit hid the real name.
+		valueName = clName(s.parser, uint32(m.GetValue()))
 		if valueName == "" {
-			valueName = lookupCL(s.parser, uint32(m.GetValue()))
+			valueName = clName(s.parser, m.GetInflictorName())
+		}
+	case "ITEM", "BUYBACK":
+		valueName = clName(s.parser, m.GetInflictorName())
+		if valueName == "" {
+			valueName = clName(s.parser, uint32(m.GetValue()))
 		}
 	case "MODIFIER_ADD", "MODIFIER_REMOVE":
 		valueName = inflictor
@@ -159,7 +166,7 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 		return err
 	}
 
-	if typ == "PURCHASE" && clock <= 90 && valueName != "" {
+	if typ == "PURCHASE" && clock <= 90 && valueName != "" && !unknownCL(valueName) {
 		s.out.Inventory = append(s.out.Inventory, model.Inventory{
 			Header:   s.header(clock, slot),
 			ItemID:   valueName,
@@ -174,6 +181,10 @@ func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
 			Key:    valueName,
 			Value:  int32(m.GetValue()),
 		})
+	}
+	if typ == "DEATH" || typ == "TEAM_BUILDING_KILL" {
+		s.noteRax(target)
+		s.noteRax(attacker)
 	}
 	if typ == "DEATH" && (strings.Contains(target, "roshan") || strings.Contains(target, "fort") ||
 		strings.Contains(target, "tower") || strings.Contains(target, "rax") || strings.Contains(target, "barracks")) {
@@ -799,7 +810,11 @@ func (s *Session) finishSummaries() {
 		if !ok {
 			continue
 		}
-		lane, role, roam := inferLane(pl.posSamples, pl.team)
+		samples := pl.posSamples
+		if len(samples) < 4 {
+			samples = append(samples, intervalLaneSamples(s.out.Intervals, pl.slot, s.laneUntil)...)
+		}
+		lane, role, roam := inferLane(samples, pl.team)
 		s.out.PlayerSummary = append(s.out.PlayerSummary, model.PlayerSummary{
 			Slot:                   pl.valveSlot,
 			Lane:                   lane,
@@ -817,13 +832,28 @@ func (s *Session) finishSummaries() {
 			FirstbloodClaimed:      int32(row.FirstbloodClaimed),
 		})
 	}
+	s.out.BarracksRadiant, s.out.BarracksDire, s.out.BarracksKnown = s.raxRadiant, s.raxDire, s.raxSeen
 	if s.gameState >= 6 {
 		s.addObjective(s.clock(), "win", nil, nil, "", nil)
 	}
 }
 
+func intervalLaneSamples(rows []model.Interval, slot int8, until int32) [][2]float32 {
+	out := make([][2]float32, 0, 32)
+	for _, row := range rows {
+		if row.Slot != slot || row.Time < 0 || row.Time > until {
+			continue
+		}
+		if row.X == 0 && row.Y == 0 {
+			continue
+		}
+		out = append(out, [2]float32{row.X, row.Y})
+	}
+	return out
+}
+
 func inferLane(samples [][2]float32, team int32) (lane, role int32, roam bool) {
-	if len(samples) < 8 {
+	if len(samples) < 4 {
 		return 0, 0, false
 	}
 	var mid, top, bot, jungle int
@@ -863,6 +893,64 @@ func inferLane(samples [][2]float32, team int32) (lane, role int32, roam bool) {
 		return 1, 1, false
 	}
 	return 3, 3, false
+}
+
+// Valve barracks bitmask: melee/ranged × top/mid/bot. 63 = all standing.
+func raxBit(name string) (dire bool, bit uint16, ok bool) {
+	n := strings.ToLower(name)
+	if !strings.Contains(n, "rax") && !strings.Contains(n, "barracks") {
+		return false, 0, false
+	}
+	dire = strings.Contains(n, "badguys") || strings.Contains(n, "dire")
+	ranged := strings.Contains(n, "range")
+	lane := uint16(0) // top
+	switch {
+	case strings.Contains(n, "mid"):
+		lane = 2
+	case strings.Contains(n, "bot"):
+		lane = 4
+	}
+	bit = 1 << lane
+	if ranged {
+		bit <<= 1
+	}
+	return dire, bit, true
+}
+
+func (s *Session) noteRax(name string) {
+	isDire, bit, ok := raxBit(name)
+	if !ok {
+		return
+	}
+	s.raxSeen = true
+	if isDire {
+		s.raxDire &^= bit
+	} else {
+		s.raxRadiant &^= bit
+	}
+}
+
+func barracksFromCombat(rows []model.CombatLog) (rad, dire uint16, known bool) {
+	rad, dire = 63, 63
+	for _, row := range rows {
+		if row.Type != "DEATH" && row.Type != "TEAM_BUILDING_KILL" {
+			continue
+		}
+		isDire, bit, ok := raxBit(row.Target)
+		if !ok {
+			isDire, bit, ok = raxBit(row.Attacker)
+		}
+		if !ok {
+			continue
+		}
+		known = true
+		if isDire {
+			dire &^= bit
+		} else {
+			rad &^= bit
+		}
+	}
+	return rad, dire, known
 }
 
 func slotPtr(slot int8) *int32 {

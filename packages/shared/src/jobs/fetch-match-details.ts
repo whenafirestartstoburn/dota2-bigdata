@@ -19,6 +19,7 @@ export function matchOrigin(source: unknown): 'live' | 'historical' {
 	return source === 'live' ? 'live' : 'historical'
 }
 
+/** CLI / one-off backfill. The match-processing worker does not call this. */
 export async function persistSeqMatches(
 	ctx: SteamRequestContext,
 	startAtMatchSeqNum: number,

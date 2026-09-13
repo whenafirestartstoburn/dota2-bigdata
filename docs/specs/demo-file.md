@@ -329,9 +329,9 @@ separate `DOTA_UM_*` ids (464–636). Catalog: replay-mapping
 ### Match metadata
 
 `DOTA_UM_MatchMetadata` carries `CDOTAMatchMetadataFile`: Valve-computed
-graphs, inventory snapshots, kill lists, predictions. We stash the JSON
-on `replay_epilogue` and prefer typed combat / interval tables for
-anything we named.
+graphs, inventory snapshots, kill lists, purchases. Those land on
+`replay_meta*` as typed rows. Combat / interval tables stay the live
+timeline; metadata is the post-game summary Valve already computed.
 
 ### Game events
 

@@ -10,7 +10,7 @@ export type LiveIngest = typeof INGEST.liveLeague | typeof INGEST.topLive
 export const WAITING = {
 	liveEnd: 'live_end',
 	history: 'history',
-	seq: 'seq',
+	seq: 'seq', // leftover; ingest no longer waits on GetMatchHistoryBySequenceNum
 	gc: 'gc',
 	replay: 'replay',
 	parse: 'parse',

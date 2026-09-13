@@ -13,6 +13,19 @@ export function valvePlayerSlot(team: 0 | 1, teamSlot: number): number {
 	return team === 0 ? teamSlot : 128 + teamSlot
 }
 
+const ITEM_SCEPTER = 108
+const ITEM_SCEPTER_2 = 271
+const ITEM_SHARD = 609
+const ITEM_MOON_SHARD = 247
+const SCEPTER_ITEMS = [ITEM_SCEPTER, ITEM_SCEPTER_2]
+
+function heldFlag(
+	held: ReadonlyArray<number | null>,
+	itemIds: readonly number[],
+): number | null {
+	return held.some((id) => id != null && itemIds.includes(id)) ? 1 : null
+}
+
 /** Accept Valve slots or linear 0–9 (5–9 → dire). Reject 133+ / negative. */
 export function normalizeValvePlayerSlot(slot: number): number | null {
 	if (slot >= 0 && slot <= 4) return slot
@@ -211,6 +224,7 @@ function asStatusPair(
 	const packed = Array.isArray(raw[packedKey]) ? raw[packedKey] : null
 	const fromPacked = (index: number) =>
 		packed == null ? null : asNumber(packed[index])
+	// Never copy radiant onto dire. A lone packed integer is radiant-only.
 	return [
 		asNumber(raw[radiantKey]) ?? fromPacked(0),
 		asNumber(raw[direKey]) ?? fromPacked(1),
@@ -493,6 +507,34 @@ function extractPlayer(
 			? abilityUpgradeRows.map((row) => row.abilityId)
 			: null)
 
+	const item0 = asItemId(row.item_0) ?? asItemId(row.item0)
+	const item1 = asItemId(row.item_1) ?? asItemId(row.item1)
+	const item2 = asItemId(row.item_2) ?? asItemId(row.item2)
+	const item3 = asItemId(row.item_3) ?? asItemId(row.item3)
+	const item4 = asItemId(row.item_4) ?? asItemId(row.item4)
+	const item5 = asItemId(row.item_5) ?? asItemId(row.item5)
+	const item6 = asItemId(row.item_6)
+	const item7 = asItemId(row.item_7)
+	const item8 = asItemId(row.item_8)
+	const item9 = asItemId(row.item_9)
+	const item10 = asItemId(row.item_10)
+	const backpack0 = asItemId(row.backpack_0) ?? item6
+	const backpack1 = asItemId(row.backpack_1) ?? item7
+	const backpack2 = asItemId(row.backpack_2) ?? item8
+	const held = [
+		item0,
+		item1,
+		item2,
+		item3,
+		item4,
+		item5,
+		backpack0,
+		backpack1,
+		backpack2,
+		item9,
+		item10,
+	]
+
 	return {
 		accountId: asNumber(row.account_id) ?? 0,
 		playerSlot: slot,
@@ -524,27 +566,28 @@ function extractPlayer(
 		scaledHeroDamage: asNumber(row.scaled_hero_damage),
 		scaledTowerDamage: asNumber(row.scaled_tower_damage),
 		scaledHeroHealing: asNumber(row.scaled_hero_healing),
-		item0: asItemId(row.item_0) ?? asItemId(row.item0),
-		item1: asItemId(row.item_1) ?? asItemId(row.item1),
-		item2: asItemId(row.item_2) ?? asItemId(row.item2),
-		item3: asItemId(row.item_3) ?? asItemId(row.item3),
-		item4: asItemId(row.item_4) ?? asItemId(row.item4),
-		item5: asItemId(row.item_5) ?? asItemId(row.item5),
-		itemNeutral: asItemId(row.item_neutral),
-		itemNeutral2: asItemId(row.item_neutral2),
-		item6: asItemId(row.item_6),
-		item7: asItemId(row.item_7),
-		item8: asItemId(row.item_8),
-		item9: asItemId(row.item_9),
-		item10: asItemId(row.item_10),
+		item0,
+		item1,
+		item2,
+		item3,
+		item4,
+		item5,
+		itemNeutral: asItemId(row.item_neutral) ?? item9,
+		itemNeutral2: asItemId(row.item_neutral2) ?? item10,
+		item6,
+		item7,
+		item8,
+		item9,
+		item10,
 		item10Lvl: asNumber(row.item_10_lvl),
-		backpack0: asItemId(row.backpack_0),
-		backpack1: asItemId(row.backpack_1),
-		backpack2: asItemId(row.backpack_2),
+		backpack0,
+		backpack1,
+		backpack2,
 		selectedFacet: asNumber(row.selected_facet) ?? asNumber(row.hero_variant),
-		aghanimsScepter: asNumber(row.aghanims_scepter),
-		aghanimsShard: asNumber(row.aghanims_shard),
-		moonshard: asNumber(row.moonshard),
+		aghanimsScepter:
+			asNumber(row.aghanims_scepter) ?? heldFlag(held, SCEPTER_ITEMS),
+		aghanimsShard: asNumber(row.aghanims_shard) ?? heldFlag(held, [ITEM_SHARD]),
+		moonshard: asNumber(row.moonshard) ?? heldFlag(held, [ITEM_MOON_SHARD]),
 		abilityUpgrades,
 		abilityUpgradeRows,
 		leaverStatus: asNumber(row.leaver_status),

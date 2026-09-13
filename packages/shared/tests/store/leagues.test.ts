@@ -16,16 +16,29 @@ async function cleanup(): Promise<void> {
 afterAll(cleanup)
 
 describe('pickNextHistoryLeague', () => {
-	test('never-walked leagues go newest-id first when activity ties', async () => {
+	test('never-walked leagues go newest-id first when tier and activity tie', async () => {
 		await cleanup()
 		await db.execute(sql`
 			INSERT INTO leagues (
-				league_id, name, status, most_recent_activity, start_timestamp
+				league_id, name, status, tier, most_recent_activity, start_timestamp
 			) VALUES
-				(${OLD_ID}, 'old fixture', 'FINISHED', ${ACTIVITY}, ${ACTIVITY}),
-				(${NEW_ID}, 'new fixture', 'FINISHED', ${ACTIVITY}, ${ACTIVITY})
+				(${OLD_ID}, 'old fixture', 'FINISHED', 99, ${ACTIVITY}, ${ACTIVITY}),
+				(${NEW_ID}, 'new fixture', 'FINISHED', 99, ${ACTIVITY}, ${ACTIVITY})
 		`)
 		const row = await pickNextHistoryLeague(86_400_000)
 		expect(asNumber(row?.league_id)).toBe(NEW_ID)
+	})
+
+	test('higher tier wins over a newer lower-tier league', async () => {
+		await cleanup()
+		await db.execute(sql`
+			INSERT INTO leagues (
+				league_id, name, status, tier, most_recent_activity, start_timestamp
+			) VALUES
+				(${OLD_ID}, 'major', 'FINISHED', 99, ${ACTIVITY - 10_000}, ${ACTIVITY - 10_000}),
+				(${NEW_ID}, 'amateur', 'FINISHED', 1, ${ACTIVITY}, ${ACTIVITY})
+		`)
+		const row = await pickNextHistoryLeague(86_400_000)
+		expect(asNumber(row?.league_id)).toBe(OLD_ID)
 	})
 })

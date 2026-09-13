@@ -6,7 +6,8 @@ Companions: [`demo-file.md`](./demo-file.md) (what a `.dem` is),
 A Go service (`packages/parser`) reads `.dem.bz2` from S3, extracts every
 typed event the current `replay_*` schema can hold, and writes ClickHouse
 plus the sparse Postgres facts the spec already named (`match_objectives`,
-`match_draft` clocks, `match_players` parse summaries). The TypeScript
+`match_draft` clocks, `match_players` parse summaries, captains and leftover
+backpack / neutrals / Aghs from metadata). The TypeScript
 worker still only downloads; it does not parse.
 
 Decoder is ours (`packages/parser/internal/replay`). It implements the
@@ -66,7 +67,7 @@ the **published** run — that is what makes a write visible.
 
 High-volume tables (`replay_combat_log`, `replay_actions`,
 `replay_intervals`) are flushed to ClickHouse in batches **during**
-decode. Smaller tables (draft, chat, wards, epilogue, …) flush when
+decode. Smaller tables (draft, chat, wards, `replay_meta*`, …) flush when
 their buffer fills or at end-of-demo. A batch is a few thousand rows
 (seed 8 192), not one INSERT per event. After a successful flush the
 Go slice is reused so extract RAM stays O(batch), not O(match).
@@ -100,13 +101,17 @@ is in flight; join
 `parser_version` is the extract/schema revision of this binary (starts at
 `1`). Bump it when columns or extract rules change. **3** after
 `account_id` on every `replay_*` row (and combat attacker/target
-accounts). Re-parse is how old matches get the stamps.
+accounts). **4** after PURCHASE `value_name` (CombatLogNames[value]),
+lane fill from positions, and barracks bitmasks from rax kills. Re-parse
+is how old matches get the stamps.
 
 ## What we store
 
 Every table in the replay catalog. Combat-log proto scalars already have
-columns. This revision adds the fields the decoder actually emits that
-the first schema dropped:
+columns — field-by-field map in
+[`replay-mapping.md`](./replay-mapping.md#cmsgdotacombatlogentry-columns).
+This revision adds the fields the decoder actually emits that the first
+schema dropped:
 
 | Table | Added |
 |---|---|
@@ -123,9 +128,10 @@ not dropped.
 
 Event → table map (every combat type, every stored user message, and
 what we deliberately skip): [`replay-mapping.md`](./replay-mapping.md).
-`parser_version` is **3** after `account_id` on every `replay_*` row
-(and combat `attacker_account_id` / `target_account_id`). Version 2
-was `replay_alerts` and interval vitals.
+`parser_version` is **4** after PURCHASE names, lane positions, and
+rax-derived barracks. Version 3 stamped `account_id` on every
+`replay_*` row (and combat `attacker_account_id` /
+`target_account_id`). Version 2 was `replay_alerts` and interval vitals.
 
 ## Out of scope
 

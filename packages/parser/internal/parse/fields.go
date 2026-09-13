@@ -201,16 +201,115 @@ func entityPosition(e *replay.Entity) (x, y, z float32, ok bool) {
 	if e == nil {
 		return 0, 0, 0, false
 	}
-	cx := getInt(e, "CBodyComponent.m_cellX", "m_cellX")
-	cy := getInt(e, "CBodyComponent.m_cellY", "m_cellY")
-	cz := getInt(e, "CBodyComponent.m_cellZ", "m_cellZ")
-	vx := getFloat(e, "CBodyComponent.m_vecX", "m_vecX")
-	vy := getFloat(e, "CBodyComponent.m_vecY", "m_vecY")
-	vz := getFloat(e, "CBodyComponent.m_vecZ", "m_vecZ")
+	cx := getInt(e,
+		"CBodyComponent.m_cellX",
+		"m_CBodyComponent.m_cellX",
+		"CBodyComponentBaseAnimGraph.m_cellX",
+		"CBodyComponentBaseAnimating.m_cellX",
+		"CBodyComponentBaseAnimatingOverlay.m_cellX",
+		"m_cellX",
+	)
+	cy := getInt(e,
+		"CBodyComponent.m_cellY",
+		"m_CBodyComponent.m_cellY",
+		"CBodyComponentBaseAnimGraph.m_cellY",
+		"CBodyComponentBaseAnimating.m_cellY",
+		"CBodyComponentBaseAnimatingOverlay.m_cellY",
+		"m_cellY",
+	)
+	cz := getInt(e,
+		"CBodyComponent.m_cellZ",
+		"m_CBodyComponent.m_cellZ",
+		"CBodyComponentBaseAnimGraph.m_cellZ",
+		"CBodyComponentBaseAnimating.m_cellZ",
+		"CBodyComponentBaseAnimatingOverlay.m_cellZ",
+		"m_cellZ",
+	)
+	if cx == 0 && cy == 0 {
+		if sx, ok := e.FindSuffix("m_cellX"); ok {
+			cx = asInt32Or(sx)
+		}
+		if sy, ok := e.FindSuffix("m_cellY"); ok {
+			cy = asInt32Or(sy)
+		}
+		if sz, ok := e.FindSuffix("m_cellZ"); ok {
+			cz = asInt32Or(sz)
+		}
+	}
+	vx := getFloat(e,
+		"CBodyComponent.m_vecX",
+		"m_CBodyComponent.m_vecX",
+		"CBodyComponentBaseAnimGraph.m_vecX",
+		"m_vecX",
+	)
+	vy := getFloat(e,
+		"CBodyComponent.m_vecY",
+		"m_CBodyComponent.m_vecY",
+		"CBodyComponentBaseAnimGraph.m_vecY",
+		"m_vecY",
+	)
+	vz := getFloat(e,
+		"CBodyComponent.m_vecZ",
+		"m_CBodyComponent.m_vecZ",
+		"CBodyComponentBaseAnimGraph.m_vecZ",
+		"m_vecZ",
+	)
+	if vx == 0 && vy == 0 {
+		if sx, ok := e.FindSuffix("m_vecX"); ok {
+			vx = asFloat32Or(sx)
+		}
+		if sy, ok := e.FindSuffix("m_vecY"); ok {
+			vy = asFloat32Or(sy)
+		}
+		if sz, ok := e.FindSuffix("m_vecZ"); ok {
+			vz = asFloat32Or(sz)
+		}
+	}
 	if cx == 0 && cy == 0 && vx == 0 && vy == 0 {
+		if ox, oy, oz, ok := originVec(e); ok {
+			return ox / 128, oy / 128, oz / 128, true
+		}
 		return 0, 0, 0, false
 	}
 	return cellCoord(cx, vx), cellCoord(cy, vy), cellCoord(cz, vz), true
+}
+
+func originVec(e *replay.Entity) (x, y, z float32, ok bool) {
+	v := getAny(e,
+		"CBodyComponent.m_vecOrigin",
+		"m_CBodyComponent.m_vecOrigin",
+		"CBodyComponent.m_vecAbsOrigin",
+	)
+	if v == nil {
+		if found, foundOK := e.FindSuffix("m_vecAbsOrigin"); foundOK {
+			v = found
+		} else if found, foundOK := e.FindSuffix("m_vecOrigin"); foundOK {
+			v = found
+		}
+	}
+	switch vec := v.(type) {
+	case []float32:
+		if len(vec) < 2 {
+			return 0, 0, 0, false
+		}
+		z = 0
+		if len(vec) > 2 {
+			z = vec[2]
+		}
+		return vec[0], vec[1], z, vec[0] != 0 || vec[1] != 0
+	default:
+		return 0, 0, 0, false
+	}
+}
+
+func asInt32Or(v any) int32 {
+	n, _ := asInt32(v)
+	return n
+}
+
+func asFloat32Or(v any) float32 {
+	n, _ := asFloat32(v)
+	return n
 }
 
 func classHasPrefix(e *replay.Entity, prefixes ...string) bool {
@@ -270,6 +369,19 @@ func lookupCL(p *replay.Session, idx uint32) string {
 	}
 	name, ok := p.LookupString("CombatLogNames", int32(idx))
 	if !ok {
+		return ""
+	}
+	return name
+}
+
+func unknownCL(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "" || n == "dota_unknown" || n == "unknown"
+}
+
+func clName(p *replay.Session, idx uint32) string {
+	name := lookupCL(p, idx)
+	if unknownCL(name) {
 		return ""
 	}
 	return name

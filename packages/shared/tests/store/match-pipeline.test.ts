@@ -494,7 +494,7 @@ describe('history discovery and waiter', () => {
 			FROM matches WHERE match_id = ${WAIT_ID}
 		`)
 		expect(ready?.phase).toBe('awaiting_details')
-		expect(ready?.waiting_for).toBe('seq')
+		expect(ready?.waiting_for).toBe('gc')
 		expect(Number(ready?.match_seq_num)).toBe(42)
 	})
 

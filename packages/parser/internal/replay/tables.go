@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -91,36 +92,53 @@ func (s *Session) onSendTables(m *valve.CDemoSendTables) error {
 					kinds[p.typ] = parseKind(p.typ)
 				}
 				p.kind = kinds[p.typ]
-				if p.serName != "" {
-					p.layout = s.layouts[p.serName]
-				}
 				for _, f := range fixes {
 					f.fn(p)
-				}
-				switch {
-				case p.layout != nil:
-					if p.kind.ptr || embeddedPtr[p.kind.base] {
-						p.setModel(modelFixedTab)
-					} else {
-						p.setModel(modelVarTab)
-					}
-				case p.kind.count > 0 && p.kind.base != "char":
-					p.setModel(modelFixedArr)
-				case p.kind.base == "CUtlVector" || p.kind.base == "CNetworkUtlVectorBase":
-					p.setModel(modelVarArr)
-				default:
-					p.setModel(modelLeaf)
 				}
 				fields[i] = p
 			}
 			lay.fields = append(lay.fields, fields[i])
 		}
 		s.layouts[lay.name] = lay
+		if lay.ver != 0 {
+			s.layouts[fmt.Sprintf("%s:%d", lay.name, lay.ver)] = lay
+		}
 		if c, ok := s.classByName[lay.name]; ok {
 			c.layout = lay
 		}
 	}
+	// Serializers reference each other by name. Hero classes often appear
+	// before CBodyComponent* in the packet; binding on first sight left
+	// m_cellX / m_vecX as missing leaves and every interval x,y at 0.
+	bindFieldModels(fields, s.layouts)
 	return nil
+}
+
+func bindFieldModels(fields map[int32]*prop, layouts map[string]*layout) {
+	for _, p := range fields {
+		if p.layout == nil && p.serName != "" {
+			if p.serVer != 0 {
+				p.layout = layouts[fmt.Sprintf("%s:%d", p.serName, p.serVer)]
+			}
+			if p.layout == nil {
+				p.layout = layouts[p.serName]
+			}
+		}
+		switch {
+		case p.layout != nil:
+			if p.kind.ptr || embeddedPtr[p.kind.base] {
+				p.setModel(modelFixedTab)
+			} else {
+				p.setModel(modelVarTab)
+			}
+		case p.kind.count > 0 && p.kind.base != "char":
+			p.setModel(modelFixedArr)
+		case p.kind.base == "CUtlVector" || p.kind.base == "CNetworkUtlVectorBase":
+			p.setModel(modelVarArr)
+		default:
+			p.setModel(modelLeaf)
+		}
+	}
 }
 
 func (s *Session) onClassInfo(m *valve.CDemoClassInfo) error {

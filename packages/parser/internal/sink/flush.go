@@ -41,10 +41,7 @@ func (f *Flusher) Finish(res *model.Result) error {
 		return err
 	}
 	res.Actions = res.Actions[:0]
-	small := []struct {
-		table string
-		fn    func(context.Context) error
-	}{
+	small := []insertJob{
 		{"replay_pings", func(ctx context.Context) error {
 			return insert(ctx, f.ch.conn, "replay_pings", res.Pings)
 		}},
@@ -75,10 +72,8 @@ func (f *Flusher) Finish(res *model.Result) error {
 		{"replay_alerts", func(ctx context.Context) error {
 			return insert(ctx, f.ch.conn, "replay_alerts", res.Alerts)
 		}},
-		{"replay_epilogue", func(ctx context.Context) error {
-			return insert(ctx, f.ch.conn, "replay_epilogue", res.Epilogue)
-		}},
 	}
+	small = append(small, metaJobs(f.ch.conn, res)...)
 	errCh := make(chan error, len(small))
 	for _, j := range small {
 		j := j

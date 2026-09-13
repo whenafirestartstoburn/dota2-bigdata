@@ -604,7 +604,7 @@ export async function markHistoryAvailable(
 				ELSE ingest_sources || ${INGEST.history}::text
 			END,
 			phase = 'awaiting_details'::match_phase,
-			waiting_for = ${WAITING.seq},
+			waiting_for = ${WAITING.gc},
 			updated_at = now()
 		WHERE match_id = ${row.matchId}
 			AND phase = 'awaiting_history'
@@ -968,7 +968,7 @@ export async function upsertHistoryMatches(
 				${row.start_time}, ${row.lobby_type}, ${row.series_id || null},
 				${row.series_type}, ${row.radiant_team_id}, ${row.dire_team_id},
 				${patch}, 'awaiting_details'::match_phase, 'historical'::match_source,
-				ARRAY[${INGEST.history}]::text[], ${WAITING.seq},
+				ARRAY[${INGEST.history}]::text[], ${WAITING.gc},
 				now(), now()
 			)
 			ON CONFLICT (match_id) DO UPDATE SET
@@ -998,7 +998,7 @@ export async function upsertHistoryMatches(
 						'live', 'details_ready', 'awaiting_replay', 'replay_stored',
 						'replay_unavailable', 'parsed', 'failed'
 					) THEN matches.waiting_for
-					ELSE ${WAITING.seq}
+					ELSE ${WAITING.gc}
 				END,
 				updated_at = now()
 		`)
@@ -1026,10 +1026,10 @@ export async function saveMatchFacts(
 			radiant_win = COALESCE(${facts.radiantWin}, radiant_win),
 			radiant_score = COALESCE(${facts.radiantScore}, radiant_score),
 			dire_score = COALESCE(${facts.direScore}, dire_score),
-			tower_status_radiant = COALESCE(${facts.towerStatusRadiant}, tower_status_radiant),
-			tower_status_dire = COALESCE(${facts.towerStatusDire}, tower_status_dire),
-			barracks_status_radiant = COALESCE(${facts.barracksStatusRadiant}, barracks_status_radiant),
-			barracks_status_dire = COALESCE(${facts.barracksStatusDire}, barracks_status_dire),
+			tower_status_radiant = COALESCE(${facts.towerStatusRadiant ?? null}, tower_status_radiant),
+			tower_status_dire = COALESCE(${facts.towerStatusDire ?? null}, tower_status_dire),
+			barracks_status_radiant = COALESCE(${facts.barracksStatusRadiant ?? null}, barracks_status_radiant),
+			barracks_status_dire = COALESCE(${facts.barracksStatusDire ?? null}, barracks_status_dire),
 			first_blood_time = COALESCE(${facts.firstBloodTime}, first_blood_time),
 			lobby_type = COALESCE(${facts.lobbyType}, lobby_type),
 			lobby_id = COALESCE(${facts.lobbyId}, lobby_id),

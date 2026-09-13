@@ -319,3 +319,50 @@ func (c *class) pathOf(name string) (*cursor, bool) {
 	c.cache[name] = fp
 	return fp, true
 }
+
+func (c *class) pathEnding(suffix string) (*cursor, bool) {
+	key := "$" + suffix
+	if fp, ok := c.cache[key]; ok {
+		return fp, true
+	}
+	if c.miss[key] {
+		return nil, false
+	}
+	var found string
+	c.layout.eachLeaf("", func(name string) {
+		if found != "" {
+			return
+		}
+		if name == suffix || strings.HasSuffix(name, "."+suffix) {
+			found = name
+		}
+	})
+	if found == "" {
+		c.miss[key] = true
+		return nil, false
+	}
+	fp, ok := c.pathOf(found)
+	if !ok {
+		c.miss[key] = true
+		return nil, false
+	}
+	c.cache[key] = fp
+	return fp, true
+}
+
+func (l *layout) eachLeaf(prefix string, fn func(string)) {
+	if l == nil {
+		return
+	}
+	for _, f := range l.fields {
+		name := f.name
+		if prefix != "" {
+			name = prefix + "." + f.name
+		}
+		if f.layout != nil {
+			f.layout.eachLeaf(name, fn)
+			continue
+		}
+		fn(name)
+	}
+}

@@ -51,13 +51,13 @@ bun run api       # another terminal
 | `walk_league_history` | historical | continuous | `GetMatchHistory` pages (discovery only) |
 | `poll_finished_history` | historical | every 5s | `GetMatchHistory` waiter after a live match leaves the feed |
 | `process_league` | historical | via HTTP | reset + walk one league |
-| `fetch_match_details` | match-processing | on demand | seq window then GC → replay URL |
+| `fetch_match_details` | match-processing | on demand | GC `CMsgDOTAMatch` → replay URL |
 | `download_replay` | match-processing | after URL | Valve CDN → S3 |
 | parser (Go) | parser | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*` |
 
 League status is **ours**, not Valve's `status` integer (that flag is stored as `valve_status`). A league is `LIVE` if it currently appears in live games, or now is between `start_timestamp` and `end_timestamp`; `UPCOMING` if start is in the future; `FINISHED` if the window ended, Valve marked it concluded (`status=5`), or activity is stale.
 
-`GetMatchHistory` / `GetMatchHistoryBySequenceNum` are capped by Valve at **100** matches per call (a request of 1000 is silently truncated). History paginates; seq details walk `match_seq_num` in 100-match global windows.
+`GetMatchHistory` is capped by Valve at **100** matches per call (a request of 1000 is silently truncated). History paginates by `league_id`. Match-processing does not call `GetMatchHistoryBySequenceNum`.
 
 ## Process a finished league
 

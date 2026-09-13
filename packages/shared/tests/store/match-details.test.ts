@@ -28,6 +28,15 @@ describe('extractMatchFacts', () => {
 		expect(facts.radiantTeamName).toBe('Team A')
 	})
 
+	test('does not copy a lone barracks value onto dire', () => {
+		const facts = extractMatchFacts({
+			match_id: 8,
+			barracks_status_radiant: 63,
+		})
+		expect(facts.barracksStatusRadiant).toBe(63)
+		expect(facts.barracksStatusDire).toBeNull()
+	})
+
 	test('maps GC packed tower status, match_outcome, and logos', () => {
 		const facts = extractMatchFacts({
 			match_id: 9,
@@ -94,6 +103,28 @@ describe('valve player slots', () => {
 })
 
 describe('extractPlayers', () => {
+	test('maps GC item_6..8 onto backpack and infers Aghs from items', () => {
+		const players = extractPlayers({
+			players: [
+				{
+					account_id: 1,
+					player_slot: 0,
+					hero_id: 1,
+					item_0: 108,
+					item_6: 11,
+					item_7: 12,
+					item_8: 13,
+					item_9: 1603,
+				},
+			],
+		})
+		expect(players[0]?.backpack0).toBe(11)
+		expect(players[0]?.backpack1).toBe(12)
+		expect(players[0]?.backpack2).toBe(13)
+		expect(players[0]?.itemNeutral).toBe(1603)
+		expect(players[0]?.aghanimsScepter).toBe(1)
+	})
+
 	test('expands box score, items, and buffs', () => {
 		const players = extractPlayers({
 			players: [

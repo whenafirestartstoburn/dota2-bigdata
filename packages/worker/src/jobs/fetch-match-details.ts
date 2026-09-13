@@ -1,8 +1,4 @@
 import {
-	pickApiCredential,
-	steamCtx,
-} from '@app/shared/src/components/resources'
-import {
 	GC_ERESULT,
 	isTerminalGcDetailsResult,
 	REPLAY_STATE,
@@ -11,7 +7,6 @@ import {
 	enqueueDownloadReplay,
 	enqueueFetchMatchDetails,
 	matchOrigin,
-	persistSeqMatches,
 } from '@app/shared/src/jobs/fetch-match-details'
 import {
 	replayUrl,
@@ -43,12 +38,6 @@ export async function runFetchMatchDetails(input: {
 }): Promise<{ saved: number; url?: string }> {
 	const match = await getMatch(input.matchId)
 	const origin = input.origin ?? matchOrigin(match?.source)
-	const seqNum = asNumber(match?.match_seq_num)
-	if (match?.seq_fetched_at == null && seqNum != null && seqNum > 0) {
-		const cred = await pickApiCredential()
-		const ctx = steamCtx(cred, origin)
-		await persistSeqMatches(ctx, seqNum)
-	}
 	await ensureReplayRow(input.matchId, origin)
 	await copyReplayLocatorFromMatch(input.matchId)
 	const replay = await getReplay(input.matchId)

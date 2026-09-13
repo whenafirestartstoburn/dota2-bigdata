@@ -247,10 +247,99 @@ type Alert struct {
 	Key     string  `ch:"key"`
 }
 
-type Epilogue struct {
+type Meta struct {
 	Header
-	Key   string `ch:"key"`
-	Value string `ch:"value"`
+	PlaybackTime    float32 `ch:"playback_time"`
+	PlaybackTicks   uint32  `ch:"playback_ticks"`
+	PlaybackFrames  uint32  `ch:"playback_frames"`
+	GameWinner      uint8   `ch:"game_winner"`
+	RadiantTeamID   uint32  `ch:"radiant_team_id"`
+	DireTeamID      uint32  `ch:"dire_team_id"`
+	MetadataVersion int32   `ch:"metadata_version"`
+	LobbyID         uint64  `ch:"lobby_id"`
+}
+
+type MetaTeam struct {
+	Header
+	DotaTeam          uint8     `ch:"dota_team"`
+	CMFirstPick       uint8     `ch:"cm_first_pick"`
+	CMCaptainPlayerID int32     `ch:"cm_captain_player_id"`
+	CMPenalty         uint32    `ch:"cm_penalty"`
+	GraphExperience   []float32 `ch:"graph_experience"`
+	GraphGoldEarned   []float32 `ch:"graph_gold_earned"`
+	GraphNetWorth     []float32 `ch:"graph_net_worth"`
+}
+
+type MetaPlayer struct {
+	Header
+	ValveSlot           uint8     `ch:"valve_slot"`
+	TeamNumber          uint8     `ch:"team_number"`
+	TeamSlot            uint8     `ch:"team_slot"`
+	CampsStacked        uint32    `ch:"camps_stacked"`
+	LaneSelectionFlags  uint32    `ch:"lane_selection_flags"`
+	Rampages            uint32    `ch:"rampages"`
+	TripleKills         uint32    `ch:"triple_kills"`
+	AegisSnatched       uint32    `ch:"aegis_snatched"`
+	RapiersPurchased    uint32    `ch:"rapiers_purchased"`
+	CouriersKilled      uint32    `ch:"couriers_killed"`
+	NetWorthRank        uint32    `ch:"net_worth_rank"`
+	SupportGoldSpent    uint32    `ch:"support_gold_spent"`
+	ObserverWardsPlaced uint32    `ch:"observer_wards_placed"`
+	SentryWardsPlaced   uint32    `ch:"sentry_wards_placed"`
+	WardsDewarded       uint32    `ch:"wards_dewarded"`
+	StunDuration        float32   `ch:"stun_duration"`
+	FightScore          float32   `ch:"fight_score"`
+	FarmScore           float32   `ch:"farm_score"`
+	SupportScore        float32   `ch:"support_score"`
+	PushScore           float32   `ch:"push_score"`
+	HeroXP              uint32    `ch:"hero_xp"`
+	AbilityUpgrades     []int32   `ch:"ability_upgrades"`
+	LevelUpTimes        []uint32  `ch:"level_up_times"`
+	GraphNetWorth       []float32 `ch:"graph_net_worth"`
+	GraphHeroDamage     []float32 `ch:"graph_hero_damage"`
+}
+
+type MetaKill struct {
+	Header
+	Team        uint8   `ch:"team"`
+	KillType    string  `ch:"kill_type"`
+	VictimSlot  uint8   `ch:"victim_slot"`
+	KillerSlots []uint8 `ch:"killer_slots"`
+	Bounty      int32   `ch:"bounty"`
+}
+
+type MetaPlayerKill struct {
+	Header
+	VictimSlot uint8  `ch:"victim_slot"`
+	Count      uint32 `ch:"count"`
+}
+
+type MetaPurchase struct {
+	Header
+	ItemID int32 `ch:"item_id"`
+}
+
+type MetaInventory struct {
+	Header
+	ItemIDs              []int32 `ch:"item_ids"`
+	BackpackItemIDs      []int32 `ch:"backpack_item_ids"`
+	NeutralItemID        int32   `ch:"neutral_item_id"`
+	NeutralEnhancementID int32   `ch:"neutral_enhancement_id"`
+	Kills                uint32  `ch:"kills"`
+	Deaths               uint32  `ch:"deaths"`
+	Assists              uint32  `ch:"assists"`
+	Level                uint32  `ch:"level"`
+	LastHits             uint32  `ch:"last_hits"`
+	Denies               uint32  `ch:"denies"`
+	Flags                uint32  `ch:"flags"`
+}
+
+type MetaTip struct {
+	Header
+	SourceSlot uint8  `ch:"source_slot"`
+	TargetSlot uint8  `ch:"target_slot"`
+	TipAmount  uint32 `ch:"tip_amount"`
+	EventID    uint32 `ch:"event_id"`
 }
 
 // Result is one parse attempt. High-volume slices may already have been
@@ -268,14 +357,28 @@ type Result struct {
 	Chat          []Chat
 	Announcements []Announcement
 	Draft         []Draft
-	AbilityLevels []AbilityLevel
-	Inventory     []Inventory
-	Neutrals      []Neutral
-	Cosmetics     []Cosmetic
-	Alerts        []Alert
-	Epilogue      []Epilogue
-	Objectives    []Objective
-	PlayerSummary []PlayerSummary
+	// PickBans is the official CDemoFileInfo sequence (≈24 rows). PG
+	// match_draft uses this; Draft stays the live gamerules timeline for CH.
+	PickBans []Draft
+	// BarracksRadiant / BarracksDire are end-game bitmasks from rax kills.
+	BarracksRadiant uint16
+	BarracksDire    uint16
+	BarracksKnown   bool
+	AbilityLevels   []AbilityLevel
+	Inventory       []Inventory
+	Neutrals        []Neutral
+	Cosmetics       []Cosmetic
+	Alerts          []Alert
+	Meta            Meta
+	MetaTeams       []MetaTeam
+	MetaPlayers     []MetaPlayer
+	MetaKills       []MetaKill
+	MetaPlayerKills []MetaPlayerKill
+	MetaPurchases   []MetaPurchase
+	MetaInventory   []MetaInventory
+	MetaTips        []MetaTip
+	Objectives      []Objective
+	PlayerSummary   []PlayerSummary
 }
 
 type Objective struct {
@@ -306,20 +409,34 @@ type PlayerSummary struct {
 
 func (r *Result) Counts() map[string]int {
 	return map[string]int{
-		"combat_log":     len(r.CombatLog),
-		"intervals":      len(r.Intervals),
-		"actions":        len(r.Actions),
-		"pings":          len(r.Pings),
-		"wards":          len(r.Wards),
-		"chat":           len(r.Chat),
-		"announcements":  len(r.Announcements),
-		"draft":          len(r.Draft),
-		"ability_levels": len(r.AbilityLevels),
-		"inventory":      len(r.Inventory),
-		"neutrals":       len(r.Neutrals),
-		"cosmetics":      len(r.Cosmetics),
-		"alerts":         len(r.Alerts),
-		"epilogue":       len(r.Epilogue),
-		"objectives":     len(r.Objectives),
+		"combat_log":        len(r.CombatLog),
+		"intervals":         len(r.Intervals),
+		"actions":           len(r.Actions),
+		"pings":             len(r.Pings),
+		"wards":             len(r.Wards),
+		"chat":              len(r.Chat),
+		"announcements":     len(r.Announcements),
+		"draft":             len(r.Draft),
+		"ability_levels":    len(r.AbilityLevels),
+		"inventory":         len(r.Inventory),
+		"neutrals":          len(r.Neutrals),
+		"cosmetics":         len(r.Cosmetics),
+		"alerts":            len(r.Alerts),
+		"meta":              metaCount(r.Meta.MatchID),
+		"meta_teams":        len(r.MetaTeams),
+		"meta_players":      len(r.MetaPlayers),
+		"meta_kills":        len(r.MetaKills),
+		"meta_player_kills": len(r.MetaPlayerKills),
+		"meta_purchases":    len(r.MetaPurchases),
+		"meta_inventory":    len(r.MetaInventory),
+		"meta_tips":         len(r.MetaTips),
+		"objectives":        len(r.Objectives),
 	}
+}
+
+func metaCount(matchID uint64) int {
+	if matchID == 0 {
+		return 0
+	}
+	return 1
 }

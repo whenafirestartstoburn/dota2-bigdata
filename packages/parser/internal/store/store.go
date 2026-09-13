@@ -189,39 +189,22 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 		}
 	}
 
-	if len(res.Draft) > 0 {
-		if _, err := tx.Exec(ctx, `DELETE FROM match_draft WHERE match_id = $1`, res.MatchID); err != nil {
-			return err
-		}
-		for _, d := range res.Draft {
-			slot := int32(d.Slot)
-			var slotArg any
-			if d.Slot < 0 {
-				slotArg = nil
-			} else {
-				slotArg = slot
-			}
-			clock := d.Clock
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO match_draft (match_id, ord, is_pick, hero_id, team, player_slot, clock)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-			`, res.MatchID, int(d.Ord), d.IsPick == 1, d.HeroID, int16(d.Team), slotArg, clock); err != nil {
-				return fmt.Errorf("match_draft: %w", err)
-			}
-		}
+	if err := publishDraft(ctx, tx, res); err != nil {
+		return err
+	}
+	if res.BarracksKnown {
 		if _, err := tx.Exec(ctx, `
-			UPDATE match_draft AS d
-			SET player_slot = p.player_slot
-			FROM match_players AS p
-			WHERE d.match_id = $1
-				AND p.match_id = d.match_id
-				AND d.is_pick
-				AND d.hero_id <> 0
-				AND p.hero_id = d.hero_id
-				AND d.player_slot IS NULL
-		`, res.MatchID); err != nil {
-			return fmt.Errorf("match_draft slots: %w", err)
+			UPDATE matches
+			SET barracks_status_radiant = $2,
+				barracks_status_dire = $3,
+				updated_at = now()
+			WHERE match_id = $1
+		`, res.MatchID, int32(res.BarracksRadiant), int32(res.BarracksDire)); err != nil {
+			return fmt.Errorf("matches.barracks: %w", err)
 		}
+	}
+	if err := publishSeqGaps(ctx, tx, res); err != nil {
+		return err
 	}
 
 	for _, p := range res.PlayerSummary {
@@ -275,6 +258,117 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 	}
 
 	return tx.Commit(ctx)
+}
+
+func publishDraft(ctx context.Context, tx pgx.Tx, res *model.Result) error {
+	seq := res.PickBans
+	if !draftSequenceOK(seq) {
+		seq = compactDraft(res.Draft)
+	}
+	var n, picks int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE is_pick)
+		FROM match_draft
+		WHERE match_id = $1 AND hero_id > 0
+	`, res.MatchID).Scan(&n, &picks); err != nil {
+		return fmt.Errorf("match_draft count: %w", err)
+	}
+	if draftLooksComplete(n, picks) {
+		for _, d := range seq {
+			if d.HeroID <= 0 {
+				continue
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE match_draft
+				SET clock = $4, updated_at = now()
+				WHERE match_id = $1
+				  AND hero_id = $2
+				  AND is_pick = $3
+				  AND (clock IS NULL OR clock = 0)
+			`, res.MatchID, d.HeroID, d.IsPick == 1, d.Clock); err != nil {
+				return fmt.Errorf("match_draft clock: %w", err)
+			}
+		}
+		return fillDraftSlots(ctx, tx, res.MatchID)
+	}
+	if len(seq) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM match_draft WHERE match_id = $1`, res.MatchID); err != nil {
+		return err
+	}
+	for _, d := range seq {
+		slot := int32(d.Slot)
+		var slotArg any
+		if d.Slot < 0 {
+			slotArg = nil
+		} else {
+			slotArg = slot
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO match_draft (match_id, ord, is_pick, hero_id, team, player_slot, clock)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, res.MatchID, int(d.Ord), d.IsPick == 1, d.HeroID, int16(d.Team), slotArg, d.Clock); err != nil {
+			return fmt.Errorf("match_draft: %w", err)
+		}
+	}
+	return fillDraftSlots(ctx, tx, res.MatchID)
+}
+
+func fillDraftSlots(ctx context.Context, tx pgx.Tx, matchID uint64) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE match_draft AS d
+		SET player_slot = p.player_slot
+		FROM match_players AS p
+		WHERE d.match_id = $1
+			AND p.match_id = d.match_id
+			AND d.is_pick
+			AND d.hero_id <> 0
+			AND p.hero_id = d.hero_id
+			AND d.player_slot IS NULL
+	`, matchID); err != nil {
+		return fmt.Errorf("match_draft slots: %w", err)
+	}
+	return nil
+}
+
+func draftLooksComplete(n, picks int) bool {
+	return n >= 20 && n <= 32 && picks >= 10
+}
+
+func draftSequenceOK(rows []model.Draft) bool {
+	picks := 0
+	for _, d := range rows {
+		if d.HeroID > 0 && d.IsPick == 1 {
+			picks++
+		}
+	}
+	return draftLooksComplete(len(rows), picks)
+}
+
+func compactDraft(rows []model.Draft) []model.Draft {
+	type key struct {
+		hero   int32
+		isPick uint8
+	}
+	seen := make(map[key]struct{}, 24)
+	out := make([]model.Draft, 0, 24)
+	for _, d := range rows {
+		if d.HeroID <= 0 {
+			continue
+		}
+		k := key{d.HeroID, d.IsPick}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		d.Ord = uint16(len(out))
+		out = append(out, d)
+		if len(out) >= 32 {
+			break
+		}
+	}
+	return out
 }
 
 func nullStr(s string) any {

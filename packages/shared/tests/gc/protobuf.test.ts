@@ -79,6 +79,23 @@ describe('gc protobuf', () => {
 		expect(Number(fields.find((f) => f.field === 7)?.varint)).toBe(1)
 	})
 
+	test('decodes packed and unpacked barracks_status pairs', () => {
+		const packed = decodeGcMatch(
+			Uint8Array.from([0x4a, 0x02, 0x3f, 0x00]),
+		)
+		expect(packed.barracks_status).toEqual([63, 0])
+		expect(packed.barracks_status_radiant).toBe(63)
+		expect(packed.barracks_status_dire).toBe(0)
+
+		const unpacked = decodeGcMatch(Uint8Array.from([0x48, 0x3f, 0x48, 0x00]))
+		expect(unpacked.barracks_status).toEqual([63, 0])
+		expect(unpacked.barracks_status_dire).toBe(0)
+
+		const one = decodeGcMatch(Uint8Array.from([0x48, 0x3f]))
+		expect(one.barracks_status_radiant).toBe(63)
+		expect(one.barracks_status_dire).toBeNull()
+	})
+
 	test('protoSint32 zigzag-decodes omitted-as-minus-one chat player ids', () => {
 		const fields = decodeFields(Uint8Array.from([0x18, 0x01]))
 		expect(protoSint32(fields, 3)).toBe(-1)

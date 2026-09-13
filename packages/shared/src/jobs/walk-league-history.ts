@@ -143,17 +143,18 @@ export async function runWalkLeagueHistory(
 		room <= 0
 			? []
 			: await db.execute(sql`
-					SELECT match_id, source
-					FROM matches
-					WHERE (seq_fetched_at IS NULL OR details_fetched_at IS NULL)
-						AND phase IN (
+					SELECT m.match_id, m.source
+					FROM matches m
+					LEFT JOIN leagues l ON l.league_id = m.league_id
+					WHERE m.details_fetched_at IS NULL
+						AND m.phase IN (
 							'discovered',
-							'awaiting_details',
-							'details_ready'
+							'awaiting_details'
 						)
 					ORDER BY
-						CASE WHEN source = 'live' THEN 0 ELSE 1 END,
-						start_time DESC NULLS LAST
+						CASE WHEN m.source = 'live' THEN 0 ELSE 1 END,
+						COALESCE(l.tier, 0) DESC,
+						m.start_time DESC NULLS LAST
 					LIMIT ${room}
 				`)
 

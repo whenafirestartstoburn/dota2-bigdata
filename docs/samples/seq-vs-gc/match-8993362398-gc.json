@@ -1,0 +1,1022 @@
+{
+  "result": 1,
+  "match_id": 8993362398,
+  "cluster": 274,
+  "replay_salt": 1802756158,
+  "replay_state": 0,
+  "match": {
+    "duration": 477,
+    "start_time": 1789134336,
+    "players": [
+      {
+        "account_id": 1593315139,
+        "player_slot": 0,
+        "hero_id": 59,
+        "item_0": 151,
+        "item_1": 13,
+        "item_2": 13,
+        "item_3": 73,
+        "item_4": 29,
+        "item_5": 244,
+        "item_6": 16,
+        "item_7": 42,
+        "item_8": 16,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 5,
+        "deaths": 0,
+        "assists": 1,
+        "leaver_status": 0,
+        "gold": 717,
+        "last_hits": 51,
+        "denies": 20,
+        "gold_per_min": 540,
+        "xp_per_min": 563,
+        "gold_spent": 4305,
+        "hero_damage": 7002,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 0,
+        "level": 8,
+        "player_name": "♠LoNeLy WoLf♠",
+        "party_id": 0,
+        "scaled_hero_damage": 10218,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 4837,
+        "hero_pick_order": 7,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 2307,
+            "post_reduction": 1821,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 1449,
+            "post_reduction": 989,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 0,
+        "gold_lost_to_death": 0,
+        "lane_selection_flags": 0,
+        "bounty_runes": 0,
+        "outposts_captured": 0,
+        "team_number": 0,
+        "team_slot": 0,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 1806239138,
+        "player_slot": 1,
+        "hero_id": 70,
+        "item_0": 50,
+        "item_1": 11,
+        "item_2": 34,
+        "item_3": 75,
+        "item_4": 16,
+        "item_5": 56,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 3,
+        "deaths": 1,
+        "assists": 4,
+        "leaver_status": 0,
+        "gold": 682,
+        "last_hits": 36,
+        "denies": 5,
+        "gold_per_min": 404,
+        "xp_per_min": 372,
+        "gold_spent": 3385,
+        "hero_damage": 3691,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 0,
+        "level": 6,
+        "player_name": "TiaRa",
+        "party_id": 0,
+        "scaled_hero_damage": 4866,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 3692,
+        "hero_pick_order": 4,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 4446,
+            "post_reduction": 2815,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 250,
+            "post_reduction": 205,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 22,
+        "gold_lost_to_death": 36,
+        "lane_selection_flags": 0,
+        "bounty_runes": 1,
+        "outposts_captured": 0,
+        "team_number": 0,
+        "team_slot": 1,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 146329034,
+        "player_slot": 2,
+        "hero_id": 9,
+        "item_0": 237,
+        "item_1": 92,
+        "item_2": 1849,
+        "item_3": 29,
+        "item_4": 16,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 1606,
+        "item_10": 1585,
+        "item_10_lvl": 1,
+        "kills": 3,
+        "deaths": 0,
+        "assists": 4,
+        "leaver_status": 0,
+        "gold": 783,
+        "last_hits": 10,
+        "denies": 1,
+        "gold_per_min": 286,
+        "xp_per_min": 226,
+        "gold_spent": 2095,
+        "hero_damage": 3013,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 4,
+        "level": 5,
+        "player_name": "Никто",
+        "party_id": 0,
+        "scaled_hero_damage": 4092,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 2478,
+        "hero_pick_order": 5,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 778,
+            "post_reduction": 625,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 471,
+            "post_reduction": 346,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 0,
+        "gold_lost_to_death": 0,
+        "lane_selection_flags": 0,
+        "bounty_runes": 1,
+        "outposts_captured": 0,
+        "team_number": 0,
+        "team_slot": 2,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 776439412,
+        "player_slot": 3,
+        "hero_id": 71,
+        "item_0": 34,
+        "item_1": 44,
+        "item_2": 13,
+        "item_3": 20,
+        "item_4": 43,
+        "item_5": 29,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 1,
+        "deaths": 2,
+        "assists": 5,
+        "leaver_status": 0,
+        "gold": 237,
+        "last_hits": 1,
+        "denies": 0,
+        "gold_per_min": 174,
+        "xp_per_min": 165,
+        "gold_spent": 2100,
+        "hero_damage": 3324,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 17,
+        "level": 4,
+        "player_name": "88",
+        "party_id": 0,
+        "scaled_hero_damage": 4115,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 1412,
+        "hero_pick_order": 8,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 4806,
+            "post_reduction": 3677,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 165,
+            "post_reduction": 36,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 40,
+        "gold_lost_to_death": 29,
+        "lane_selection_flags": 0,
+        "bounty_runes": 1,
+        "outposts_captured": 0,
+        "team_number": 0,
+        "team_slot": 3,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 176141508,
+        "player_slot": 4,
+        "hero_id": 98,
+        "item_0": 44,
+        "item_1": 63,
+        "item_2": 4204,
+        "item_3": 178,
+        "item_4": 73,
+        "item_5": 19,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 16,
+        "item_9": 565,
+        "item_10": 1865,
+        "item_10_lvl": 1,
+        "kills": 1,
+        "deaths": 0,
+        "assists": 0,
+        "leaver_status": 0,
+        "gold": 901,
+        "last_hits": 62,
+        "denies": 14,
+        "gold_per_min": 472,
+        "xp_per_min": 508,
+        "gold_spent": 3520,
+        "hero_damage": 907,
+        "tower_damage": 122,
+        "hero_healing": 0,
+        "disable_duration": 0,
+        "level": 8,
+        "player_name": "Loser",
+        "party_id": 0,
+        "scaled_hero_damage": 1122,
+        "scaled_tower_damage": 56,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 4246,
+        "hero_pick_order": 9,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 408,
+            "post_reduction": 214,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 283,
+            "post_reduction": 201,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 0,
+        "gold_lost_to_death": 0,
+        "lane_selection_flags": 0,
+        "bounty_runes": 1,
+        "outposts_captured": 0,
+        "team_number": 0,
+        "team_slot": 4,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 698450848,
+        "player_slot": 128,
+        "hero_id": 28,
+        "item_0": 36,
+        "item_1": 29,
+        "item_2": 73,
+        "item_3": 0,
+        "item_4": 73,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 0,
+        "deaths": 2,
+        "assists": 3,
+        "leaver_status": 0,
+        "gold": 51,
+        "last_hits": 26,
+        "denies": 5,
+        "gold_per_min": 273,
+        "xp_per_min": 262,
+        "gold_spent": 2665,
+        "hero_damage": 3392,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 17,
+        "level": 5,
+        "player_name": "4",
+        "party_id": 0,
+        "scaled_hero_damage": 3416,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 2471,
+        "hero_pick_order": 3,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 5222,
+            "post_reduction": 3186,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 3532,
+            "post_reduction": 2593,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 40,
+        "gold_lost_to_death": 59,
+        "lane_selection_flags": 0,
+        "bounty_runes": 1,
+        "outposts_captured": 0,
+        "team_number": 1,
+        "team_slot": 0,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 683522989,
+        "player_slot": 129,
+        "hero_id": 56,
+        "item_0": 0,
+        "item_1": 0,
+        "item_2": 240,
+        "item_3": 11,
+        "item_4": 0,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 2,
+        "deaths": 4,
+        "assists": 1,
+        "leaver_status": 0,
+        "gold": 1416,
+        "last_hits": 6,
+        "denies": 1,
+        "gold_per_min": 213,
+        "xp_per_min": 184,
+        "gold_spent": 780,
+        "hero_damage": 3085,
+        "tower_damage": 0,
+        "hero_healing": 318,
+        "disable_duration": 0,
+        "level": 4,
+        "player_name": "MadaraDz",
+        "party_id": 0,
+        "scaled_hero_damage": 3538,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 311,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 1816,
+        "hero_pick_order": 6,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 2054,
+            "post_reduction": 1379,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 1511,
+            "post_reduction": 1097,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 55,
+        "gold_lost_to_death": 104,
+        "lane_selection_flags": 0,
+        "bounty_runes": 0,
+        "outposts_captured": 0,
+        "team_number": 1,
+        "team_slot": 1,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 1236832904,
+        "player_slot": 130,
+        "hero_id": 68,
+        "item_0": 36,
+        "item_1": 0,
+        "item_2": 44,
+        "item_3": 0,
+        "item_4": 0,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 0,
+        "deaths": 2,
+        "assists": 1,
+        "leaver_status": 0,
+        "gold": 750,
+        "last_hits": 8,
+        "denies": 0,
+        "gold_per_min": 157,
+        "xp_per_min": 190,
+        "gold_spent": 1050,
+        "hero_damage": 1383,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 0,
+        "level": 4,
+        "player_name": "BM",
+        "party_id": 0,
+        "scaled_hero_damage": 1234,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 1740,
+        "hero_pick_order": 10,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 1112,
+            "post_reduction": 898,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 668,
+            "post_reduction": 487,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 579,
+            "post_reduction": 413,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 31,
+        "gold_lost_to_death": 54,
+        "lane_selection_flags": 0,
+        "bounty_runes": 0,
+        "outposts_captured": 0,
+        "team_number": 1,
+        "team_slot": 2,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 349925838,
+        "player_slot": 131,
+        "hero_id": 86,
+        "item_0": 41,
+        "item_1": 77,
+        "item_2": 1123,
+        "item_3": 42,
+        "item_4": 34,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 1,
+        "deaths": 4,
+        "assists": 0,
+        "leaver_status": 0,
+        "gold": 123,
+        "last_hits": 11,
+        "denies": 1,
+        "gold_per_min": 177,
+        "xp_per_min": 170,
+        "gold_spent": 2110,
+        "hero_damage": 2554,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 4,
+        "level": 4,
+        "player_name": "A7",
+        "party_id": 0,
+        "scaled_hero_damage": 2479,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [],
+        "net_worth": 1553,
+        "hero_pick_order": 1,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 2811,
+            "post_reduction": 1903,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 3388,
+            "post_reduction": 2296,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 365,
+            "post_reduction": 366,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 76,
+        "gold_lost_to_death": 97,
+        "lane_selection_flags": 0,
+        "bounty_runes": 0,
+        "outposts_captured": 0,
+        "team_number": 1,
+        "team_slot": 3,
+        "selected_facet": 0
+      },
+      {
+        "account_id": 184259676,
+        "player_slot": 132,
+        "hero_id": 54,
+        "item_0": 29,
+        "item_1": 216,
+        "item_2": 237,
+        "item_3": 0,
+        "item_4": 0,
+        "item_5": 0,
+        "item_6": 0,
+        "item_7": 0,
+        "item_8": 0,
+        "item_9": 0,
+        "item_10": 0,
+        "item_10_lvl": 0,
+        "kills": 0,
+        "deaths": 1,
+        "assists": 0,
+        "leaver_status": 0,
+        "gold": 98,
+        "last_hits": 4,
+        "denies": 0,
+        "gold_per_min": 115,
+        "xp_per_min": 156,
+        "gold_spent": 1820,
+        "hero_damage": 515,
+        "tower_damage": 0,
+        "hero_healing": 0,
+        "disable_duration": 0,
+        "level": 4,
+        "player_name": "Chama",
+        "party_id": 0,
+        "scaled_hero_damage": 499,
+        "scaled_tower_damage": 0,
+        "scaled_hero_healing": 0,
+        "ability_upgrades": [],
+        "additional_units": [],
+        "permanent_buffs": [
+          {
+            "permanent_buff": 16,
+            "stack_count": 3,
+            "grant_time": 931
+          }
+        ],
+        "net_worth": 858,
+        "hero_pick_order": 2,
+        "hero_was_randomed": false,
+        "hero_damage_received": [
+          {
+            "pre_reduction": 2539,
+            "post_reduction": 1804,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 2311,
+            "post_reduction": 1515,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "hero_damage_dealt": [
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 0
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 1
+          },
+          {
+            "pre_reduction": 0,
+            "post_reduction": 0,
+            "damage_type": 2
+          }
+        ],
+        "seconds_dead": 19,
+        "gold_lost_to_death": 0,
+        "lane_selection_flags": 0,
+        "bounty_runes": 0,
+        "outposts_captured": 0,
+        "team_number": 1,
+        "team_slot": 4,
+        "selected_facet": 0
+      }
+    ],
+    "match_id": 8993362398,
+    "tower_status": [
+      2047,
+      2046
+    ],
+    "tower_status_radiant": 2047,
+    "tower_status_dire": 2046,
+    "barracks_status": [
+      63,
+      63
+    ],
+    "barracks_status_radiant": 63,
+    "barracks_status_dire": 63,
+    "cluster": 274,
+    "first_blood_time": 35,
+    "replay_salt": 1802756158,
+    "lobby_type": 1,
+    "human_players": 10,
+    "leagueid": 17599,
+    "game_mode": 2,
+    "picks_bans": [
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 34
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 31
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 63
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 108
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 90
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 25
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 60
+      },
+      {
+        "is_pick": true,
+        "team": 0,
+        "hero_id": 71
+      },
+      {
+        "is_pick": true,
+        "team": 1,
+        "hero_id": 56
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 107
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 11
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 91
+      },
+      {
+        "is_pick": true,
+        "team": 1,
+        "hero_id": 28
+      },
+      {
+        "is_pick": true,
+        "team": 0,
+        "hero_id": 9
+      },
+      {
+        "is_pick": true,
+        "team": 0,
+        "hero_id": 98
+      },
+      {
+        "is_pick": true,
+        "team": 1,
+        "hero_id": 86
+      },
+      {
+        "is_pick": true,
+        "team": 1,
+        "hero_id": 54
+      },
+      {
+        "is_pick": true,
+        "team": 0,
+        "hero_id": 70
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 76
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 47
+      },
+      {
+        "is_pick": false,
+        "team": 0,
+        "hero_id": 21
+      },
+      {
+        "is_pick": false,
+        "team": 1,
+        "hero_id": 36
+      },
+      {
+        "is_pick": true,
+        "team": 0,
+        "hero_id": 59
+      },
+      {
+        "is_pick": true,
+        "team": 1,
+        "hero_id": 68
+      }
+    ],
+    "replay_state": 0,
+    "series_id": 0,
+    "series_type": 0,
+    "broadcaster_channels": [],
+    "engine": 1,
+    "match_flags": 5,
+    "radiant_score": 13,
+    "dire_score": 3,
+    "match_outcome": 2,
+    "pre_game_duration": 90,
+    "coaches": []
+  }
+}

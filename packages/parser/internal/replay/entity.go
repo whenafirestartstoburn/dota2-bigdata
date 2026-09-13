@@ -57,6 +57,19 @@ func (e *Entity) Get(name string) any {
 	return e.state.get(fp)
 }
 
+// FindSuffix returns the first live field whose dotted path ends with suffix.
+func (e *Entity) FindSuffix(suffix string) (any, bool) {
+	if e == nil || e.class == nil || e.state == nil {
+		return nil, false
+	}
+	fp, ok := e.class.pathEnding(suffix)
+	if !ok {
+		return nil, false
+	}
+	v := e.state.get(fp)
+	return v, v != nil
+}
+
 func (s *Session) FindEntity(index int32) *Entity {
 	return s.ents[index]
 }

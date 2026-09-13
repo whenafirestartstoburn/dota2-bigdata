@@ -44,7 +44,7 @@ Three Valve planes, plus marketplace and the local pipeline.
 | `source` / plane | Where | Methods |
 |---|---|---|
 | `dota2` | `www.dota2.com/webapi` | `GetLeagueInfoList` |
-| `steam` | `api.steampowered.com` | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory`, `GetMatchHistoryBySequenceNum` |
+| `steam` | `api.steampowered.com` | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory` |
 | GC | `steam-user` session | `match_details` (`CMsgGCMatchDetailsRequest`), logon |
 | marketplace | Dark Shopping HTTP | `order/create`, `order/status`, `order/download`, `delivery` |
 | pipeline | graphile jobs, S3 download, parser | job names, replay status, match phase |
