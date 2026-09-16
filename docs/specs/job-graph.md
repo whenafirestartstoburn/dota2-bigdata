@@ -299,7 +299,7 @@ key limiter. Log method `GetRealtimeStats`, `match_id` set.
 
 ### `fetch_leagues`
 
-**Cadence.** Startup + cron `0 * * * *`.
+**Cadence.** Startup + cron `0 * * * *`. CLI `bun run leagues:fetch`.
 
 **Calls.** `GetLiveLeagueGames` and `GetTopLiveGame` (best-effort, to
 collect live `league_id`s), then

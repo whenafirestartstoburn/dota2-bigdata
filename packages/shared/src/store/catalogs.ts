@@ -352,6 +352,13 @@ export function parseCatalogs(raw: CatalogRaw): CatalogSnapshot {
 		heroes,
 		abilities,
 	)
+	const regions = parseRegions(raw.region)
+	const regionIds = new Set(regions.map((row) => row.region))
+	const clusters = parseClusters(raw.cluster).map((row) =>
+		row.region != null && !regionIds.has(row.region)
+			? { ...row, region: null }
+			: row,
+	)
 	return {
 		heroes,
 		items,
@@ -361,8 +368,8 @@ export function parseCatalogs(raw: CatalogRaw): CatalogSnapshot {
 		patches: parsePatches(raw.patch),
 		gameModes: parseNamedIds(raw.game_mode),
 		lobbyTypes: parseNamedIds(raw.lobby_type),
-		regions: parseRegions(raw.region),
-		clusters: parseClusters(raw.cluster),
+		regions,
+		clusters,
 		permanentBuffs: parsePermanentBuffs(raw.permanent_buffs),
 		xpLevels: parseXpLevels(raw.xp_level),
 	}

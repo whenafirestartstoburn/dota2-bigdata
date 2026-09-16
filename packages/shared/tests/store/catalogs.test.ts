@@ -140,6 +140,17 @@ describe('parseCatalogs', () => {
 			{ level: 3, xp: 640 },
 		])
 	})
+
+	test('drops cluster region when the region dictionary has no such id', () => {
+		const snap = parseCatalogs({
+			...FIXTURE,
+			cluster: { '111': 1, '223': 12 },
+		})
+		expect(snap.clusters).toEqual([
+			{ cluster: 111, region: 1 },
+			{ cluster: 223, region: null },
+		])
+	})
 })
 
 describe('persistCatalogs', () => {
