@@ -31,7 +31,8 @@ import {
 	DarkShoppingError,
 	type MarketplaceStoreId,
 	marketplaceConfigured,
-	purchaseFromMarketplace,
+	startMarketplacePurchase,
+	waitMarketplaceDelivery,
 } from '#src/marketplace/store'
 import { observeMarketplaceOrder } from '#src/metrics/observe'
 import { loginGcAndMaybeTest } from '#src/steam/gc-probe'
@@ -230,6 +231,61 @@ async function provisionOrder(input: {
 	return testResult
 }
 
+export async function fulfillBoughtDelivery(input: {
+	order: { id: number }
+	store: MarketplaceStoreId
+	productId: number
+	kind: 'api_key' | 'gc'
+	testOnMatchId: number | null
+	deliveryText: string
+	imapHost?: string
+}): Promise<BuyAccountOrderResult> {
+	let steamAccountId: number | null = null
+	const accounts = parseBoughtSteamAccounts(input.deliveryText)
+	const bought = accounts[0]
+	if (bought === undefined) {
+		throw new Error(
+			'dark.shopping delivery did not contain Steam login/password/email credentials',
+		)
+	}
+	status(`bought: ${describeBoughtAccount(bought)}`)
+	let persisted: { accountId: number; imapHost: string | null }
+	try {
+		persisted = await persistBoughtAccount({
+			...bought,
+			kind: input.kind,
+			imapHost: input.imapHost,
+		})
+	} catch (error) {
+		const existing = await getGcAccountByLogin(bought.login)
+		if (existing != null) steamAccountId = existing.id
+		throw error
+	}
+	steamAccountId = persisted.accountId
+	const testResult = await provisionOrder({
+		kind: input.kind,
+		testOnMatchId: input.testOnMatchId,
+		login: bought.login,
+		accountId: persisted.accountId,
+	})
+	await finishMarketplaceOrder({
+		id: input.order.id,
+		status: 'success',
+		steamAccountId,
+		testResult,
+	})
+	status(`buy-account: order ${input.order.id} success login=${bought.login}`)
+	observeMarketplaceOrder(input.store, input.kind, 'success')
+	return {
+		id: input.order.id,
+		status: 'success',
+		productId: input.productId,
+		store: input.store,
+		errorMessage: null,
+		testResult,
+	}
+}
+
 async function buyOne(
 	input: BuyAccountInput & { timeoutMs: number },
 ): Promise<BuyAccountOrderResult> {
@@ -243,58 +299,28 @@ async function buyOne(
 	status(
 		`buy-account: local order ${order.id} product=${String(input.productId)} type=${input.type}`,
 	)
-	let steamAccountId: number | null = null
 	try {
-		const purchased = await purchaseFromMarketplace({
+		const started = await startMarketplacePurchase({
 			store: input.store,
 			productId: input.productId,
 			idempotenceId: order.idempotenceId,
-			timeoutMs: input.timeoutMs,
 		})
-		await setMarketplaceExternalId(order.id, purchased.externalOrderId)
-		const accounts = parseBoughtSteamAccounts(purchased.deliveryText)
-		const bought = accounts[0]
-		if (bought === undefined) {
-			throw new Error(
-				'dark.shopping delivery did not contain Steam login/password/email credentials',
-			)
-		}
-		status(`bought: ${describeBoughtAccount(bought)}`)
-		let persisted: { accountId: number; imapHost: string | null }
-		try {
-			persisted = await persistBoughtAccount({
-				...bought,
-				kind: input.type,
-				imapHost: input.imapHost,
-			})
-		} catch (error) {
-			const existing = await getGcAccountByLogin(bought.login)
-			if (existing != null) steamAccountId = existing.id
-			throw error
-		}
-		steamAccountId = persisted.accountId
-		const testResult = await provisionOrder({
+		await setMarketplaceExternalId(order.id, started.externalOrderId)
+		const { deliveryText } = await waitMarketplaceDelivery({
+			store: input.store,
+			externalOrderId: started.externalOrderId,
+			timeoutMs: input.timeoutMs,
+			initialLink: started.initialLink,
+		})
+		return await fulfillBoughtDelivery({
+			order,
+			store: input.store,
+			productId: input.productId,
 			kind: input.type,
 			testOnMatchId,
-			login: bought.login,
-			accountId: persisted.accountId,
+			deliveryText,
+			imapHost: input.imapHost,
 		})
-		await finishMarketplaceOrder({
-			id: order.id,
-			status: 'success',
-			steamAccountId,
-			testResult,
-		})
-		status(`buy-account: order ${order.id} success login=${bought.login}`)
-		observeMarketplaceOrder(input.store, input.type, 'success')
-		return {
-			id: order.id,
-			status: 'success',
-			productId: input.productId,
-			store: input.store,
-			errorMessage: null,
-			testResult,
-		}
 	} catch (error) {
 		const classified = classifyPurchaseError(error)
 		status(
@@ -327,7 +353,6 @@ async function buyOne(
 		await finishMarketplaceOrder({
 			id: order.id,
 			status: 'failed',
-			steamAccountId,
 			errorMessage: classified.errorMessage,
 		})
 		observeMarketplaceOrder(input.store, input.type, 'failed')

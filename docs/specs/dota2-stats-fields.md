@@ -658,6 +658,8 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
     - retest_interval_ms
     - marketplace_buy_max
     - marketplace_wait_ms
+    - marketplace_settle_interval_ms
+    - marketplace_pending_ttl_ms
     - marketplace_min_interval_ms
     - gc_logon_attempts
     - api_key_rate_limit_ms

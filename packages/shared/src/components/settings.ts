@@ -33,6 +33,8 @@ export type AppSettings = {
 	retestIntervalMs: number
 	marketplaceBuyMax: number
 	marketplaceWaitMs: number
+	marketplaceSettleIntervalMs: number
+	marketplacePendingTtlMs: number
 	marketplaceMinIntervalMs: number
 	gcLogonAttempts: number
 	apiKeyRateLimitMs: number
@@ -73,6 +75,8 @@ const KEYS = {
 	retestIntervalMs: 'retest_interval_ms',
 	marketplaceBuyMax: 'marketplace_buy_max',
 	marketplaceWaitMs: 'marketplace_wait_ms',
+	marketplaceSettleIntervalMs: 'marketplace_settle_interval_ms',
+	marketplacePendingTtlMs: 'marketplace_pending_ttl_ms',
 	marketplaceMinIntervalMs: 'marketplace_min_interval_ms',
 	gcLogonAttempts: 'gc_logon_attempts',
 	apiKeyRateLimitMs: 'api_key_rate_limit_ms',
@@ -173,6 +177,16 @@ export async function getAppSettings(): Promise<AppSettings> {
 		retestIntervalMs: requiredPositiveInt(map, KEYS.retestIntervalMs),
 		marketplaceBuyMax: requiredPositiveInt(map, KEYS.marketplaceBuyMax),
 		marketplaceWaitMs: requiredPositiveInt(map, KEYS.marketplaceWaitMs),
+		marketplaceSettleIntervalMs: optionalPositiveInt(
+			map,
+			KEYS.marketplaceSettleIntervalMs,
+			60_000,
+		),
+		marketplacePendingTtlMs: optionalPositiveInt(
+			map,
+			KEYS.marketplacePendingTtlMs,
+			3_600_000,
+		),
 		marketplaceMinIntervalMs: requiredPositiveInt(
 			map,
 			KEYS.marketplaceMinIntervalMs,

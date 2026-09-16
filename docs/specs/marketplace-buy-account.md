@@ -22,7 +22,7 @@ Bought Steam accounts land in `steam_accounts` (and `steam_api_keys` when we iss
 ```
 
 - `count` 1–`marketplace_buy_max` (seed 10). Each unit is a **separate** local row and a separate Dark Shopping `order/create` with `quantity=1` and `idempotence_id` = our order UUID.
-- The handler waits **up to `marketplace_wait_ms`** (seed 2 minutes) for Dark Shopping `completed`/`ok`, then provisions. Bun `idleTimeout` is 0 so the request is not cut at 10s.
+- The handler waits **up to `marketplace_wait_ms`** (seed 2 minutes) for Dark Shopping `completed`/`ok`, then provisions. If the store is still `in_process`, the local row stays `pending` and `settle_marketplace_orders` polls it every `marketplace_settle_interval_ms` for up to `marketplace_pending_ttl_ms` (seed 1 hour). Bun `idleTimeout` is 0 so the request is not cut at 10s.
 - Missing `DARK_SHOPPING_API_KEY` → 503.
 - Rate limit: **≤ 2 req/s** to Dark Shopping (`marketplace_min_interval_ms`, seed 500 ms). 429 retries with backoff.
 - `imapHost` optional: skip auto-detect / probe and LOGIN that host. Outlook/Hotmail still fails for `type=api_key`.
@@ -58,7 +58,7 @@ Response:
 }
 ```
 
-`pending` means Dark Shopping had not finished within `marketplace_wait_ms`; the local row stays `pending`. Provision (IMAP / Guard / GC) is **not** bounded by that wait.
+`pending` means Dark Shopping had not finished within `marketplace_wait_ms`; the local row stays `pending`. `settle_marketplace_orders` (match-processing, every minute) keeps polling Dark Shopping until `completed`/`ok` (then provisions) or `marketplace_pending_ttl_ms` after `created_at` (then `failed`). Provision (IMAP / Guard / GC) is **not** bounded by the initial wait.
 
 ## Postgres
 
@@ -114,6 +114,8 @@ Marketplace / GC:
 |---|---|---|
 | `marketplace_buy_max` | 10 | max units per buy-account call |
 | `marketplace_wait_ms` | 120000 | wait for Dark Shopping completed/ok |
+| `marketplace_settle_interval_ms` | 60000 | `settle_marketplace_orders` poll of pending rows |
+| `marketplace_pending_ttl_ms` | 3600000 | fail a pending row this long after `created_at` if Dark Shopping is still in_process |
 | `marketplace_min_interval_ms` | 500 | Dark Shopping HTTP slot (≤ 2 req/s) |
 | `gc_logon_attempts` | 4 | password logOn tries when probing GC |
 | `api_key_rate_limit_ms` | 60000 | cooldown after Web API 429 |

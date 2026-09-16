@@ -135,6 +135,7 @@ describe('boot per role', () => {
 			'archive_parsed_replays',
 			'maintain_request_logs',
 			'replenish_accounts',
+			'settle_marketplace_orders',
 			'retest_disabled_resources',
 		])
 		const archive = startupJobsFor('match-processing').find(
@@ -149,6 +150,10 @@ describe('boot per role', () => {
 			(job) => job.identifier === 'replenish_accounts',
 		)
 		expect(replenish?.priority).toBe(PRIORITY.replenish)
+		const settle = startupJobsFor('match-processing').find(
+			(job) => job.identifier === 'settle_marketplace_orders',
+		)
+		expect(settle?.priority).toBe(PRIORITY.settleOrders)
 		expect(startupJobsFor('live').map((job) => job.maxAttempts)).toEqual([
 			LOOP_JOB_MAX_ATTEMPTS,
 			LOOP_JOB_MAX_ATTEMPTS,

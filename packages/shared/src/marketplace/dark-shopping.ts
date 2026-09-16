@@ -75,6 +75,25 @@ export function parseOrderCreate(body: unknown): DarkOrderCreateResult {
 	}
 }
 
+export type DarkOrderPhase = 'ready' | 'failed' | 'pending'
+
+export function classifyDarkOrderStatus(status: string): DarkOrderPhase {
+	if (status === 'completed' || status === 'ok') return 'ready'
+	if (status === 'error' || status === 'canceled' || status === 'refund') {
+		return 'failed'
+	}
+	return 'pending'
+}
+
+export function parseDarkOrderIdFromMessage(
+	message: string | null,
+): number | null {
+	if (message == null || message === '') return null
+	const match = /dark\.shopping order (\d+)/i.exec(message)
+	const id = match?.[1]
+	return id != null ? asNumber(id) : null
+}
+
 export function parseOrderStatus(body: unknown): string {
 	const { ok, data } = parseDarkEnvelope(body)
 	if (!ok) {
@@ -317,28 +336,18 @@ export async function waitDarkOrderReady(input: {
 	while (Date.now() < deadline) {
 		lastStatus = await getDarkOrderStatus(input.orderId)
 		status(`dark.shopping: order ${String(input.orderId)} status=${lastStatus}`)
-		if (
-			lastStatus === 'completed' ||
-			lastStatus === 'ok' ||
-			lastStatus === 'error' ||
-			lastStatus === 'canceled' ||
-			lastStatus === 'refund'
-		) {
+		if (classifyDarkOrderStatus(lastStatus) !== 'pending') {
 			break
 		}
 		await Bun.sleep(2_000)
 	}
-	if (
-		lastStatus === 'error' ||
-		lastStatus === 'canceled' ||
-		lastStatus === 'refund'
-	) {
+	if (classifyDarkOrderStatus(lastStatus) === 'failed') {
 		throw new DarkShoppingError(
 			400,
 			`dark.shopping order ${String(input.orderId)} ended ${lastStatus}`,
 		)
 	}
-	if (lastStatus !== 'completed' && lastStatus !== 'ok') {
+	if (classifyDarkOrderStatus(lastStatus) !== 'ready') {
 		throw new DarkShoppingError(
 			408,
 			`dark.shopping order ${String(input.orderId)} still ${lastStatus} after ${String(timeoutMs)}ms`,

@@ -42,6 +42,7 @@ export const PRIORITY = {
 	detailsLive: 0,
 	detailsHistorical: 10,
 	replenish: 15,
+	settleOrders: 16,
 	replayLive: 0,
 	walkHistory: 20,
 	replayHistorical: 20,

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
+	classifyDarkOrderStatus,
 	DarkShoppingError,
+	parseDarkOrderIdFromMessage,
 	parseOrderCreate,
 	parseOrderDownload,
 	parseOrderStatus,
@@ -56,6 +58,26 @@ describe('dark.shopping response parsers', () => {
 				},
 			}),
 		).toThrow(DarkShoppingError)
+	})
+
+	test('classifies Dark Shopping statuses', () => {
+		expect(classifyDarkOrderStatus('completed')).toBe('ready')
+		expect(classifyDarkOrderStatus('ok')).toBe('ready')
+		expect(classifyDarkOrderStatus('error')).toBe('failed')
+		expect(classifyDarkOrderStatus('canceled')).toBe('failed')
+		expect(classifyDarkOrderStatus('refund')).toBe('failed')
+		expect(classifyDarkOrderStatus('in_process')).toBe('pending')
+		expect(classifyDarkOrderStatus('pending')).toBe('pending')
+	})
+
+	test('parses a Dark Shopping order id from a wait-timeout message', () => {
+		expect(
+			parseDarkOrderIdFromMessage(
+				'dark.shopping order 8262790 still in_process after 120000ms',
+			),
+		).toBe(8262790)
+		expect(parseDarkOrderIdFromMessage(null)).toBeNull()
+		expect(parseDarkOrderIdFromMessage('unrelated')).toBeNull()
 	})
 
 	test('truncates flattened text and redacts a secret', () => {

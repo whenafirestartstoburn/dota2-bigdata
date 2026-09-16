@@ -1,4 +1,4 @@
-import { asNumber, asText } from '#src/store/coerce'
+import { asDate, asNumber, asText } from '#src/store/coerce'
 import { db, sql } from '#src/utils/db'
 
 export type MarketplaceStore = 'dark_shopping'
@@ -18,6 +18,7 @@ export type MarketplaceOrder = {
 	testOnMatchId: number | null
 	errorMessage: string | null
 	testResult: unknown
+	createdAt: Date
 }
 
 function mapOrder(row: Record<string, unknown>): MarketplaceOrder {
@@ -48,6 +49,7 @@ function mapOrder(row: Record<string, unknown>): MarketplaceOrder {
 		testOnMatchId: asNumber(row.test_on_match_id),
 		errorMessage: asText(row.error_message),
 		testResult: row.test_result ?? null,
+		createdAt: asDate(row.created_at) ?? new Date(0),
 	}
 }
 
@@ -120,4 +122,16 @@ export async function finishMarketplaceOrder(input: {
 			updated_at = now()
 		WHERE id = ${input.id}
 	`)
+}
+
+export async function listPendingMarketplaceOrders(): Promise<
+	MarketplaceOrder[]
+> {
+	const rows = await db.execute(sql`
+		SELECT *
+		FROM marketplace_orders
+		WHERE status = 'pending'::marketplace_order_status
+		ORDER BY created_at ASC, id ASC
+	`)
+	return rows.map((row) => mapOrder(row))
 }

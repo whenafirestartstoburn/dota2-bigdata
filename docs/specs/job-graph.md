@@ -44,6 +44,7 @@ flowchart TD
     dlReplay[download_replay]
     archive[archive_parsed_replays]
     replenish[replenish_accounts]
+    settle[settle_marketplace_orders]
     retest[retest_disabled_resources]
     logs[maintain_request_logs]
     hop[run_scheduled_job]
@@ -66,6 +67,7 @@ flowchart TD
   S3hot --> archive
   S3cold[S3 cold] <-- archive
   Marketplace[dark.shopping] --> replenish
+  Marketplace --> settle
   DotaConst[d2vpkr VPK + odota json] --> syncCat
 
   pollLive -->|"status=live / awaiting_history / not_started"| PG[(Postgres matches)]
@@ -181,11 +183,11 @@ object.
 
 | Trigger | Job |
 |---|---|
-| worker boot (`startupJobsFor`) | live polls + `poll_finished_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `retest_disabled_resources` |
+| worker boot (`startupJobsFor`) | live polls + `poll_finished_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` |
 | cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
 | cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` 05:00 UTC |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
-| self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk (`steam_api_min_interval_ms`), archive / replenish / retest / request-log maintain |
+| self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk (`steam_api_min_interval_ms`), archive / replenish / settle / retest / request-log maintain |
 | live finish (`live_duration_max > 0`) | `fetch_match_details` origin `live` (GC starts in parallel with history; waiter stays armed until a seqnum or timeout) |
 | `poll_finished_history` hit | `fetch_seq_details` + `fetch_match_details` origin `live`, priority 0. Status already past `awaiting_details` is kept |
 | `walk_league_history` listed rows | `fetch_seq_details` when `seq_fetched_at` is null |
@@ -198,8 +200,8 @@ object.
 Queues: `details:{match_id % 5}` (max 5), `seq:{match_id % 5}` (max 5,
 parallel with details), `replay-live:{% 10}` and
 `replay-historical:{% 10}` (ten each). Priority: live 0, historical
-details / seq 10, walk / historical replay 20, replenish 15, retest 25,
-archive 30, request-log maintain 40.
+details / seq 10, walk / historical replay 20, replenish 15, settle
+orders 16, retest 25, archive 30, request-log maintain 40.
 
 ---
 
@@ -567,7 +569,25 @@ whitelisted `dark.shopping` product (`marketplaceBuyMax` per tick).
 
 **Postgres.** `marketplace_orders` (`pending` / `success` / `failed`);
 on success, new `steam_api_keys` / `steam_accounts` (`status = ready`)
-after IMAP + Steam probe. Does not touch matches.
+after IMAP + Steam probe. Does not touch matches. A Dark Shopping wait
+that exceeds `marketplace_wait_ms` leaves the row `pending`;
+`settle_marketplace_orders` resumes it.
+
+---
+
+### `settle_marketplace_orders`
+
+**Cadence.** Boot + `marketplace_settle_interval_ms` (seed 60 s).
+Priority 16.
+
+**Calls.** For each `marketplace_orders` row still `pending`, poll Dark
+Shopping `order/status`. Persist `external_order_id` from the column or
+from a wait-timeout `error_message` (`dark.shopping order 8262790 still
+in_process after 120000ms`). `completed`/`ok` → same provision as
+buy-account. `error`/`canceled`/`refund` → `failed`. `in_process` (and
+other pending statuses) stay `pending` until
+`marketplace_pending_ttl_ms` after `created_at` (seed 1 h), then
+`failed`. Does not touch matches.
 
 ---
 

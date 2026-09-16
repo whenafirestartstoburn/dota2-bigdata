@@ -56,6 +56,7 @@ bun run api       # another terminal
 | `download_replay` | match-processing | after URL | Valve CDN → S3 |
 | `archive_parsed_replays` | match-processing | every 30s | parsed `.dem.bz2` → cold S3 (other bucket or `cold/` prefix) |
 | `replenish_accounts` | match-processing | interval + startup | buy API keys / GC accounts when the ready pool is short |
+| `settle_marketplace_orders` | match-processing | every 60s + startup | resume pending Dark Shopping orders for up to 1 h |
 | `retest_disabled_resources` | match-processing | interval + startup | probe disabled proxies / accounts / keys |
 | `maintain_request_logs` | match-processing | hourly + startup | retain Valve request-log partitions |
 | `sync_catalogs` | historical | boot + daily 05:00 UTC | heroes / items / patches from d2vpkr VPK + odota `json/` |

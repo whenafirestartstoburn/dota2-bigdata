@@ -33,6 +33,7 @@ export const WORKER_TASKS = {
 		'archive_parsed_replays',
 		'maintain_request_logs',
 		'replenish_accounts',
+		'settle_marketplace_orders',
 		'retest_disabled_resources',
 	],
 } as const satisfies Record<WorkerRole, readonly string[]>
@@ -155,6 +156,13 @@ export function startupJobsFor(mode: WorkerMode): StartupJob[] {
 		identifier: 'replenish_accounts',
 		jobKey: 'replenish_accounts',
 		priority: PRIORITY.replenish,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
+	})
+	add({
+		identifier: 'settle_marketplace_orders',
+		jobKey: 'settle_marketplace_orders',
+		priority: PRIORITY.settleOrders,
 		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		loop: true,
 	})

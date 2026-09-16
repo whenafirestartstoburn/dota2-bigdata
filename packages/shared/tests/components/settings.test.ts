@@ -37,6 +37,8 @@ describe('getAppSettings', () => {
 		expect(settings.retestIntervalMs).toBe(300_000)
 		expect(settings.marketplaceBuyMax).toBe(10)
 		expect(settings.marketplaceWaitMs).toBe(120_000)
+		expect(settings.marketplaceSettleIntervalMs).toBe(60_000)
+		expect(settings.marketplacePendingTtlMs).toBe(3_600_000)
 		expect(settings.marketplaceMinIntervalMs).toBe(500)
 		expect(settings.gcLogonAttempts).toBe(4)
 		expect(settings.apiKeyRateLimitMs).toBe(60_000)

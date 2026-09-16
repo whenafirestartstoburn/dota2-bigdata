@@ -41,7 +41,7 @@ Collection must work if the API is down.
 |---|---|---|
 | `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `fetch_seq_details` (+ `run_scheduled_job`) | 4 |
 | `historical` | `walk_league_history`, `poll_finished_history`, `fetch_seq_details`, `fetch_leagues`, `process_league`, `sync_catalogs` (+ `run_scheduled_job`) | 4 |
-| `match-processing` | `fetch_match_details`, `download_replay`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `retest_disabled_resources` (+ `run_scheduled_job`) | 35 |
+| `match-processing` | `fetch_match_details`, `download_replay`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` (+ `run_scheduled_job`) | 35 |
 
 graphile `priority`: lower number runs first. Live poll / live details / live seq / live replay = 0, historical details / seq = 10, history walk / historical replay = 20. `fetch_match_details` uses five named queues (`details:0`…`details:4`, `match_id % 5`) so at most five GC jobs run at once. `fetch_seq_details` uses five `seq:0`…`seq:4` shards so seq and GC for the same match run in parallel. `download_replay` uses ten live and ten historical queues (`replay-live:0`…`replay-live:9`, `replay-historical:0`…`replay-historical:9`, `match_id % 10`). On a free shard, live (priority 0) is picked before historical (priority 10 / 20).
 
@@ -84,6 +84,7 @@ transitions, and ClickHouse / catalog inserts:
 | `archive_parsed_replays` | every `settings.replay_archive_interval_ms` + startup | copy parsed `.dem.bz2` to cold storage, then delete the hot object |
 | `maintain_request_logs` | hourly + startup | create UTC daily partitions for `steam_api_requests` / `steam_gc_requests` / `replay_requests` two days ahead; drop partitions older than 4 days |
 | `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit |
+| `settle_marketplace_orders` | every `settings.marketplace_settle_interval_ms` + startup | poll pending `marketplace_orders`; fulfill when Dark Shopping is `completed`/`ok`; fail after `marketplace_pending_ttl_ms` (seed 1 h) if still `in_process` |
 | `retest_disabled_resources` | every `settings.retest_interval_ms` + startup | probe disabled proxies / GC accounts / API keys with `retest_count` below the matching `*_retest_max`; restore on success; give up after max |
 | `sync_catalogs` | worker boot (sync, before ingest jobs) + daily 05:00 UTC | rebuild `heroes` / `items` / `patches` / `abilities` / facets / modes / regions from d2vpkr VPK + odota `json/` |
 
@@ -217,7 +218,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
 - A thrown job on a named queue does **not** graphile-retry on that shard. The wrapper parks `run_scheduled_job` (30 s, 1 m, 3 m, …) and hops back when due. After the stamped budget the job leaves the queue.
-- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, archive / replenish / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
+- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, archive / replenish / settle / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
 - GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.

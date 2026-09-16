@@ -24,6 +24,7 @@ import { runPollRealtimeStats } from '@app/shared/src/jobs/poll-realtime-stats'
 import { runPollTopLive } from '@app/shared/src/jobs/poll-top-live'
 import { runReplenishAccounts } from '@app/shared/src/jobs/replenish-accounts'
 import { runRetestDisabledResources } from '@app/shared/src/jobs/retest-resources'
+import { runSettleMarketplaceOrders } from '@app/shared/src/jobs/settle-marketplace-orders'
 import { runSyncCatalogs } from '@app/shared/src/jobs/sync-catalogs'
 import { runWalkLeagueHistory } from '@app/shared/src/jobs/walk-league-history'
 import { jobsInProgress, observeJob } from '@app/shared/src/metrics/observe'
@@ -143,6 +144,21 @@ async function rescheduleReplenish(helpers: JobHelpers): Promise<void> {
 			jobKey: 'replenish_accounts',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.replenish,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		},
+	)
+}
+
+async function rescheduleSettleOrders(helpers: JobHelpers): Promise<void> {
+	const settings = await getAppSettings()
+	await helpers.addJob(
+		'settle_marketplace_orders',
+		{},
+		{
+			runAt: new Date(Date.now() + settings.marketplaceSettleIntervalMs),
+			jobKey: 'settle_marketplace_orders',
+			jobKeyMode: 'replace',
+			priority: PRIORITY.settleOrders,
 			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
@@ -357,6 +373,16 @@ export const allTasks = {
 				await runReplenishAccounts()
 			} finally {
 				await rescheduleReplenish(helpers)
+			}
+		},
+	),
+	settle_marketplace_orders: traced(
+		'settle_marketplace_orders',
+		async (_payload, helpers) => {
+			try {
+				await runSettleMarketplaceOrders()
+			} finally {
+				await rescheduleSettleOrders(helpers)
 			}
 		},
 	),
