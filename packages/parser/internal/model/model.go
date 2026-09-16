@@ -11,7 +11,6 @@ type Header struct {
 	Slot          int8      `ch:"slot"`
 	AccountID     uint32    `ch:"account_id"`
 	ParserVersion uint16    `ch:"parser_version"`
-	ParseRunID    uint64    `ch:"parse_run_id"`
 }
 
 type CombatLog struct {
@@ -36,9 +35,6 @@ type CombatLog struct {
 	SlowDuration             float32 `ch:"slow_duration"`
 	Sourcename               string  `ch:"sourcename"`
 	Targetsourcename         string  `ch:"targetsourcename"`
-	GreevilsGreedStack       uint16  `ch:"greevils_greed_stack"`
-	TrackedDeath             uint8   `ch:"tracked_death"`
-	TrackedSourcename        string  `ch:"tracked_sourcename"`
 	Health                   int32   `ch:"health"`
 	AbilityLevel             uint8   `ch:"ability_level"`
 	LocationX                float32 `ch:"location_x"`
@@ -139,7 +135,6 @@ type Interval struct {
 	Repicked               uint8   `ch:"repicked"`
 	Randomed               uint8   `ch:"randomed"`
 	PredVict               uint8   `ch:"pred_vict"`
-	ObserversPlaced        uint16  `ch:"observers_placed"`
 	HP                     uint32  `ch:"hp"`
 	MaxHP                  uint32  `ch:"max_hp"`
 	Mana                   uint32  `ch:"mana"`
@@ -224,11 +219,9 @@ type Inventory struct {
 
 type Neutral struct {
 	Header
-	Kind                 string `ch:"kind"`
-	Key                  string `ch:"key"`
-	Value                int32  `ch:"value"`
-	IsNeutralActiveDrop  uint8  `ch:"is_neutral_active_drop"`
-	IsNeutralPassiveDrop uint8  `ch:"is_neutral_passive_drop"`
+	Kind  string `ch:"kind"`
+	Key   string `ch:"key"`
+	Value int32  `ch:"value"`
 }
 
 type Cosmetic struct {
@@ -347,7 +340,6 @@ type MetaTip struct {
 type Result struct {
 	MatchID       uint64
 	StartTime     time.Time
-	ParseRunID    uint64
 	ParserVersion uint16
 	CombatLog     []CombatLog
 	Intervals     []Interval
@@ -358,7 +350,8 @@ type Result struct {
 	Announcements []Announcement
 	Draft         []Draft
 	// PickBans is the official CDemoFileInfo sequence (≈24 rows). PG
-	// match_draft uses this; Draft stays the live gamerules timeline for CH.
+	// match_draft uses this order; clocks come from Draft (gamerules
+	// timeline). Draft stays the live timeline for CH.
 	PickBans []Draft
 	// BarracksRadiant / BarracksDire are end-game bitmasks from rax kills.
 	BarracksRadiant uint16

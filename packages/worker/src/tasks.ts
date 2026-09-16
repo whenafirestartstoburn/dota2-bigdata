@@ -7,11 +7,17 @@ import {
 	scheduleQueuedJobRetry,
 } from '@app/shared/src/components/jobs'
 import { getAppSettings } from '@app/shared/src/components/settings'
+import { runArchiveParsedReplays } from '@app/shared/src/jobs/archive-parsed-replays'
 import { runFetchLeagues } from '@app/shared/src/jobs/fetch-leagues'
 import {
 	enqueueFetchMatchDetails,
 	matchOrigin,
 } from '@app/shared/src/jobs/fetch-match-details'
+import {
+	enqueueFetchSeqDetails,
+	runFetchSeqDetails,
+} from '@app/shared/src/jobs/fetch-seq-details'
+import { runMaintainRequestLogsJob } from '@app/shared/src/jobs/maintain-request-logs'
 import { runPollFinishedHistory } from '@app/shared/src/jobs/poll-finished-history'
 import { runPollLiveGames } from '@app/shared/src/jobs/poll-live'
 import { runPollRealtimeStats } from '@app/shared/src/jobs/poll-realtime-stats'
@@ -135,6 +141,25 @@ async function rescheduleReplenish(helpers: JobHelpers): Promise<void> {
 	)
 }
 
+async function rescheduleArchive(
+	helpers: JobHelpers,
+	more: boolean,
+): Promise<void> {
+	const settings = await getAppSettings()
+	const delayMs = more ? 0 : settings.replayArchiveIntervalMs
+	await helpers.addJob(
+		'archive_parsed_replays',
+		{},
+		{
+			runAt: new Date(Date.now() + delayMs),
+			jobKey: 'archive_parsed_replays',
+			jobKeyMode: 'replace',
+			priority: PRIORITY.archive,
+			maxAttempts: 1,
+		},
+	)
+}
+
 async function rescheduleRetest(helpers: JobHelpers): Promise<void> {
 	const settings = await getAppSettings()
 	await helpers.addJob(
@@ -145,6 +170,22 @@ async function rescheduleRetest(helpers: JobHelpers): Promise<void> {
 			jobKey: 'retest_disabled_resources',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.retest,
+			maxAttempts: 1,
+		},
+	)
+}
+
+async function rescheduleMaintainRequestLogs(
+	helpers: JobHelpers,
+): Promise<void> {
+	await helpers.addJob(
+		'maintain_request_logs',
+		{},
+		{
+			runAt: new Date(Date.now() + 60 * 60_000),
+			jobKey: 'maintain_request_logs',
+			jobKeyMode: 'replace',
+			priority: PRIORITY.maintainLogs,
 			maxAttempts: 1,
 		},
 	)
@@ -225,6 +266,25 @@ export const allTasks = {
 		},
 		{ skipNoKey: true },
 	),
+	fetch_seq_details: traced('fetch_seq_details', async (payload) => {
+		const matchId = jobNumber(payload, 'match_id')
+		if (matchId === undefined) {
+			throw new Error('fetch_seq_details payload requires match_id')
+		}
+		const origin = matchOrigin(readJobPayload(payload).origin)
+		try {
+			await runFetchSeqDetails({ matchId, origin })
+		} catch (error) {
+			if (!/no ready Steam API key/i.test(errorMessage(error))) {
+				throw error
+			}
+			await enqueueFetchSeqDetails(
+				matchId,
+				origin,
+				new Date(Date.now() + 30_000),
+			)
+		}
+	}),
 	fetch_match_details: traced('fetch_match_details', async (payload) => {
 		const matchId = jobNumber(payload, 'match_id')
 		if (matchId === undefined) {
@@ -262,6 +322,27 @@ export const allTasks = {
 	download_replay: traced('download_replay', async (payload) => {
 		await runDownloadReplay(matchIdOf(payload))
 	}),
+	archive_parsed_replays: traced(
+		'archive_parsed_replays',
+		async (_payload, helpers) => {
+			let more = false
+			try {
+				more = (await runArchiveParsedReplays()).more
+			} finally {
+				await rescheduleArchive(helpers, more)
+			}
+		},
+	),
+	maintain_request_logs: traced(
+		'maintain_request_logs',
+		async (_payload, helpers) => {
+			try {
+				await runMaintainRequestLogsJob()
+			} finally {
+				await rescheduleMaintainRequestLogs(helpers)
+			}
+		},
+	),
 	replenish_accounts: traced(
 		'replenish_accounts',
 		async (_payload, helpers) => {

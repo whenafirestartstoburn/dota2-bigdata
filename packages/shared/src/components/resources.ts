@@ -23,6 +23,7 @@ export function steamCtx(cred: ApiCredential, purpose: 'live' | 'historical') {
 	return {
 		apiKey: cred.apiKey,
 		keyId: cred.keyId,
+		accountId: cred.accountId,
 		proxyId: cred.proxyId,
 		proxyUrl: cred.proxyUrl,
 		purpose,

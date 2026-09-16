@@ -68,11 +68,11 @@ func (c *ClickHouse) Close() error {
 	return c.conn.Close()
 }
 
-// Commit inserts every table. On any error it deletes the run from all
-// replay tables so MergeTree does not keep a partial match.
+// Commit inserts every table. On any error it deletes the match from all
+// replay tables so MergeTree does not keep a partial write.
 func (c *ClickHouse) Commit(ctx context.Context, res *model.Result) error {
 	if err := c.insertAll(ctx, res); err != nil {
-		_ = c.Abort(ctx, res.ParseRunID)
+		_ = c.DeleteMatch(ctx, res.MatchID)
 		return err
 	}
 	return nil
@@ -194,26 +194,15 @@ func insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T
 	return nil
 }
 
-func (c *ClickHouse) Abort(ctx context.Context, parseRunID uint64) error {
+func (c *ClickHouse) DeleteMatch(ctx context.Context, matchID uint64) error {
+	if matchID == 0 {
+		return nil
+	}
 	var first error
 	for _, table := range replayTables {
-		q := fmt.Sprintf("ALTER TABLE %s DELETE WHERE parse_run_id = %d", table, parseRunID)
+		q := fmt.Sprintf("ALTER TABLE %s DELETE WHERE match_id = %d", table, matchID)
 		if err := c.conn.Exec(ctx, q); err != nil && first == nil {
 			first = fmt.Errorf("%s delete: %w", table, err)
-		}
-	}
-	return first
-}
-
-func (c *ClickHouse) DropPrevious(ctx context.Context, matchID, keepRun uint64) error {
-	var first error
-	for _, table := range replayTables {
-		q := fmt.Sprintf(
-			"ALTER TABLE %s DELETE WHERE match_id = %d AND parse_run_id != %d AND parse_run_id != 0",
-			table, matchID, keepRun,
-		)
-		if err := c.conn.Exec(ctx, q); err != nil && first == nil {
-			first = err
 		}
 	}
 	return first

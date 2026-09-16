@@ -99,5 +99,6 @@ Team name / logo / tag / guild / tournament keys exist on the proto; Valve omitt
 ## What to persist from which
 
 - **History (`GetMatchHistory`)** — `match_id`, `match_seq_num`, series/teams listing.
+- **Seq (`GetMatchHistoryBySequenceNum`)** — box score, draft, backpack, timed `ability_upgrades`, captains. No salt.
 - **GC** — box score, draft, cluster/salt, flags/outcome, extra player stats. Map `item_6..8` → backpack.
-- **Replay metadata** — captains (GC has none), leftover backpack / neutrals / Aghs if GC left them empty, timed skill build if GC sent no `ability_upgrades` (as here).
+- **Replay metadata** — leftover captains / backpack / neutrals / Aghs if seq and GC left them empty, timed skill build if both sent none.

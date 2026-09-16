@@ -15,6 +15,7 @@
 		"pino": "catalog:",
 		"steam-session": "catalog:",
 		"steam-user": "catalog:",
+		"vdf-parser": "catalog:",
 		"zod": "catalog:"
 	}
 }

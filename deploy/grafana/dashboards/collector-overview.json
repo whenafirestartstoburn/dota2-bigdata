@@ -197,7 +197,7 @@
       "targets": [
         {
           "expr": "dota_matches",
-          "legendFormat": "{{phase}}",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],

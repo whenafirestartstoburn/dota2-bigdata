@@ -5,6 +5,7 @@ import {
 	enqueueFetchMatchDetails,
 	matchOrigin,
 } from '#src/jobs/fetch-match-details'
+import { enqueueFetchSeqDetails } from '#src/jobs/fetch-seq-details'
 import { observeHistoryWalk } from '#src/metrics/observe'
 import type { HistoryMatch } from '#src/steam/schemas'
 import { getMatchHistoryPage } from '#src/steam/web-api'
@@ -24,7 +25,7 @@ import {
 	upsertSeriesForMatch,
 	upsertTeam,
 } from '#src/store/matches'
-import { db, sql } from '#src/utils/db'
+import { db, sql, sqlIn } from '#src/utils/db'
 import { logger } from '#src/utils/logger'
 
 export type WalkLeagueInput = {
@@ -105,6 +106,7 @@ export async function runWalkLeagueHistory(
 
 	const listed = page.matches
 	await persistListed(leagueId, listed)
+	await enqueueSeqForListed(listed)
 
 	const newest = listed[0]?.match_id ?? head
 	const oldest = listed.at(-1)?.match_id ?? tail
@@ -147,7 +149,7 @@ export async function runWalkLeagueHistory(
 					FROM matches m
 					LEFT JOIN leagues l ON l.league_id = m.league_id
 					WHERE m.details_fetched_at IS NULL
-						AND m.phase IN (
+						AND m.status IN (
 							'discovered',
 							'awaiting_details'
 						)
@@ -208,6 +210,23 @@ async function scheduleNextWalk(input: {
 	})
 }
 
+async function enqueueSeqForListed(
+	listed: readonly HistoryMatch[],
+): Promise<void> {
+	if (listed.length === 0) return
+	const rows = await db.execute(sql`
+		SELECT match_id, source
+		FROM matches
+		WHERE match_id IN ${sqlIn(listed.map((match) => match.match_id))}
+			AND match_seq_num IS NOT NULL
+			AND seq_fetched_at IS NULL
+	`)
+	for (const row of rows) {
+		const matchId = Number(row.match_id)
+		await enqueueFetchSeqDetails(matchId, matchOrigin(row.source))
+	}
+}
+
 async function persistListed(
 	leagueId: number,
 	listed: readonly HistoryMatch[],
@@ -265,7 +284,9 @@ async function persistListed(
 					}),
 				]
 			})
-			await upsertMatchPlayers(tx, match.match_id, players)
+			await upsertMatchPlayers(tx, match.match_id, players, {
+				fillOnly: true,
+			})
 			for (const player of players) {
 				await upsertPlayer(tx, {
 					accountId: player.accountId,

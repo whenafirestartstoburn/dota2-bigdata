@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"dota2-collector/parser/internal/model"
-	"dota2-collector/parser/internal/valve"
 	"dota2-collector/parser/internal/version"
+
+	"github.com/dotabuff/manta/dota"
 )
 
 func TestValvePlayerSlot(t *testing.T) {
@@ -35,27 +36,27 @@ func TestApplyMetadataPurchasesAndKills(t *testing.T) {
 	count := uint32(3)
 	killTime := int32(120)
 	bounty := int32(180)
-	killType := valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_PLAYER
-	s.applyMetadata(&valve.CDOTAMatchMetadata{
-		Teams: []*valve.CDOTAMatchMetadata_Team{{
+	killType := dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_PLAYER
+	s.applyMetadata(&dota.CDOTAMatchMetadata{
+		Teams: []*dota.CDOTAMatchMetadata_Team{{
 			DotaTeam: protoU32(2),
-			Players: []*valve.CDOTAMatchMetadata_Team_Player{{
+			Players: []*dota.CDOTAMatchMetadata_Team_Player{{
 				PlayerSlot: protoU32(1),
-				Items: []*valve.CDOTAMatchMetadata_Team_ItemPurchase{{
+				Items: []*dota.CDOTAMatchMetadata_Team_ItemPurchase{{
 					ItemId:       &itemID,
 					PurchaseTime: &bought,
 				}},
-				Kills: []*valve.CDOTAMatchMetadata_Team_PlayerKill{{
+				Kills: []*dota.CDOTAMatchMetadata_Team_PlayerKill{{
 					VictimSlot: &victim,
 					Count:      &count,
 				}},
-				InventorySnapshot: []*valve.CDOTAMatchMetadata_Team_InventorySnapshot{{
+				InventorySnapshot: []*dota.CDOTAMatchMetadata_Team_InventorySnapshot{{
 					GameTime:      &gameTime,
 					NeutralItemId: &neut,
 					ItemId:        []int32{50, 73},
 				}},
 			}},
-			Kills: []*valve.CDOTAMatchMetadata_Team_KillInfo{{
+			Kills: []*dota.CDOTAMatchMetadata_Team_KillInfo{{
 				KillType:         &killType,
 				VictimPlayerSlot: protoU32(128),
 				KillerPlayerSlot: []uint32{1},

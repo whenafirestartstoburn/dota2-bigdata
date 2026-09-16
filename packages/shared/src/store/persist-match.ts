@@ -6,6 +6,7 @@ import {
 } from '#src/store/match-details'
 import {
 	insertUndiscoveredMatch,
+	matchPostgameWritten,
 	replaceBroadcasters,
 	replaceCoaches,
 	replaceMatchDraft,
@@ -22,7 +23,6 @@ export async function persistMatchRecord(
 	tx: Executor,
 	raw: Record<string, unknown>,
 	opts: {
-		apiKeyId?: number | null
 		mustExist: boolean
 		skipStoryObjectives?: boolean
 		fetched?: 'seq' | 'gc'
@@ -61,9 +61,10 @@ export async function persistMatchRecord(
 			WHERE match_id = ${facts.matchId} AND series_id IS NULL
 		`)
 	}
-	await saveMatchFacts(tx, facts, opts.apiKeyId ?? null, opts.fetched ?? 'gc')
+	const fillOnly = await matchPostgameWritten(tx, facts.matchId)
+	await saveMatchFacts(tx, facts, opts.fetched ?? 'gc')
 	const players = extractPlayers(raw)
-	await upsertMatchPlayers(tx, facts.matchId, players)
+	await upsertMatchPlayers(tx, facts.matchId, players, { fillOnly })
 	for (const player of players) {
 		await upsertPlayer(tx, {
 			accountId: player.accountId,
@@ -80,7 +81,7 @@ export async function persistMatchRecord(
 	}
 	const draft = extractDraft(raw)
 	if (draft.length > 0) {
-		await replaceMatchDraft(tx, facts.matchId, draft)
+		await replaceMatchDraft(tx, facts.matchId, draft, { fillOnly })
 	}
 	await replaceCoaches(tx, facts.matchId, facts.coaches)
 	await replaceBroadcasters(tx, facts.matchId, facts.broadcasters)

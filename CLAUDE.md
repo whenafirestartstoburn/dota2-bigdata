@@ -16,7 +16,7 @@
 | `packages/worker` | сервис: свой `app.ts` с graceful shutdown и свой `utils/env.ts` |
 <!-- </template:structure> -->
 
-| `packages/parser` | Go replay parser (own Source 2 decoder, ClickHouse `replay_*`) |
+| `packages/parser` | Go replay parser (dotabuff/manta decoder, ClickHouse `replay_*`) |
 
 Prometheus + Grafana live in compose (`:9090`, `:3003`). The three worker
 roles (`worker-live` `:3001`, `worker-historical` `:3004`,

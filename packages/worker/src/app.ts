@@ -7,6 +7,8 @@ import { metricsResponse } from '@app/shared/src/metrics/http'
 import {
 	seedIdleGcSeries,
 	seedIdleHistorySeries,
+	seedIdleReplaySeries,
+	seedIdleWebApiSeries,
 } from '@app/shared/src/metrics/observe'
 import { db, sql } from '@app/shared/src/utils/db'
 import { logger } from '@app/shared/src/utils/logger'
@@ -29,6 +31,8 @@ import { taskListFor } from '#src/tasks'
 const role = env.WORKER_ROLE
 if (role === 'all' || role === 'match-processing') seedIdleGcSeries()
 if (role === 'all' || role === 'historical') seedIdleHistorySeries()
+seedIdleWebApiSeries()
+seedIdleReplaySeries()
 const taskNames = taskNamesFor(role)
 const taskList = taskListFor(taskNames)
 const crontab = cronFor(role)

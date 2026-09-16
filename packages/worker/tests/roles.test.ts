@@ -4,8 +4,8 @@ import {
 	concurrencyFor,
 	cronFor,
 	parseWorkerMode,
-	startupJobsFor,
 	scrapesInventory,
+	startupJobsFor,
 	syncsCatalogsOnBoot,
 	taskNamesFor,
 	WORKER_ROLES,
@@ -29,16 +29,17 @@ describe('parseWorkerMode', () => {
 })
 
 describe('task ownership', () => {
-	test('roles partition every registered graphile task', () => {
-		const owned = WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])
+	test('roles cover every registered graphile task', () => {
+		const owned = [
+			...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])),
+		]
 		expect([...owned, SCHEDULED_JOB].sort()).toEqual(
 			Object.keys(allTasks).sort(),
 		)
-		const seen = new Set<string>()
-		for (const name of owned) {
-			expect(seen.has(name)).toBe(false)
-			seen.add(name)
-		}
+		expect(WORKER_TASKS.live).toContain('poll_finished_history')
+		expect(WORKER_TASKS.live).toContain('fetch_seq_details')
+		expect(WORKER_TASKS.historical).toContain('poll_finished_history')
+		expect(WORKER_TASKS.historical).toContain('fetch_seq_details')
 	})
 
 	test('taskListFor keeps only the requested identifiers', () => {
@@ -47,6 +48,8 @@ describe('task ownership', () => {
 		const live = taskListFor(taskNamesFor('live'))
 		expect(Object.keys(live).sort()).toEqual(withHop(WORKER_TASKS.live))
 		expect(live.poll_live_games).toBeDefined()
+		expect(live.poll_finished_history).toBeDefined()
+		expect(live.fetch_seq_details).toBeDefined()
 		expect(live[SCHEDULED_JOB]).toBeDefined()
 		expect(live.fetch_match_details).toBeUndefined()
 		expect(live.walk_league_history).toBeUndefined()
@@ -65,12 +68,13 @@ describe('task ownership', () => {
 		)
 		expect(processing.fetch_match_details).toBeDefined()
 		expect(processing.download_replay).toBeDefined()
+		expect(processing.archive_parsed_replays).toBeDefined()
 		expect(processing.poll_realtime_stats).toBeUndefined()
 	})
 
 	test('all registers the union and processing concurrency', () => {
 		expect(taskNamesFor('all')).toEqual([
-			...WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]]),
+			...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])),
 			SCHEDULED_JOB,
 		])
 		expect(concurrencyFor('live')).toBe(4)
@@ -112,10 +116,28 @@ describe('boot per role', () => {
 			startupJobsFor('live')
 				.map((job) => job.identifier)
 				.sort(),
-		).toEqual([...WORKER_TASKS.live].sort())
+		).toEqual([
+			'poll_finished_history',
+			'poll_live_games',
+			'poll_realtime_stats',
+			'poll_top_live',
+		])
 		expect(
 			startupJobsFor('match-processing').map((job) => job.identifier),
-		).toEqual(['replenish_accounts', 'retest_disabled_resources'])
+		).toEqual([
+			'archive_parsed_replays',
+			'maintain_request_logs',
+			'replenish_accounts',
+			'retest_disabled_resources',
+		])
+		const archive = startupJobsFor('match-processing').find(
+			(job) => job.identifier === 'archive_parsed_replays',
+		)
+		expect(archive?.priority).toBe(PRIORITY.archive)
+		const maintainLogs = startupJobsFor('match-processing').find(
+			(job) => job.identifier === 'maintain_request_logs',
+		)
+		expect(maintainLogs?.priority).toBe(PRIORITY.maintainLogs)
 		const replenish = startupJobsFor('match-processing').find(
 			(job) => job.identifier === 'replenish_accounts',
 		)

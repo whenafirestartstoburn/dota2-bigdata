@@ -25,12 +25,11 @@ import {
 	selectGcPool,
 } from '@app/shared/src/components/resources'
 import { getAppSettings } from '@app/shared/src/components/settings'
+import { sendGcMatchDetailsRequest } from '@app/shared/src/gc/match-details-rpc'
 import {
 	DOTA_APP_ID,
 	decodeFields,
-	decodeMatchDetailsResponse,
 	encodeClientHello,
-	encodeMatchDetailsRequest,
 	GC_MSG,
 	type GcMatchReplayLocator,
 } from '@app/shared/src/gc/protobuf'
@@ -543,28 +542,12 @@ export async function requestMatchReplayLocator(
 	const started = performance.now()
 	try {
 		const bound = await getGcSession()
-		const payload = encodeMatchDetailsRequest(matchId)
-
-		const buffer = await new Promise<Buffer>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`GC match details timeout for ${matchId}`)),
-				15_000,
-			)
-			bound.client.sendToGC(
-				DOTA_APP_ID,
-				GC_MSG.matchDetailsRequest,
-				{},
-				payload,
-				(_appId, _msgType, body) => {
-					clearTimeout(timer)
-					resolve(Buffer.from(body))
-				},
-			)
+		const locator = await sendGcMatchDetailsRequest(bound.client, matchId, {
+			accountId: bound.account.id,
 		})
-
 		observeGcRequest('match_details', 'success', started)
 		return {
-			...decodeMatchDetailsResponse(buffer),
+			...locator,
 			accountId: bound.account.id,
 			proxyId: bound.account.proxyId,
 		}

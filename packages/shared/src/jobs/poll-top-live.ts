@@ -1,6 +1,7 @@
 import { setCursor } from '#src/components/rate-limit'
 import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
+import { enqueueLiveFinishedDetails } from '#src/jobs/fetch-match-details'
 import { getTopLiveGames } from '#src/steam/web-api'
 import { asPgInt8, asSteamId64 } from '#src/store/coerce'
 import { ensureLeagueStub } from '#src/store/leagues'
@@ -74,6 +75,8 @@ export async function runPollTopLive(): Promise<{
 			}
 		}
 	})
+
+	await enqueueLiveFinishedDetails(finished)
 
 	logger.info(
 		{ games: games.length, wrote: seen.length, finished: finished.length },

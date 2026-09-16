@@ -38,6 +38,9 @@ export type AppSettings = {
 	apiKeyRateLimitMs: number
 	gcAccountRateLimitMs: number
 	parserParallelism: number
+	replayArchiveIntervalMs: number
+	replayArchiveBatchSize: number
+	logValveRequests: boolean
 }
 
 const KEYS = {
@@ -75,6 +78,9 @@ const KEYS = {
 	apiKeyRateLimitMs: 'api_key_rate_limit_ms',
 	gcAccountRateLimitMs: 'gc_account_rate_limit_ms',
 	parserParallelism: 'parser_parallelism',
+	replayArchiveIntervalMs: 'replay_archive_interval_ms',
+	replayArchiveBatchSize: 'replay_archive_batch_size',
+	logValveRequests: 'log_valve_requests',
 } as const
 
 function requiredNumber(rows: Map<string, string>, key: string): number {
@@ -108,6 +114,13 @@ function optionalPositiveInt(
 ): number {
 	if (!rows.has(key)) return fallback
 	return requiredPositiveInt(rows, key)
+}
+
+function requiredBool(rows: Map<string, string>, key: string): boolean {
+	const raw = rows.get(key)
+	if (raw === 'true' || raw === '1') return true
+	if (raw === 'false' || raw === '0') return false
+	throw new Error(`settings.${key} is missing or not a boolean`)
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -168,6 +181,17 @@ export async function getAppSettings(): Promise<AppSettings> {
 		apiKeyRateLimitMs: requiredPositiveInt(map, KEYS.apiKeyRateLimitMs),
 		gcAccountRateLimitMs: requiredPositiveInt(map, KEYS.gcAccountRateLimitMs),
 		parserParallelism: optionalPositiveInt(map, KEYS.parserParallelism, 6),
+		replayArchiveIntervalMs: optionalPositiveInt(
+			map,
+			KEYS.replayArchiveIntervalMs,
+			30_000,
+		),
+		replayArchiveBatchSize: optionalPositiveInt(
+			map,
+			KEYS.replayArchiveBatchSize,
+			10,
+		),
+		logValveRequests: requiredBool(map, KEYS.logValveRequests),
 	}
 }
 

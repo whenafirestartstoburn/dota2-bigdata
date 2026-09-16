@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { match_replays } from '#src/db/schema'
+import { asNumber, asString } from '#src/store/coerce'
 import { db, sql } from '#src/utils/db'
 
 export async function getReplay(matchId: number) {
@@ -59,6 +60,7 @@ export async function updateReplay(
 		parsedAt?: Date | null
 		nextAttemptAt?: Date | null
 		bumpAttempt?: boolean
+		clearArchived?: boolean
 	},
 ): Promise<void> {
 	await db.execute(sql`
@@ -82,35 +84,86 @@ export async function updateReplay(
 			parser_version = COALESCE(${patch.parserVersion ?? null}::integer, parser_version),
 			parsed_at = COALESCE(${patch.parsedAt ?? null}::timestamptz, parsed_at),
 			next_attempt_at = COALESCE(${patch.nextAttemptAt ?? null}::timestamptz, next_attempt_at),
+			archived_at = CASE
+				WHEN ${patch.clearArchived === true} THEN NULL
+				ELSE archived_at
+			END,
 			attempts = attempts + ${patch.bumpAttempt === true ? 1 : 0}::integer,
 			updated_at = now()
 		WHERE match_id = ${matchId}
 	`)
 }
 
-export async function markMatchReplayPhase(
+export type UnarchivedReplay = {
+	matchId: number
+	s3Bucket: string
+	s3Key: string
+	bytes: number | null
+}
+
+export async function listParsedUnarchived(
+	limit: number,
+	matchId?: number,
+): Promise<UnarchivedReplay[]> {
+	const rows = await db.execute(sql`
+		SELECT match_id, s3_bucket, s3_key, bytes
+		FROM match_replays
+		WHERE status = 'parsed'
+			AND archived_at IS NULL
+			AND s3_key IS NOT NULL
+			AND s3_key <> ''
+			AND (
+				${matchId ?? null}::bigint IS NULL
+				OR match_id = ${matchId ?? null}::bigint
+			)
+		ORDER BY parsed_at ASC NULLS LAST, id ASC
+		LIMIT ${limit}
+	`)
+	const out: UnarchivedReplay[] = []
+	for (const row of rows) {
+		const matchId = asNumber(row.match_id)
+		const s3Key = asString(row.s3_key)
+		if (matchId == null || s3Key == null) continue
+		out.push({
+			matchId,
+			s3Bucket: asString(row.s3_bucket) ?? '',
+			s3Key,
+			bytes: asNumber(row.bytes),
+		})
+	}
+	return out
+}
+
+export async function markReplayArchived(
 	matchId: number,
-	phase: 'awaiting_replay' | 'replay_stored' | 'replay_unavailable' | 'failed',
+	s3Bucket: string,
+	s3Key: string,
+): Promise<void> {
+	await db.execute(sql`
+		UPDATE match_replays SET
+			s3_bucket = ${s3Bucket},
+			s3_key = ${s3Key},
+			archived_at = now(),
+			last_error = NULL,
+			updated_at = now()
+		WHERE match_id = ${matchId}
+			AND archived_at IS NULL
+	`)
+}
+
+export async function markMatchReplayStatus(
+	matchId: number,
+	status: 'awaiting_replay' | 'replay_stored' | 'replay_unavailable' | 'failed',
 	opts?: { error?: string; errorKind?: string },
 ): Promise<void> {
-	const waiting =
-		phase === 'awaiting_replay'
-			? 'replay'
-			: phase === 'replay_stored'
-				? 'parse'
-				: null
 	const error = opts?.error ?? null
 	const errorKind = opts?.errorKind ?? null
 	await db.execute(sql`
 		UPDATE matches
 		SET
-			phase = CASE
-				WHEN phase = 'parsed' THEN phase
-				ELSE ${phase}::match_phase
-			END,
-			waiting_for = CASE
-				WHEN phase = 'parsed' THEN waiting_for
-				ELSE ${waiting}
+			status = CASE
+				WHEN status = 'parsed' THEN status
+				ELSE ${status}::match_status
 			END,
 			last_error = CASE
 				WHEN ${error}::text IS NULL THEN last_error
@@ -127,6 +180,13 @@ export async function markMatchReplayPhase(
 			updated_at = now()
 		WHERE match_id = ${matchId}
 	`)
+}
+
+/** Parsed / in-flight parse already passed download; do not demote to stored. */
+export function replayDownloadShouldKeepStatus(
+	status: string | null | undefined,
+): boolean {
+	return status === 'parsed' || status === 'parsing'
 }
 
 /**

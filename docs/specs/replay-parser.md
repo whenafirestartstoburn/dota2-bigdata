@@ -10,16 +10,19 @@ plus the sparse Postgres facts the spec already named (`match_objectives`,
 backpack / neutrals / Aghs from metadata). The TypeScript
 worker still only downloads; it does not parse.
 
-Decoder is ours (`packages/parser/internal/replay`). It implements the
-Source 2 demo wire (PBDEMS2, sendtables, field paths, packet entities)
-and uses Valve `.proto` types only. We do not depend on manta, Clarity,
-or any other third-party replay parser. Example projects are a reference
-for callback names and entity field paths, not a codebase we vendor.
+Decoder is [dotabuff/manta](https://github.com/dotabuff/manta)
+(`github.com/dotabuff/manta`). Extract, ClickHouse batches, and
+Postgres publish stay ours (`packages/parser/internal/parse`,
+`internal/sink`, `internal/store`). Manta owns PBDEMS2, sendtables,
+field paths, packet entities, and Valve proto types
+(`github.com/dotabuff/manta/dota`). The example
+`example_projects/dota2-demo-parser` is the same split: manta for
+decode, our callbacks for rows.
 
 ## Status
 
 Postgres `replay_status` already has `parsing` / `parsed`. A successful
-commit also sets `matches.phase = parsed` and clears `waiting_for`.
+commit also sets `matches.status = parsed`.
 “Processed” in the product sense is `parsed` on both rows.
 
 `GET /metrics` exposes parse success/fail, duration, inflight, and the
@@ -29,16 +32,13 @@ commit also sets `matches.phase = parsed` and clears `waiting_for`.
 
 `settings.parser_parallelism` (default `6`, prod `8`). The service
 polls that row and runs that many in-flight parses. Live-priority
-`stored` rows go first. Each parse still holds the **kept** Source 2
-entity world until EOF (heroes, player resource, gamerules, team data,
-items, abilities, wards, wearables). Creeps / projectiles / particles
-are decoded only far enough to consume the bitstream, then dropped.
-High-volume extract rows flush to ClickHouse in batches (seed 8 192).
+`stored` rows go first. Each parse holds manta’s entity world until
+EOF. High-volume extract rows flush to ClickHouse in batches (seed 8 192).
 
 Width 8 needs the parser cgroup at **3.00 CPU / 8 GiB**. The old
 0.90 / 4 GiB cap made 6-wide look “full” and 10-wide on 0.70 only
 thrashed CFS. The host is 4 cores: 20-wide on ~2.5 usable cores
-raised wall time to 3–4 min and cut throughput. Skip `DropPrevious`
+raised wall time to 3–4 min and cut throughput. Skip `DeleteMatch`
 when the row has never published a `parser_version` — empty
 `ALTER DELETE` mutations are what filled the disk at high width.
 A mutation still rewrites every MergeTree **part** that contains a
@@ -58,12 +58,17 @@ A `parsing` row older than 30 minutes is treated as abandoned and reset
 to `stored`. Already-`parsed` rows with `parser_version >=` the binary’s
 schema version are skipped (idempotent). A newer binary re-parses.
 
-## Everything-or-nothing on MergeTree
+After `parsed`, match-processing `archive_parsed_replays` copies the object
+to cold storage and rewrites `s3_bucket` / `s3_key`. A re-parse that resets
+the row to `stored` reads that locator (Glacier/Archive classes need a
+restore first).
+
+## Delete+insert on MergeTree
 
 ClickHouse has no cross-table transaction and we do not change the engine.
-Each attempt allocates a unique `parse_run_id` (uint64). Every `replay_*`
-row of that attempt carries it. Postgres `match_replays.parse_run_id` is
-the **published** run — that is what makes a write visible.
+Readers query `replay_*` by `match_id`. A re-parse deletes the previous
+rows for that match first, then inserts. A failed attempt deletes the
+same `match_id` so MergeTree does not keep a partial write.
 
 High-volume tables (`replay_combat_log`, `replay_actions`,
 `replay_intervals`) are flushed to ClickHouse in batches **during**
@@ -72,31 +77,27 @@ their buffer fills or at end-of-demo. A batch is a few thousand rows
 (seed 8 192), not one INSERT per event. After a successful flush the
 Go slice is reused so extract RAM stays O(batch), not O(match).
 
-Unused entity classes are not kept in `ents` — batching plus that
-discard is what keeps RSS O(kept world + one batch), not O(match).
-Creeps still cost decode CPU (variable-length fields must be read);
-they do not cost a cloned baseline tree.
+High-volume extract rows still flush in batches so extract RAM stays
+O(batch), not O(match). Manta keeps the live entity world for the
+whole demo (heroes, creeps, projectiles). We no longer drop unused
+classes after decode.
 
-1. Allocate `parse_run_id`. Decode the stream. Whenever a table hits
-   the batch size, `INSERT` those rows with that id and drop the
-   buffer. Decode / insert error: `Abort(parse_run_id)` (`ALTER TABLE
-   … DELETE WHERE parse_run_id = {id}` on every `replay_*` table),
-   mark the row `failed`, stop. Readers never see this id — Postgres
-   still has the previous published run, or none.
-2. End of demo: flush leftovers, then write Postgres (objectives,
+1. If the row already published a `parser_version` (re-parse),
+   `DeleteMatch` (`ALTER TABLE … DELETE WHERE match_id = {id}` on
+   every `replay_*`). Skip on first parse — empty mutations filled
+   the disk at high width.
+2. Decode the stream. Whenever a table hits the batch size, `INSERT`
+   those rows and drop the buffer. Decode / insert error:
+   `DeleteMatch`, mark the row `failed`, stop.
+3. End of demo: flush leftovers, then write Postgres (objectives,
    draft clocks, player summaries) in one transaction. On failure:
-   the same `Abort`, mark `failed`.
-3. Only then `UPDATE match_replays SET status = 'parsed',
-   parser_version, parse_run_id, parsed_at`.
-4. After publish, delete any *previous* `parse_run_id` for that
-   `match_id` so re-parse does not leave a readable duplicate set.
+   the same `DeleteMatch`, mark `failed`.
+4. Only then `UPDATE match_replays SET status = 'parsed',
+   parser_version, parsed_at`.
 
-`Abort` is a MergeTree mutation: rows vanish from queries quickly,
-parts merge later. That is the same contract as today’s failed
-`Commit`. Do not query `replay_*` by `match_id` alone while a parse
-is in flight; join
-`replay_*.parse_run_id = match_replays.parse_run_id`. Do not use
-`FINAL`.
+`DeleteMatch` is a MergeTree mutation: rows vanish from queries
+quickly, parts merge later. During a re-parse readers may see no
+rows or a partial insert until publish. Do not use `FINAL`.
 
 `parser_version` is the extract/schema revision of this binary (starts at
 `1`). Bump it when columns or extract rules change. **3** after
@@ -115,7 +116,7 @@ schema dropped:
 
 | Table | Added |
 |---|---|
-| every `replay_*` | `parse_run_id`, `account_id` (Steam 32-bit; 0 if unknown) |
+| every `replay_*` | `account_id` (Steam 32-bit; 0 if unknown) |
 | `replay_combat_log` | `attacker_account_id`, `target_account_id` |
 | `replay_actions` | unit / target / ability / position / queued |
 | `replay_pings` | `ping_type`, `target` |

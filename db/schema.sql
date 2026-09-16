@@ -92,10 +92,20 @@ CREATE TYPE public.marketplace_store AS ENUM (
 
 
 --
--- Name: match_phase; Type: TYPE; Schema: public; Owner: -
+-- Name: match_source; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE public.match_phase AS ENUM (
+CREATE TYPE public.match_source AS ENUM (
+    'live',
+    'historical'
+);
+
+
+--
+-- Name: match_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.match_status AS ENUM (
     'discovered',
     'live',
     'awaiting_details',
@@ -107,16 +117,6 @@ CREATE TYPE public.match_phase AS ENUM (
     'awaiting_history',
     'parsed',
     'not_started'
-);
-
-
---
--- Name: match_source; Type: TYPE; Schema: public; Owner: -
---
-
-CREATE TYPE public.match_source AS ENUM (
-    'live',
-    'historical'
 );
 
 
@@ -157,7 +157,6 @@ CREATE TYPE public.replay_priority AS ENUM (
 
 CREATE TYPE public.replay_status AS ENUM (
     'pending',
-    'awaiting_gc',
     'downloading',
     'stored',
     'parsing',
@@ -518,6 +517,68 @@ CREATE FUNCTION graphile_worker.reschedule_jobs(job_ids bigint[], run_at timesta
     )
     returning *;
 $$;
+
+
+--
+-- Name: maintain_request_logs(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.maintain_request_logs(retain_days integer DEFAULT 4) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+	tbl text;
+	d date;
+	start_day date;
+	end_day date;
+	part_name text;
+	part_from timestamptz;
+	part_to timestamptz;
+	drop_name text;
+BEGIN
+	IF retain_days < 1 THEN
+		RAISE EXCEPTION 'retain_days must be >= 1';
+	END IF;
+	start_day := (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - retain_days;
+	end_day := (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date + 2;
+	FOREACH tbl IN ARRAY ARRAY[
+		'steam_api_requests',
+		'steam_gc_requests',
+		'replay_requests'
+	]
+	LOOP
+		d := start_day;
+		WHILE d < end_day LOOP
+			part_name := tbl || '_' || to_char(d, 'YYYY_MM_DD');
+			part_from := (d::text || ' 00:00:00+00')::timestamptz;
+			part_to := ((d + 1)::text || ' 00:00:00+00')::timestamptz;
+			EXECUTE format(
+				'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L)',
+				part_name,
+				tbl,
+				part_from,
+				part_to
+			);
+			d := d + 1;
+		END LOOP;
+		FOR drop_name IN
+			SELECT c.relname
+			FROM pg_inherits i
+			JOIN pg_class c ON c.oid = i.inhrelid
+			JOIN pg_class p ON p.oid = i.inhparent
+			WHERE p.relname = tbl
+				AND c.relkind = 'r'
+				AND c.relname ~ ('^' || tbl || '_[0-9]{4}_[0-9]{2}_[0-9]{2}$')
+				AND to_date(
+					substring(c.relname FROM '[0-9]{4}_[0-9]{2}_[0-9]{2}$'),
+					'YYYY_MM_DD'
+				) < start_day
+		LOOP
+			EXECUTE format('DROP TABLE IF EXISTS %I', drop_name);
+		END LOOP;
+	END LOOP;
+END;
+$_$;
 
 
 --
@@ -1007,6 +1068,120 @@ CREATE SEQUENCE public.leagues_id_seq
 --
 
 ALTER SEQUENCE public.leagues_id_seq OWNED BY public.leagues.id;
+
+
+--
+-- Name: live_match_ticks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.live_match_ticks (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    league_id integer DEFAULT 0 NOT NULL,
+    duration real DEFAULT 0 NOT NULL,
+    radiant_score integer DEFAULT 0 NOT NULL,
+    dire_score integer DEFAULT 0 NOT NULL,
+    spectators integer DEFAULT 0 NOT NULL,
+    tower_state_radiant integer DEFAULT 0 NOT NULL,
+    tower_state_dire integer DEFAULT 0 NOT NULL,
+    barracks_state_radiant integer DEFAULT 0 NOT NULL,
+    barracks_state_dire integer DEFAULT 0 NOT NULL,
+    roshan_respawn_timer integer DEFAULT 0 NOT NULL,
+    series_type smallint DEFAULT 0 NOT NULL,
+    radiant_series_wins smallint DEFAULT 0 NOT NULL,
+    dire_series_wins smallint DEFAULT 0 NOT NULL,
+    stream_delay_s integer DEFAULT 0 NOT NULL,
+    source text NOT NULL,
+    lobby_id bigint DEFAULT 0 NOT NULL,
+    game_number smallint DEFAULT 0 NOT NULL,
+    league_series_id integer DEFAULT 0 NOT NULL,
+    league_game_id integer DEFAULT 0 NOT NULL,
+    league_tier smallint DEFAULT 0 NOT NULL,
+    game_state smallint DEFAULT 0 NOT NULL,
+    server_steam_id bigint DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: live_match_ticks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.live_match_ticks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: live_match_ticks_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.live_match_ticks_id_seq OWNED BY public.live_match_ticks.id;
+
+
+--
+-- Name: live_player_ticks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.live_player_ticks (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    player_slot smallint NOT NULL,
+    account_id bigint DEFAULT 0 NOT NULL,
+    hero_id integer DEFAULT 0 NOT NULL,
+    kills integer DEFAULT 0 NOT NULL,
+    deaths integer DEFAULT 0 NOT NULL,
+    assists integer DEFAULT 0 NOT NULL,
+    last_hits integer DEFAULT 0 NOT NULL,
+    denies integer DEFAULT 0 NOT NULL,
+    gold integer DEFAULT 0 NOT NULL,
+    net_worth integer DEFAULT 0 NOT NULL,
+    level smallint DEFAULT 0 NOT NULL,
+    gold_per_min integer DEFAULT 0 NOT NULL,
+    xp_per_min integer DEFAULT 0 NOT NULL,
+    x real DEFAULT 0 NOT NULL,
+    y real DEFAULT 0 NOT NULL,
+    source text NOT NULL,
+    item0 integer DEFAULT 0 NOT NULL,
+    item1 integer DEFAULT 0 NOT NULL,
+    item2 integer DEFAULT 0 NOT NULL,
+    item3 integer DEFAULT 0 NOT NULL,
+    item4 integer DEFAULT 0 NOT NULL,
+    item5 integer DEFAULT 0 NOT NULL,
+    item6 integer DEFAULT 0 NOT NULL,
+    item7 integer DEFAULT 0 NOT NULL,
+    item8 integer DEFAULT 0 NOT NULL,
+    ultimate_state smallint DEFAULT 0 NOT NULL,
+    ultimate_cooldown integer DEFAULT 0 NOT NULL,
+    respawn_timer integer DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: live_player_ticks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.live_player_ticks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: live_player_ticks_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.live_player_ticks_id_seq OWNED BY public.live_player_ticks.id;
 
 
 --
@@ -1551,7 +1726,7 @@ CREATE TABLE public.match_replays (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     id bigint NOT NULL,
-    parse_run_id bigint
+    archived_at timestamp with time zone
 );
 
 
@@ -1598,7 +1773,7 @@ CREATE TABLE public.matches (
     dire_team_id integer,
     league_node_id integer,
     stream_delay_s integer,
-    phase public.match_phase DEFAULT 'discovered'::public.match_phase NOT NULL,
+    status public.match_status DEFAULT 'discovered'::public.match_status NOT NULL,
     source public.match_source DEFAULT 'historical'::public.match_source NOT NULL,
     live_seen_at timestamp with time zone,
     live_disappeared_at timestamp with time zone,
@@ -1624,10 +1799,6 @@ CREATE TABLE public.matches (
     patch text,
     last_error text,
     last_error_at timestamp with time zone,
-    last_api_key_id bigint,
-    last_steam_account_id bigint,
-    last_proxy_id bigint,
-    attempts integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lobby_id bigint,
@@ -1651,7 +1822,6 @@ CREATE TABLE public.matches (
     league_tier integer,
     id bigint NOT NULL,
     ingest_sources text[] DEFAULT '{}'::text[] NOT NULL,
-    waiting_for text,
     last_error_kind text,
     server_steam_id bigint,
     live_league_missed_polls integer DEFAULT 0 NOT NULL,
@@ -1663,8 +1833,9 @@ CREATE TABLE public.matches (
     seq_fetched_at timestamp with time zone,
     last_realtime_at timestamp with time zone,
     live_duration_max real DEFAULT 0 NOT NULL,
-    CONSTRAINT matches_last_error_kind_check CHECK (((last_error_kind IS NULL) OR (last_error_kind = ANY (ARRAY['network'::text, 'rate_limit'::text, 'auth'::text, 'not_ready'::text, 'unavailable'::text, 'history_timeout'::text, 'not_started'::text, 'other'::text])))),
-    CONSTRAINT matches_waiting_for_check CHECK (((waiting_for IS NULL) OR (waiting_for = ANY (ARRAY['live_end'::text, 'history'::text, 'seq'::text, 'gc'::text, 'replay'::text, 'parse'::text]))))
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    CONSTRAINT matches_last_error_kind_check CHECK (((last_error_kind IS NULL) OR (last_error_kind = ANY (ARRAY['network'::text, 'rate_limit'::text, 'auth'::text, 'not_ready'::text, 'unavailable'::text, 'history_timeout'::text, 'not_started'::text, 'other'::text]))))
 );
 
 
@@ -1858,6 +2029,147 @@ CREATE SEQUENCE public.regions_id_seq
 --
 
 ALTER SEQUENCE public.regions_id_seq OWNED BY public.regions.id;
+
+
+--
+-- Name: replay_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+)
+PARTITION BY RANGE (created_at);
+
+
+--
+-- Name: replay_requests_2026_09_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_11 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_2026_09_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_12 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_2026_09_13; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_13 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_2026_09_14; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_14 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_2026_09_15; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_15 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_2026_09_16; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.replay_requests_2026_09_16 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    CONSTRAINT replay_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: replay_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.replay_requests ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.replay_requests_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -2065,6 +2377,316 @@ ALTER SEQUENCE public.steam_api_keys_id_seq OWNED BY public.steam_api_keys.id;
 
 
 --
+-- Name: steam_api_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+)
+PARTITION BY RANGE (created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_11 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_2026_09_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_12 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_2026_09_13; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_13 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_2026_09_14; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_14 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_2026_09_15; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_15 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_2026_09_16; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_api_requests_2026_09_16 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_api_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_api_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.steam_api_requests ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.steam_api_requests_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: steam_gc_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+)
+PARTITION BY RANGE (created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_11 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_12 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_13 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_14 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_15 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.steam_gc_requests_2026_09_16 (
+    id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    match_id bigint,
+    method_name text NOT NULL,
+    response_time double precision,
+    response_status text,
+    response_size_kb double precision,
+    error_response text,
+    steam_api_key_id bigint,
+    steam_account_id bigint,
+    CONSTRAINT steam_gc_requests_error_len CHECK (((error_response IS NULL) OR (char_length(error_response) <= 1000)))
+);
+
+
+--
+-- Name: steam_gc_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.steam_gc_requests ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.steam_gc_requests_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: teams; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2128,6 +2750,132 @@ CREATE SEQUENCE public.xp_levels_id_seq
 --
 
 ALTER SEQUENCE public.xp_levels_id_seq OWNED BY public.xp_levels.id;
+
+
+--
+-- Name: replay_requests_2026_09_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_11 FOR VALUES FROM ('2026-09-11 00:00:00+00') TO ('2026-09-12 00:00:00+00');
+
+
+--
+-- Name: replay_requests_2026_09_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_12 FOR VALUES FROM ('2026-09-12 00:00:00+00') TO ('2026-09-13 00:00:00+00');
+
+
+--
+-- Name: replay_requests_2026_09_13; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_13 FOR VALUES FROM ('2026-09-13 00:00:00+00') TO ('2026-09-14 00:00:00+00');
+
+
+--
+-- Name: replay_requests_2026_09_14; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_14 FOR VALUES FROM ('2026-09-14 00:00:00+00') TO ('2026-09-15 00:00:00+00');
+
+
+--
+-- Name: replay_requests_2026_09_15; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_15 FOR VALUES FROM ('2026-09-15 00:00:00+00') TO ('2026-09-16 00:00:00+00');
+
+
+--
+-- Name: replay_requests_2026_09_16; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests ATTACH PARTITION public.replay_requests_2026_09_16 FOR VALUES FROM ('2026-09-16 00:00:00+00') TO ('2026-09-17 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_11 FOR VALUES FROM ('2026-09-11 00:00:00+00') TO ('2026-09-12 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_12 FOR VALUES FROM ('2026-09-12 00:00:00+00') TO ('2026-09-13 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_13; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_13 FOR VALUES FROM ('2026-09-13 00:00:00+00') TO ('2026-09-14 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_14; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_14 FOR VALUES FROM ('2026-09-14 00:00:00+00') TO ('2026-09-15 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_15; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_15 FOR VALUES FROM ('2026-09-15 00:00:00+00') TO ('2026-09-16 00:00:00+00');
+
+
+--
+-- Name: steam_api_requests_2026_09_16; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests ATTACH PARTITION public.steam_api_requests_2026_09_16 FOR VALUES FROM ('2026-09-16 00:00:00+00') TO ('2026-09-17 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_11 FOR VALUES FROM ('2026-09-11 00:00:00+00') TO ('2026-09-12 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_12 FOR VALUES FROM ('2026-09-12 00:00:00+00') TO ('2026-09-13 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_13; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_13 FOR VALUES FROM ('2026-09-13 00:00:00+00') TO ('2026-09-14 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_14; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_14 FOR VALUES FROM ('2026-09-14 00:00:00+00') TO ('2026-09-15 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_15; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_15 FOR VALUES FROM ('2026-09-15 00:00:00+00') TO ('2026-09-16 00:00:00+00');
+
+
+--
+-- Name: steam_gc_requests_2026_09_16; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests ATTACH PARTITION public.steam_gc_requests_2026_09_16 FOR VALUES FROM ('2026-09-16 00:00:00+00') TO ('2026-09-17 00:00:00+00');
 
 
 --
@@ -2198,6 +2946,20 @@ ALTER TABLE ONLY public.league_ingest_runs ALTER COLUMN id SET DEFAULT nextval('
 --
 
 ALTER TABLE ONLY public.leagues ALTER COLUMN id SET DEFAULT nextval('public.leagues_id_seq'::regclass);
+
+
+--
+-- Name: live_match_ticks id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_match_ticks ALTER COLUMN id SET DEFAULT nextval('public.live_match_ticks_id_seq'::regclass);
+
+
+--
+-- Name: live_player_ticks id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_player_ticks ALTER COLUMN id SET DEFAULT nextval('public.live_player_ticks_id_seq'::regclass);
 
 
 --
@@ -2607,6 +3369,38 @@ ALTER TABLE ONLY public.leagues
 
 
 --
+-- Name: live_match_ticks live_match_ticks_match_id_captured_at_source_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_match_ticks
+    ADD CONSTRAINT live_match_ticks_match_id_captured_at_source_key UNIQUE (match_id, captured_at, source);
+
+
+--
+-- Name: live_match_ticks live_match_ticks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_match_ticks
+    ADD CONSTRAINT live_match_ticks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: live_player_ticks live_player_ticks_match_id_captured_at_player_slot_source_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_player_ticks
+    ADD CONSTRAINT live_player_ticks_match_id_captured_at_player_slot_source_key UNIQUE (match_id, captured_at, player_slot, source);
+
+
+--
+-- Name: live_player_ticks live_player_ticks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_player_ticks
+    ADD CONSTRAINT live_player_ticks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: lobby_types lobby_types_lobby_type_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2927,6 +3721,62 @@ ALTER TABLE ONLY public.regions
 
 
 --
+-- Name: replay_requests replay_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests
+    ADD CONSTRAINT replay_requests_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_11 replay_requests_2026_09_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_11
+    ADD CONSTRAINT replay_requests_2026_09_11_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_12 replay_requests_2026_09_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_12
+    ADD CONSTRAINT replay_requests_2026_09_12_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_13 replay_requests_2026_09_13_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_13
+    ADD CONSTRAINT replay_requests_2026_09_13_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_14 replay_requests_2026_09_14_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_14
+    ADD CONSTRAINT replay_requests_2026_09_14_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_15 replay_requests_2026_09_15_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_15
+    ADD CONSTRAINT replay_requests_2026_09_15_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: replay_requests_2026_09_16 replay_requests_2026_09_16_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.replay_requests_2026_09_16
+    ADD CONSTRAINT replay_requests_2026_09_16_pkey PRIMARY KEY (id, created_at);
+
+
+--
 -- Name: resource_attempts resource_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3007,6 +3857,118 @@ ALTER TABLE ONLY public.steam_api_keys
 
 
 --
+-- Name: steam_api_requests steam_api_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests
+    ADD CONSTRAINT steam_api_requests_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_11 steam_api_requests_2026_09_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_11
+    ADD CONSTRAINT steam_api_requests_2026_09_11_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_12 steam_api_requests_2026_09_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_12
+    ADD CONSTRAINT steam_api_requests_2026_09_12_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_13 steam_api_requests_2026_09_13_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_13
+    ADD CONSTRAINT steam_api_requests_2026_09_13_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_14 steam_api_requests_2026_09_14_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_14
+    ADD CONSTRAINT steam_api_requests_2026_09_14_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_15 steam_api_requests_2026_09_15_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_15
+    ADD CONSTRAINT steam_api_requests_2026_09_15_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_api_requests_2026_09_16 steam_api_requests_2026_09_16_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_api_requests_2026_09_16
+    ADD CONSTRAINT steam_api_requests_2026_09_16_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests steam_gc_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests
+    ADD CONSTRAINT steam_gc_requests_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11 steam_gc_requests_2026_09_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_11
+    ADD CONSTRAINT steam_gc_requests_2026_09_11_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12 steam_gc_requests_2026_09_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_12
+    ADD CONSTRAINT steam_gc_requests_2026_09_12_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13 steam_gc_requests_2026_09_13_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_13
+    ADD CONSTRAINT steam_gc_requests_2026_09_13_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14 steam_gc_requests_2026_09_14_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_14
+    ADD CONSTRAINT steam_gc_requests_2026_09_14_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15 steam_gc_requests_2026_09_15_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_15
+    ADD CONSTRAINT steam_gc_requests_2026_09_15_pkey PRIMARY KEY (id, created_at);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16 steam_gc_requests_2026_09_16_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.steam_gc_requests_2026_09_16
+    ADD CONSTRAINT steam_gc_requests_2026_09_16_pkey PRIMARY KEY (id, created_at);
+
+
+--
 -- Name: teams teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3067,10 +4029,45 @@ CREATE INDEX leagues_activity_idx ON public.leagues USING btree (most_recent_act
 
 
 --
+-- Name: leagues_history_walk_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX leagues_history_walk_idx ON public.leagues USING btree (status, history_exhausted, history_checked_at);
+
+
+--
 -- Name: leagues_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX leagues_status_idx ON public.leagues USING btree (status);
+
+
+--
+-- Name: live_match_ticks_captured_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX live_match_ticks_captured_idx ON public.live_match_ticks USING btree (captured_at DESC);
+
+
+--
+-- Name: live_match_ticks_match_captured_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX live_match_ticks_match_captured_idx ON public.live_match_ticks USING btree (match_id, captured_at DESC);
+
+
+--
+-- Name: live_player_ticks_captured_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX live_player_ticks_captured_idx ON public.live_player_ticks USING btree (captured_at DESC);
+
+
+--
+-- Name: live_player_ticks_match_captured_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX live_player_ticks_match_captured_idx ON public.live_player_ticks USING btree (match_id, captured_at DESC);
 
 
 --
@@ -3081,6 +4078,27 @@ CREATE INDEX marketplace_orders_store_status_idx ON public.marketplace_orders US
 
 
 --
+-- Name: match_players_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX match_players_account_idx ON public.match_players USING btree (account_id);
+
+
+--
+-- Name: match_replays_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX match_replays_claim_idx ON public.match_replays USING btree (priority, stored_at, id) WHERE ((status = 'stored'::public.replay_status) AND (s3_key IS NOT NULL) AND (s3_key <> ''::text));
+
+
+--
+-- Name: match_replays_parsed_unarchived_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX match_replays_parsed_unarchived_idx ON public.match_replays USING btree (parsed_at, id) WHERE ((status = 'parsed'::public.replay_status) AND (archived_at IS NULL));
+
+
+--
 -- Name: match_replays_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3088,10 +4106,17 @@ CREATE INDEX match_replays_status_idx ON public.match_replays USING btree (statu
 
 
 --
+-- Name: matches_details_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_details_pending_idx ON public.matches USING btree (source, start_time DESC) WHERE ((details_fetched_at IS NULL) AND (status = ANY (ARRAY['discovered'::public.match_status, 'awaiting_details'::public.match_status])));
+
+
+--
 -- Name: matches_history_poll_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX matches_history_poll_idx ON public.matches USING btree (league_id, history_next_poll_at) WHERE (phase = 'awaiting_history'::public.match_phase);
+CREATE INDEX matches_history_poll_idx ON public.matches USING btree (league_id, history_next_poll_at) WHERE ((history_next_poll_at IS NOT NULL) AND (match_seq_num IS NULL));
 
 
 --
@@ -3102,24 +4127,24 @@ CREATE INDEX matches_league_idx ON public.matches USING btree (league_id);
 
 
 --
--- Name: matches_phase_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: matches_patch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX matches_phase_idx ON public.matches USING btree (phase);
+CREATE INDEX matches_patch_idx ON public.matches USING btree (patch) WHERE (patch IS NOT NULL);
 
 
 --
 -- Name: matches_realtime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX matches_realtime_idx ON public.matches USING btree (last_realtime_at) WHERE ((phase = 'live'::public.match_phase) AND (server_steam_id IS NOT NULL));
+CREATE INDEX matches_realtime_idx ON public.matches USING btree (last_realtime_at) WHERE ((status = 'live'::public.match_status) AND (server_steam_id IS NOT NULL));
 
 
 --
 -- Name: matches_replay_available_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX matches_replay_available_idx ON public.matches USING btree (replay_available_at) WHERE (phase = ANY (ARRAY['details_ready'::public.match_phase, 'awaiting_replay'::public.match_phase]));
+CREATE INDEX matches_replay_available_idx ON public.matches USING btree (replay_available_at) WHERE (status = ANY (ARRAY['details_ready'::public.match_status, 'awaiting_replay'::public.match_status]));
 
 
 --
@@ -3130,10 +4155,10 @@ CREATE INDEX matches_seq_idx ON public.matches USING btree (match_seq_num);
 
 
 --
--- Name: matches_source_phase_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: matches_source_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX matches_source_phase_idx ON public.matches USING btree (source, phase);
+CREATE INDEX matches_source_status_idx ON public.matches USING btree (source, status);
 
 
 --
@@ -3141,6 +4166,132 @@ CREATE INDEX matches_source_phase_idx ON public.matches USING btree (source, pha
 --
 
 CREATE INDEX matches_start_time_idx ON public.matches USING btree (league_id, start_time DESC);
+
+
+--
+-- Name: matches_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX matches_status_idx ON public.matches USING btree (status);
+
+
+--
+-- Name: patches_released_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX patches_released_idx ON public.patches USING btree (released_at DESC);
+
+
+--
+-- Name: players_team_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX players_team_idx ON public.players USING btree (current_team_id) WHERE (current_team_id IS NOT NULL);
+
+
+--
+-- Name: proxies_pick_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX proxies_pick_idx ON public.proxies USING btree (purpose, status);
+
+
+--
+-- Name: replay_requests_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_match_id_idx ON ONLY public.replay_requests USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_11_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_11_match_id_idx ON public.replay_requests_2026_09_11 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_method_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_method_created_idx ON ONLY public.replay_requests USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_11_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_11_method_name_created_at_idx ON public.replay_requests_2026_09_11 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_12_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_12_match_id_idx ON public.replay_requests_2026_09_12 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_12_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_12_method_name_created_at_idx ON public.replay_requests_2026_09_12 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_13_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_13_match_id_idx ON public.replay_requests_2026_09_13 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_13_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_13_method_name_created_at_idx ON public.replay_requests_2026_09_13 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_14_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_14_match_id_idx ON public.replay_requests_2026_09_14 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_14_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_14_method_name_created_at_idx ON public.replay_requests_2026_09_14 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_15_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_15_match_id_idx ON public.replay_requests_2026_09_15 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_15_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_15_method_name_created_at_idx ON public.replay_requests_2026_09_15 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: replay_requests_2026_09_16_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_16_match_id_idx ON public.replay_requests_2026_09_16 USING btree (match_id);
+
+
+--
+-- Name: replay_requests_2026_09_16_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX replay_requests_2026_09_16_method_name_created_at_idx ON public.replay_requests_2026_09_16 USING btree (method_name, created_at DESC);
 
 
 --
@@ -3155,6 +4306,979 @@ CREATE INDEX resource_attempts_kind_id_idx ON public.resource_attempts USING btr
 --
 
 CREATE INDEX series_league_idx ON public.series USING btree (league_id);
+
+
+--
+-- Name: steam_accounts_proxy_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_accounts_proxy_idx ON public.steam_accounts USING btree (proxy_id) WHERE (proxy_id IS NOT NULL);
+
+
+--
+-- Name: steam_accounts_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_accounts_status_idx ON public.steam_accounts USING btree (status);
+
+
+--
+-- Name: steam_api_keys_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_keys_account_idx ON public.steam_api_keys USING btree (account_id);
+
+
+--
+-- Name: steam_api_keys_pick_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_keys_pick_idx ON public.steam_api_keys USING btree (last_used_at NULLS FIRST) WHERE (status = ANY (ARRAY['ready'::public.resource_status, 'active'::public.resource_status, 'rate_limited'::public.resource_status]));
+
+
+--
+-- Name: steam_api_keys_proxy_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_keys_proxy_idx ON public.steam_api_keys USING btree (proxy_id) WHERE (proxy_id IS NOT NULL);
+
+
+--
+-- Name: steam_api_requests_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_match_id_idx ON ONLY public.steam_api_requests USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_11_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_11_match_id_idx ON public.steam_api_requests_2026_09_11 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_method_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_method_created_idx ON ONLY public.steam_api_requests USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_11_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_11_method_name_created_at_idx ON public.steam_api_requests_2026_09_11 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_account_idx ON ONLY public.steam_api_requests USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_11_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_11_steam_account_id_idx ON public.steam_api_requests_2026_09_11 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_key_idx ON ONLY public.steam_api_requests USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_11_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_11_steam_api_key_id_idx ON public.steam_api_requests_2026_09_11 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_12_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_12_match_id_idx ON public.steam_api_requests_2026_09_12 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_12_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_12_method_name_created_at_idx ON public.steam_api_requests_2026_09_12 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_12_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_12_steam_account_id_idx ON public.steam_api_requests_2026_09_12 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_12_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_12_steam_api_key_id_idx ON public.steam_api_requests_2026_09_12 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_13_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_13_match_id_idx ON public.steam_api_requests_2026_09_13 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_13_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_13_method_name_created_at_idx ON public.steam_api_requests_2026_09_13 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_13_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_13_steam_account_id_idx ON public.steam_api_requests_2026_09_13 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_13_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_13_steam_api_key_id_idx ON public.steam_api_requests_2026_09_13 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_14_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_14_match_id_idx ON public.steam_api_requests_2026_09_14 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_14_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_14_method_name_created_at_idx ON public.steam_api_requests_2026_09_14 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_14_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_14_steam_account_id_idx ON public.steam_api_requests_2026_09_14 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_14_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_14_steam_api_key_id_idx ON public.steam_api_requests_2026_09_14 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_15_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_15_match_id_idx ON public.steam_api_requests_2026_09_15 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_15_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_15_method_name_created_at_idx ON public.steam_api_requests_2026_09_15 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_15_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_15_steam_account_id_idx ON public.steam_api_requests_2026_09_15 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_15_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_15_steam_api_key_id_idx ON public.steam_api_requests_2026_09_15 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_16_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_16_match_id_idx ON public.steam_api_requests_2026_09_16 USING btree (match_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_16_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_16_method_name_created_at_idx ON public.steam_api_requests_2026_09_16 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_api_requests_2026_09_16_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_16_steam_account_id_idx ON public.steam_api_requests_2026_09_16 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_api_requests_2026_09_16_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_api_requests_2026_09_16_steam_api_key_id_idx ON public.steam_api_requests_2026_09_16 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_match_id_idx ON ONLY public.steam_gc_requests USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_11_match_id_idx ON public.steam_gc_requests_2026_09_11 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_method_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_method_created_idx ON ONLY public.steam_gc_requests USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_11_method_name_created_at_idx ON public.steam_gc_requests_2026_09_11 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_account_idx ON ONLY public.steam_gc_requests USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_11_steam_account_id_idx ON public.steam_gc_requests_2026_09_11 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_key_idx ON ONLY public.steam_gc_requests USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_11_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_11 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_12_match_id_idx ON public.steam_gc_requests_2026_09_12 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_12_method_name_created_at_idx ON public.steam_gc_requests_2026_09_12 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_12_steam_account_id_idx ON public.steam_gc_requests_2026_09_12 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_12_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_12 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_13_match_id_idx ON public.steam_gc_requests_2026_09_13 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_13_method_name_created_at_idx ON public.steam_gc_requests_2026_09_13 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_13_steam_account_id_idx ON public.steam_gc_requests_2026_09_13 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_13_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_13 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_14_match_id_idx ON public.steam_gc_requests_2026_09_14 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_14_method_name_created_at_idx ON public.steam_gc_requests_2026_09_14 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_14_steam_account_id_idx ON public.steam_gc_requests_2026_09_14 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_14_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_14 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_15_match_id_idx ON public.steam_gc_requests_2026_09_15 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_15_method_name_created_at_idx ON public.steam_gc_requests_2026_09_15 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_15_steam_account_id_idx ON public.steam_gc_requests_2026_09_15 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_15_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_15 USING btree (steam_api_key_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_match_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_16_match_id_idx ON public.steam_gc_requests_2026_09_16 USING btree (match_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_method_name_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_16_method_name_created_at_idx ON public.steam_gc_requests_2026_09_16 USING btree (method_name, created_at DESC);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_steam_account_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_16_steam_account_id_idx ON public.steam_gc_requests_2026_09_16 USING btree (steam_account_id);
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_steam_api_key_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX steam_gc_requests_2026_09_16_steam_api_key_id_idx ON public.steam_gc_requests_2026_09_16 USING btree (steam_api_key_id);
+
+
+--
+-- Name: replay_requests_2026_09_11_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_11_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_11_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_11_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_11_pkey;
+
+
+--
+-- Name: replay_requests_2026_09_12_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_12_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_12_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_12_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_12_pkey;
+
+
+--
+-- Name: replay_requests_2026_09_13_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_13_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_13_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_13_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_13_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_13_pkey;
+
+
+--
+-- Name: replay_requests_2026_09_14_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_14_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_14_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_14_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_14_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_14_pkey;
+
+
+--
+-- Name: replay_requests_2026_09_15_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_15_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_15_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_15_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_15_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_15_pkey;
+
+
+--
+-- Name: replay_requests_2026_09_16_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_match_id_idx ATTACH PARTITION public.replay_requests_2026_09_16_match_id_idx;
+
+
+--
+-- Name: replay_requests_2026_09_16_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_method_created_idx ATTACH PARTITION public.replay_requests_2026_09_16_method_name_created_at_idx;
+
+
+--
+-- Name: replay_requests_2026_09_16_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.replay_requests_pkey ATTACH PARTITION public.replay_requests_2026_09_16_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_11_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_11_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_11_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_11_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_11_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_11_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_11_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_11_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_11_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_12_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_12_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_12_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_12_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_12_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_12_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_12_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_12_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_12_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_13_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_13_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_13_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_13_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_13_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_13_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_13_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_13_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_13_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_13_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_14_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_14_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_14_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_14_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_14_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_14_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_14_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_14_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_14_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_14_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_15_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_15_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_15_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_15_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_15_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_15_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_15_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_15_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_15_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_15_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_16_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_match_id_idx ATTACH PARTITION public.steam_api_requests_2026_09_16_match_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_16_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_method_created_idx ATTACH PARTITION public.steam_api_requests_2026_09_16_method_name_created_at_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_16_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_pkey ATTACH PARTITION public.steam_api_requests_2026_09_16_pkey;
+
+
+--
+-- Name: steam_api_requests_2026_09_16_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_account_idx ATTACH PARTITION public.steam_api_requests_2026_09_16_steam_account_id_idx;
+
+
+--
+-- Name: steam_api_requests_2026_09_16_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_api_requests_key_idx ATTACH PARTITION public.steam_api_requests_2026_09_16_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_11_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_11_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_11_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_11_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_11_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_11_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_12_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_12_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_12_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_12_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_12_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_12_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_13_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_13_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_13_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_13_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_13_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_13_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_14_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_14_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_14_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_14_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_14_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_14_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_15_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_15_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_15_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_15_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_15_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_15_steam_api_key_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_match_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_match_id_idx ATTACH PARTITION public.steam_gc_requests_2026_09_16_match_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_method_name_created_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_method_created_idx ATTACH PARTITION public.steam_gc_requests_2026_09_16_method_name_created_at_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_pkey ATTACH PARTITION public.steam_gc_requests_2026_09_16_pkey;
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_steam_account_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_account_idx ATTACH PARTITION public.steam_gc_requests_2026_09_16_steam_account_id_idx;
+
+
+--
+-- Name: steam_gc_requests_2026_09_16_steam_api_key_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.steam_gc_requests_key_idx ATTACH PARTITION public.steam_gc_requests_2026_09_16_steam_api_key_id_idx;
 
 
 --
@@ -3225,6 +5349,20 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.league_ingest_runs FOR EAC
 --
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.leagues FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: live_match_ticks set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.live_match_ticks FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: live_player_ticks set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.live_player_ticks FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -3361,6 +5499,13 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.regions FOR EACH ROW EXECU
 
 
 --
+-- Name: replay_requests set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.replay_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: resource_attempts set_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3393,6 +5538,20 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_accounts FOR EACH RO
 --
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_api_keys FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: steam_api_requests set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_api_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: steam_gc_requests set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.steam_gc_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 
 --
@@ -3439,6 +5598,22 @@ ALTER TABLE ONLY public.hero_abilities
 
 ALTER TABLE ONLY public.hero_facets
     ADD CONSTRAINT hero_facets_hero_id_fkey FOREIGN KEY (hero_id) REFERENCES public.heroes(hero_id) ON DELETE CASCADE;
+
+
+--
+-- Name: live_match_ticks live_match_ticks_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_match_ticks
+    ADD CONSTRAINT live_match_ticks_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id);
+
+
+--
+-- Name: live_player_ticks live_player_ticks_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.live_player_ticks
+    ADD CONSTRAINT live_player_ticks_match_id_fkey FOREIGN KEY (match_id) REFERENCES public.matches(match_id);
 
 
 --
@@ -3551,30 +5726,6 @@ ALTER TABLE ONLY public.match_replays
 
 ALTER TABLE ONLY public.matches
     ADD CONSTRAINT matches_dire_team_id_fkey FOREIGN KEY (dire_team_id) REFERENCES public.teams(team_id) ON DELETE SET NULL;
-
-
---
--- Name: matches matches_last_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.matches
-    ADD CONSTRAINT matches_last_api_key_id_fkey FOREIGN KEY (last_api_key_id) REFERENCES public.steam_api_keys(id) ON DELETE SET NULL;
-
-
---
--- Name: matches matches_last_proxy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.matches
-    ADD CONSTRAINT matches_last_proxy_id_fkey FOREIGN KEY (last_proxy_id) REFERENCES public.proxies(id) ON DELETE SET NULL;
-
-
---
--- Name: matches matches_last_steam_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.matches
-    ADD CONSTRAINT matches_last_steam_account_id_fkey FOREIGN KEY (last_steam_account_id) REFERENCES public.steam_accounts(id) ON DELETE SET NULL;
 
 
 --
@@ -3716,4 +5867,20 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260906104000'),
     ('20260906104100'),
     ('20260906124400'),
-    ('20260911020000');
+    ('20260910011500'),
+    ('20260910012700'),
+    ('20260910015600'),
+    ('20260911020000'),
+    ('20260911033000'),
+    ('20260911034800'),
+    ('20260915000000'),
+    ('20260915120000'),
+    ('20260915140000'),
+    ('20260915180000'),
+    ('20260915200000'),
+    ('20260915210000'),
+    ('20260915220000'),
+    ('20260915232201'),
+    ('20260916020000'),
+    ('20260916023000'),
+    ('20260916025000');

@@ -19,12 +19,11 @@ import {
 	saveSteamSession,
 } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
+import { sendGcMatchDetailsRequest } from '#src/gc/match-details-rpc'
 import {
 	DOTA_APP_ID,
 	decodeFields,
-	decodeMatchDetailsResponse,
 	encodeClientHello,
-	encodeMatchDetailsRequest,
 	GC_MSG,
 	type GcMatchReplayLocator,
 } from '#src/gc/protobuf'
@@ -230,26 +229,9 @@ async function totpOffset(account: GcAccount): Promise<number> {
 async function requestLocator(
 	client: SteamUser,
 	matchId: number,
+	accountId: number,
 ): Promise<GcMatchReplayLocator> {
-	const payload = encodeMatchDetailsRequest(matchId)
-	const buffer = await new Promise<Buffer>((resolve, reject) => {
-		const timer = setTimeout(
-			() =>
-				reject(new Error(`GC match details timeout for ${String(matchId)}`)),
-			15_000,
-		)
-		client.sendToGC(
-			DOTA_APP_ID,
-			GC_MSG.matchDetailsRequest,
-			{},
-			payload,
-			(_appId, _msgType, body) => {
-				clearTimeout(timer)
-				resolve(Buffer.from(body))
-			},
-		)
-	})
-	return decodeMatchDetailsResponse(buffer)
+	return sendGcMatchDetailsRequest(client, matchId, { accountId })
 }
 
 export type GcSessionApi = {
@@ -342,7 +324,7 @@ export async function withGcSession<T>(input: {
 			})
 			return await input.run({
 				login: account.login,
-				locate: (matchId) => requestLocator(client, matchId),
+				locate: (matchId) => requestLocator(client, matchId, account.id),
 			})
 		} catch (error) {
 			lastError = error

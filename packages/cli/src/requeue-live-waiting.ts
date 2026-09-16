@@ -9,7 +9,7 @@ const details = await db.execute(sql`
 	SELECT match_id
 	FROM matches
 	WHERE source = 'live'
-		AND phase = 'awaiting_details'
+		AND status = 'awaiting_details'
 `)
 for (const row of details) {
 	const matchId = asNumber(row.match_id)
@@ -22,7 +22,7 @@ await db.execute(sql`
 	UPDATE matches
 	SET replay_available_at = now(), updated_at = now()
 	WHERE source = 'live'
-		AND phase IN ('details_ready', 'awaiting_replay')
+		AND status IN ('details_ready', 'awaiting_replay')
 `)
 
 const downloads = await db.execute(sql`
@@ -30,7 +30,7 @@ const downloads = await db.execute(sql`
 	FROM match_replays r
 	JOIN matches m ON m.match_id = r.match_id
 	WHERE m.source = 'live'
-		AND m.phase IN ('details_ready', 'awaiting_replay')
+		AND m.status IN ('details_ready', 'awaiting_replay')
 		AND r.source_url IS NOT NULL
 		AND r.status IN ('pending', 'downloading')
 `)

@@ -80,9 +80,7 @@ describe('gc protobuf', () => {
 	})
 
 	test('decodes packed and unpacked barracks_status pairs', () => {
-		const packed = decodeGcMatch(
-			Uint8Array.from([0x4a, 0x02, 0x3f, 0x00]),
-		)
+		const packed = decodeGcMatch(Uint8Array.from([0x4a, 0x02, 0x3f, 0x00]))
 		expect(packed.barracks_status).toEqual([63, 0])
 		expect(packed.barracks_status_radiant).toBe(63)
 		expect(packed.barracks_status_dire).toBe(0)

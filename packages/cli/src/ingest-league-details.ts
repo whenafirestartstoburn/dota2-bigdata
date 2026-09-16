@@ -79,7 +79,6 @@ for (const startSeq of seqs) {
 		if (!remaining.has(match.match_id)) continue
 		await db.transaction(async (tx) => {
 			await persistMatchRecord(tx, match, {
-				apiKeyId: ctx.keyId,
 				mustExist: true,
 				fetched: 'seq',
 			})

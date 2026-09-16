@@ -13,6 +13,8 @@ from replay metadata on parse.
 - [x] Specs: `fetch_match_details` is GC only; history walk order is
       `tier DESC`, then newest
 - [x] Drop the seq window from `runFetchMatchDetails`
+- [x] Restored 2026-09-15 as `fetch_seq_details` in parallel with GC
+  (`docs/plans/restore-seq-details.md`)
 - [x] Map GC backpack slots + infer Aghs; history `waiting_for = gc`
 - [x] `pickNextHistoryLeague` / details enqueue: tier then recency
 - [x] Parser publish: captains + last inventory snapshot → PG

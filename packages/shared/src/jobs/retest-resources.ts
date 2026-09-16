@@ -154,6 +154,7 @@ async function retestApiKeys(max: number): Promise<void> {
 			await getLiveLeagueGames({
 				apiKey,
 				keyId: id,
+				accountId,
 				proxyId,
 				proxyUrl,
 				purpose: 'live',

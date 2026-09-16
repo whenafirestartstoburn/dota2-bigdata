@@ -1,5 +1,19 @@
 import { describe, expect, test } from 'bun:test'
-import { replayBackoffMs } from '#src/store/replays'
+import {
+	replayBackoffMs,
+	replayDownloadShouldKeepStatus,
+} from '#src/store/replays'
+
+describe('replayDownloadShouldKeepStatus', () => {
+	test('parsed and parsing pass through; everything else is promoted to stored', () => {
+		expect(replayDownloadShouldKeepStatus('parsed')).toBe(true)
+		expect(replayDownloadShouldKeepStatus('parsing')).toBe(true)
+		expect(replayDownloadShouldKeepStatus('stored')).toBe(false)
+		expect(replayDownloadShouldKeepStatus('pending')).toBe(false)
+		expect(replayDownloadShouldKeepStatus('failed')).toBe(false)
+		expect(replayDownloadShouldKeepStatus(null)).toBe(false)
+	})
+})
 
 describe('replayBackoffMs', () => {
 	test('1m, 1m, 3m × 20, 1h × 24, then give up', () => {

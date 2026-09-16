@@ -93,6 +93,12 @@ describe('prometheus text', () => {
 			'dota_gc_request_duration_seconds_count{method="match_details"} 0',
 		)
 		expect(text).toContain('dota_gc_session_up 0')
+		expect(text).toContain(
+			'dota_replay_downloads_total{method="GetReplay",result="success"} 0',
+		)
+		expect(text).toContain(
+			'dota_webapi_request_duration_seconds_count{method="GetLiveLeagueGames",source="steam"} 0',
+		)
 		expect(text).toContain('dota_history_walk_matches_total 0')
 		expect(text).toContain('dota_history_walk_pages_total{result="hits"} 0')
 	})

@@ -48,15 +48,29 @@ export const jobsInProgress = new Gauge(
 export const replayDownloads = new Counter(
 	'dota_replay_downloads_total',
 	'Valve CDN replay downloads',
-	['result'],
+	['method', 'result'],
 )
 export const replayDownloadDuration = new Histogram(
 	'dota_replay_download_duration_seconds',
 	'Valve CDN replay download wall time',
+	['method'],
 )
 export const replayDownloadBytes = new Counter(
 	'dota_replay_download_bytes_total',
 	'Bytes written to S3 for downloaded replays',
+)
+export const replayArchives = new Counter(
+	'dota_replay_archives_total',
+	'Parsed replay copies to cold storage',
+	['result'],
+)
+export const replayArchiveDuration = new Histogram(
+	'dota_replay_archive_duration_seconds',
+	'Parsed replay archive wall time',
+)
+export const replayArchiveBytes = new Counter(
+	'dota_replay_archive_bytes_total',
+	'Bytes of replay objects copied to cold storage',
 )
 export const marketplaceHttp = new Counter(
 	'dota_marketplace_http_requests_total',
@@ -94,19 +108,23 @@ export const marketplaceOrderRows = new Gauge(
 	'marketplace_orders rows',
 	['store', 'kind', 'status'],
 )
-export const matchesByPhase = new Gauge(
+export const matchesByStatus = new Gauge(
 	'dota_matches',
-	'matches rows by phase',
-	['phase'],
+	'matches rows by status',
+	['status'],
 )
 export const liveMatches = new Gauge(
 	'dota_live_matches',
-	'matches currently in phase=live',
+	'matches currently in status=live',
 )
 export const replaysByStatus = new Gauge(
 	'dota_replays',
 	'match_replays rows by status',
 	['status'],
+)
+export const replaysUnarchived = new Gauge(
+	'dota_replays_unarchived',
+	'parsed match_replays rows not yet copied to cold storage',
 )
 export const graphileJobs = new Gauge(
 	'dota_graphile_jobs',
@@ -168,10 +186,23 @@ export function observeReplayDownload(
 	result: string,
 	started: number,
 	bytes?: number,
+	method = 'GetReplay',
 ): void {
-	replayDownloads.inc({ result })
-	replayDownloadDuration.observe({}, elapsedSeconds(started))
+	replayDownloads.inc({ method, result })
+	replayDownloadDuration.observe({ method }, elapsedSeconds(started))
 	if (bytes != null && bytes > 0) replayDownloadBytes.inc({}, bytes)
+}
+
+export function observeReplayArchive(
+	result: string,
+	started: number,
+	bytes?: number | null,
+): void {
+	replayArchives.inc({ result })
+	replayArchiveDuration.observe({}, elapsedSeconds(started))
+	if (result === 'success' && bytes != null && bytes > 0) {
+		replayArchiveBytes.inc({}, bytes)
+	}
 }
 
 export function observeMarketplaceHttp(
@@ -265,6 +296,20 @@ const GC_LOGON_RESULTS = [
 	'no_account',
 	'error',
 ]
+const REPLAY_DOWNLOAD_RESULTS = [
+	'success',
+	'already_stored',
+	'not_found',
+	'error',
+] as const
+const WEBAPI_METHODS: Array<[WebApiSource, string]> = [
+	['steam', 'GetLiveLeagueGames'],
+	['steam', 'GetTopLiveGame'],
+	['steam', 'GetRealtimeStats'],
+	['steam', 'GetMatchHistory'],
+	['steam', 'GetMatchHistoryBySequenceNum'],
+	['dota2', 'GetLeagueInfoList'],
+]
 
 export function seedIdleHistorySeries(): void {
 	if (historyWalkMatches.get() === 0) historyWalkMatches.inc({}, 0)
@@ -290,9 +335,26 @@ export function seedIdleGcSeries(): void {
 	gcDuration.ensure({ method: 'match_details' })
 }
 
+export function seedIdleWebApiSeries(): void {
+	for (const [source, method] of WEBAPI_METHODS) {
+		webapiDuration.ensure({ source, method })
+	}
+}
+
+export function seedIdleReplaySeries(): void {
+	for (const result of REPLAY_DOWNLOAD_RESULTS) {
+		if (replayDownloads.get({ method: 'GetReplay', result }) === 0) {
+			replayDownloads.inc({ method: 'GetReplay', result }, 0)
+		}
+	}
+	replayDownloadDuration.ensure({ method: 'GetReplay' })
+}
+
 function seedIdleCatalog(): void {
 	seedIdleHistorySeries()
 	seedIdleGcSeries()
+	seedIdleWebApiSeries()
+	seedIdleReplaySeries()
 }
 
 onMetricsReset(seedIdleCatalog)

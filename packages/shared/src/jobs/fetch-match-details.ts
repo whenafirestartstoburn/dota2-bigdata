@@ -13,7 +13,7 @@ import { asNumber } from '#src/store/coerce'
 import { listKnownLeagueIds, markSeqFetched } from '#src/store/matches'
 import { persistMatchRecord } from '#src/store/persist-match'
 import { copyReplayLocatorFromMatch, ensureReplayRow } from '#src/store/replays'
-import { db } from '#src/utils/db'
+import { db, sql, sqlIn } from '#src/utils/db'
 
 export function matchOrigin(source: unknown): 'live' | 'historical' {
 	return source === 'live' ? 'live' : 'historical'
@@ -36,7 +36,6 @@ export async function persistSeqMatches(
 		if (leagueId <= 0 || !knownLeagues.has(leagueId)) continue
 		await db.transaction(async (tx) => {
 			await persistMatchRecord(tx, match, {
-				apiKeyId: ctx.keyId,
 				mustExist: false,
 				fetched: 'seq',
 			})
@@ -48,6 +47,23 @@ export async function persistSeqMatches(
 		}
 	}
 	return { saved: savedIds.length }
+}
+
+export async function enqueueLiveFinishedDetails(
+	matchIds: readonly number[],
+): Promise<void> {
+	if (matchIds.length === 0) return
+	const rows = await db.execute(sql`
+		SELECT match_id
+		FROM matches
+		WHERE match_id IN ${sqlIn(matchIds)}
+			AND status = 'awaiting_history'
+	`)
+	for (const row of rows) {
+		const matchId = asNumber(row.match_id)
+		if (matchId == null) continue
+		await enqueueFetchMatchDetails(matchId, 'live')
+	}
 }
 
 export async function enqueueFetchMatchDetails(

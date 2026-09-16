@@ -3,7 +3,7 @@
 Spec: [`docs/specs/replay-parser.md`](../specs/replay-parser.md)
 (Everything-or-nothing — flushed mid-decode).
 
-- [x] Spec: batches + `Abort(parse_run_id)`; publish still Postgres
+- [x] Spec: batches + `DeleteMatch(match_id)`; publish still Postgres
 - [x] `sink.Flusher` / per-table buffer, flush at 8192, reuse slice
       (see [`parser-memory-attr.md`](./parser-memory-attr.md))
 - [x] Wire extract appends through the flusher (combat / actions / intervals first)

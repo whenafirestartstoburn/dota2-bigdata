@@ -37,6 +37,26 @@ func TestCompactDraftKeepsFirstUnique(t *testing.T) {
 	}
 }
 
+func TestStampDraftClocksUsesFirstTimeline(t *testing.T) {
+	t.Parallel()
+	seq := []model.Draft{
+		{HeroID: 63, IsPick: 0, Clock: 2400},
+		{HeroID: 87, IsPick: 1, Clock: 2400},
+		{HeroID: 9, IsPick: 1, Clock: 2400},
+	}
+	stampDraftClocks(seq, []model.Draft{
+		{HeroID: 63, IsPick: 0, Clock: 26},
+		{HeroID: 63, IsPick: 0, Clock: 80},
+		{HeroID: 87, IsPick: 1, Clock: 63},
+	})
+	if seq[0].Clock != 26 || seq[1].Clock != 63 {
+		t.Fatalf("clocks %+v", seq)
+	}
+	if seq[2].Clock != 0 {
+		t.Fatalf("missing timeline must not keep fileinfo clock: %+v", seq[2])
+	}
+}
+
 func TestDraftSequenceOK(t *testing.T) {
 	t.Parallel()
 	var rows []model.Draft

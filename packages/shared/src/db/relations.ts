@@ -27,34 +27,15 @@ export const relations = defineRelations(schema, (r) => ({
 			to: r.heroes.hero_id,
 		}),
 	},
-	marketplace_orders: {
-		steam_account: r.one.steam_accounts({
-			from: r.marketplace_orders.steam_account_id,
-			to: r.steam_accounts.id,
-		}),
-	},
-	steam_accounts: {
-		marketplace_orders: r.many.marketplace_orders(),
-		match_replays: r.many.match_replays(),
-		matches: r.many.matches(),
-		proxy: r.one.proxies({
-			from: r.steam_accounts.proxy_id,
-			to: r.proxies.id,
-			alias: 'steam_accounts_proxy_id_proxies_id',
-		}),
-		proxies: r.many.proxies({
-			from: r.steam_accounts.id.through(r.steam_api_keys.account_id),
-			to: r.proxies.id.through(r.steam_api_keys.proxy_id),
-			alias: 'steam_accounts_id_proxies_id_via_steam_api_keys',
-		}),
-	},
-	match_broadcasters: {
+	live_match_ticks: {
 		match: r.one.matches({
-			from: r.match_broadcasters.match_id,
+			from: r.live_match_ticks.match_id,
 			to: r.matches.match_id,
 		}),
 	},
 	matches: {
+		live_match_ticks: r.many.live_match_ticks(),
+		live_player_ticks: r.many.live_player_ticks(),
 		match_broadcasters: r.many.match_broadcasters(),
 		match_coaches: r.many.match_coaches(),
 		match_drafts: r.many.match_draft(),
@@ -69,18 +50,6 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.matches.dire_team_id,
 			to: r.teams.team_id,
 			alias: 'matches_dire_team_id_teams_team_id',
-		}),
-		steam_api_key: r.one.steam_api_keys({
-			from: r.matches.last_api_key_id,
-			to: r.steam_api_keys.id,
-		}),
-		proxy: r.one.proxies({
-			from: r.matches.last_proxy_id,
-			to: r.proxies.id,
-		}),
-		steam_account: r.one.steam_accounts({
-			from: r.matches.last_steam_account_id,
-			to: r.steam_accounts.id,
 		}),
 		league: r.one.leagues({
 			from: r.matches.league_id,
@@ -98,6 +67,38 @@ export const relations = defineRelations(schema, (r) => ({
 		series: r.one.series({
 			from: r.matches.series_id,
 			to: r.series.series_id,
+		}),
+	},
+	live_player_ticks: {
+		match: r.one.matches({
+			from: r.live_player_ticks.match_id,
+			to: r.matches.match_id,
+		}),
+	},
+	marketplace_orders: {
+		steam_account: r.one.steam_accounts({
+			from: r.marketplace_orders.steam_account_id,
+			to: r.steam_accounts.id,
+		}),
+	},
+	steam_accounts: {
+		marketplace_orders: r.many.marketplace_orders(),
+		match_replays: r.many.match_replays(),
+		proxy: r.one.proxies({
+			from: r.steam_accounts.proxy_id,
+			to: r.proxies.id,
+			alias: 'steam_accounts_proxy_id_proxies_id',
+		}),
+		proxies: r.many.proxies({
+			from: r.steam_accounts.id.through(r.steam_api_keys.account_id),
+			to: r.proxies.id.through(r.steam_api_keys.proxy_id),
+			alias: 'steam_accounts_id_proxies_id_via_steam_api_keys',
+		}),
+	},
+	match_broadcasters: {
+		match: r.one.matches({
+			from: r.match_broadcasters.match_id,
+			to: r.matches.match_id,
 		}),
 	},
 	match_coaches: {
@@ -164,7 +165,6 @@ export const relations = defineRelations(schema, (r) => ({
 	},
 	proxies: {
 		match_replays: r.many.match_replays(),
-		matches: r.many.matches(),
 		steam_accounts_proxy_id: r.many.steam_accounts({
 			alias: 'steam_accounts_proxy_id_proxies_id',
 		}),
@@ -186,9 +186,6 @@ export const relations = defineRelations(schema, (r) => ({
 		series_radiant_team_id: r.many.series({
 			alias: 'series_radiant_team_id_teams_team_id',
 		}),
-	},
-	steam_api_keys: {
-		matches: r.many.matches(),
 	},
 	leagues: {
 		matches: r.many.matches(),

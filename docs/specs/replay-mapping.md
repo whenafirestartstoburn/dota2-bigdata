@@ -11,8 +11,8 @@ always possible: the file stays in S3.
 `CombatLogNames[value]`, lane samples from resolved `CBodyComponent`
 positions, and barracks bitmasks from rax kills. Version 3 stamped
 `account_id` on every `replay_*` row. Version 2 added `replay_alerts`
-and interval vitals. Filter `replay_*.parser_version` / join
-`match_replays.parse_run_id` as the commit spec already said.
+and interval vitals. Filter `replay_*.parser_version` if a mid-rewrite
+query should ignore a partial re-parse.
 
 ---
 
@@ -29,7 +29,6 @@ Every `replay_*` row:
 | `slot` | 0–9 (`Int8`); `-1` if unknown. Not Valve 128–132 |
 | `account_id` | Steam 32-bit player; `0` if unknown / not a player |
 | `parser_version` | Extract/schema revision of the binary |
-| `parse_run_id` | Unpublished until `match_replays.parse_run_id` matches |
 
 ---
 
@@ -79,7 +78,7 @@ dropped.**
 | `SPELL_ABSORB` | | |
 | `UNIT_TELEPORTED` | | |
 | `KILL_EATER_EVENT` | `kill_eater_event` | |
-| `NEUTRAL_ITEM_EARNED` | also `replay_neutrals` when the name looks neutral | |
+| `NEUTRAL_ITEM_EARNED` | | combat log only; extract does **not** copy this type to `replay_neutrals` |
 | `STAT_TRACKER_PLAYER` | `tracked_stat_id` | |
 
 String names resolve through the `CombatLogNames` string table.
@@ -87,9 +86,7 @@ String names resolve through the `CombatLogNames` string table.
 ### `CMsgDOTACombatLogEntry` columns
 
 Every stored proto scalar is a column. Bools become `UInt8` (`0`/`1`).
-Name indexes become resolved strings. Three leftovers are **not** on
-the proto and stay at default: `greevils_greed_stack`, `tracked_death`,
-`tracked_sourcename`. Do not read them.
+Name indexes become resolved strings.
 
 | Proto field | # | Column | Notes |
 |---|---|---|---|
@@ -289,12 +286,15 @@ only.
 
 Gamerules pick/ban arrays while `m_nGameState == 2` go to ClickHouse
 `replay_draft` (the live timeline). `CDemoFileInfo` picks/bans are the
-official ~24-row sequence.
+official ~24-row sequence and have no per-pick time.
 
-Postgres `match_draft`: if details already wrote a complete sequence
-(20–32 rows, ≥10 picks), **do not replace it** — only stamp `clock`
-from the file-info / compact replay sequence. Replace only when the PG
-row set is missing or incomplete (live provisional lists).
+Postgres `match_draft`: if a complete sequence is already present
+(20–32 rows, ≥10 picks) **and** clocks are stamped, or a post-game
+source already persisted, **do not replace it** — only stamp `clock`
+from the first gamerules timeline row for that `(hero_id, is_pick)`.
+The first complete post-game draft may replace an incomplete live
+list. Objectives are inserted if missing (`kind`+`time`+`key`); never
+DELETE the table.
 
 `is_pick`, `hero_id`, `team` (0 radiant / 1 dire), `ord`, `clock`,
 `extra_time_*`.
@@ -330,9 +330,6 @@ item entity exists.
 | `neutral_item` | create of `CDOTA_Item_*` whose class contains `neutral` / `tier` |
 | `found` | `DOTA_UM_FoundNeutralItem` (`key`/`value` = item ability id); also `replay_alerts.kind = found_neutral` with `value2` = tier |
 
-`is_neutral_active_drop` / `is_neutral_passive_drop` exist on the
-table and stay `0` — extract does not set them.
-
 ---
 
 ## Cosmetics → `replay_cosmetics`
@@ -351,10 +348,10 @@ orders. One generic row: `kind`, `player2`, `value`, `value2`, `x`, `y`,
 | `kind` | Wire | `value` / `value2` / coords |
 |---|---|---|
 | `item_alert` | `DOTA_UM_ItemAlert` | item id; `x`,`y` |
-| `enemy_item_alert` | `DOTA_UM_EnemyItemAlert` | item id; `player2` = target |
-| `will_purchase` | `DOTA_UM_WillPurchaseAlert` | item id; `value2` = gold left |
+| `enemy_item_alert` | `DOTA_UM_EnemyItemAlert` | item id; `player2` = target; `value2` = item level |
+| `will_purchase` | `DOTA_UM_WillPurchaseAlert` | item id; `player2` = suggestion player; `value2` = gold left |
 | `item_sold` | `DOTA_UM_ItemSold` | item id |
-| `item_purchased` | `DOTA_UM_ItemPurchased` | item id (combat `PURCHASE` is the complete log) |
+| `item_purchased` | `DOTA_UM_ItemPurchased` | item id; `value2` = 1 if `from_combine` (combat `PURCHASE` is the complete log) |
 | `ability_ping` | `DOTA_UM_AbilityPing` | ability id; `value2` = ping type |
 | `facet_ping` | `DOTA_UM_FacetPing` | facet hash |
 | `innate_ping` | `DOTA_UM_InnatePing` | entity id |
@@ -362,19 +359,19 @@ orders. One generic row: `kind`, `player2`, `value`, `value2`, `x`, `y`,
 | `shared_cooldown` | `DOTA_UM_SharedCooldown` | `key` = name; `value` = cooldown×100 |
 | `courier_killed` | `DOTA_UM_CourierKilledAlert` | gold; `player2` = killer; `value2` = team |
 | `courier_left_fountain` | `DOTA_UM_CourierLeftFountainAlert` | |
-| `outpost_captured` | `DOTA_UM_OutpostCaptured` | team; also PG `outpost` |
+| `outpost_captured` | `DOTA_UM_OutpostCaptured` | team; `value2` = outpost entindex; also PG `outpost` |
 | `outpost_xp` | `DOTA_UM_OutpostGrantedXP` | team; `value2` = xp |
 | `glyph_alert` | `DOTA_UM_GlyphAlert` | `value` = 1 if negative |
 | `radar_alert` | `DOTA_UM_RadarAlert` | same |
 | `buyback_alert` | `DOTA_UM_BuyBackStateAlert` | |
-| `aghs_status` | `DOTA_UM_AghsStatusAlert` | type; `value2` flags scepter/shard |
+| `aghs_status` | `DOTA_UM_AghsStatusAlert` | type; `player2` = target; `value2` flags scepter/shard |
 | `neutral_camp` | `DOTA_UM_NeutralCampAlert` | camp type; `value2` = stacks |
 | `roshan_timer` | `DOTA_UM_RoshanTimer` | |
 | `tormentor_timer` | `DOTA_UM_TormentorTimer` | |
 | `roshan_phase` | `DOTA_UM_SendRoshanSpectatorPhase` | phase; `value2` = length |
 | `map_line` | `DOTA_UM_MapLine` | `x`,`y` |
 | `ping_confirm` | `DOTA_UM_PingConfirmation` | icon; `x`,`y` |
-| `give_item` | `DOTA_UM_GiveItem` | status |
+| `give_item` | `DOTA_UM_GiveItem` | status; `value2` = item entindex |
 | `madstone` | `DOTA_UM_MadstoneAlert` | type; `value2` = tier |
 | `timer_alert` | `DOTA_UM_TimerAlert` | alert type |
 | `found_neutral` | `DOTA_UM_FoundNeutralItem` | item id; `value2` = tier |
@@ -389,17 +386,18 @@ columns, not a JSON dump. `replay_epilogue` is gone.
 | Table | Source |
 |---|---|
 | `replay_meta` | file playback_* + `CGameInfo.dota` winner/teams + metadata version / lobby |
-| `replay_meta_teams` | `CDOTAMatchMetadata.Team` graphs + CM |
-| `replay_meta_players` | `Team.Player` scalars, `ability_upgrades`, `level_up_times`, graphs |
-| `replay_meta_kills` | `Team.kills` (`KillInfo`: type, victim, killers, time, bounty) |
+| `replay_meta_teams` | `CDOTAMatchMetadata.Team` graphs + CM (`cm_first_pick`, `cm_captain_player_id`, `cm_penalty`) |
+| `replay_meta_players` | `Team.Player` scalars (`valve_slot`, team slots, ward/stack/rapier/score fields), `ability_upgrades`, `level_up_times`, graphs |
+| `replay_meta_kills` | `Team.kills` (`KillInfo`: type, victim, killers, time, bounty, `team`) |
 | `replay_meta_player_kills` | `Team.Player.kills` (per-victim counts) |
 | `replay_meta_purchases` | `Team.Player.items` (`item_id`, `purchase_time`) |
-| `replay_meta_inventory` | `Team.Player.inventory_snapshot` |
-| `replay_meta_tips` | `match_tips` |
+| `replay_meta_inventory` | `Team.Player.inventory_snapshot` including `denies` and `flags` |
+| `replay_meta_tips` | `match_tips` (`source_slot`, `target_slot`, `tip_amount`, `event_id`) |
 
 `player_info` names are Postgres `match_players`. `picks_bans` still
 merge into `replay_draft` / `match_draft`. Event / cavern / gem /
-contract blobs are not stored.
+contract blobs are not stored. Combat `NEUTRAL_ITEM_EARNED` is a
+combat-log row only — extract does not copy it into `replay_neutrals`.
 
 ---
 
@@ -427,6 +425,6 @@ and building kills are in combat log / alerts / objectives.
 | Table | What |
 |---|---|
 | `match_objectives` | Sparse story rows (see announcements) |
-| `match_draft` | `clock` / order upserted from `replay_draft` |
+| `match_draft` | `clock` from first `replay_draft` appearance; official order from FileInfo |
 | `match_players` | lane, roaming, stun/TF/ward/stack/rune/tower/roshan/FB summaries |
-| `match_replays` | `parsed`, `parser_version`, `parse_run_id` |
+| `match_replays` | `parsed`, `parser_version` |

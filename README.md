@@ -2,7 +2,7 @@
 
 Internal platform for discovering professional / league Dota 2 matches, storing live and post-match data, and downloading replays. Postgres holds operational state (visible with ordinary SQL). ClickHouse holds high-volume snapshots. Replays stream into Amazon S3 (`S3_*` in `.env`).
 
-Jobs run on [graphile-worker](https://worker.graphile.org) in Postgres — queue, retries, and cron are tables, not a separate broker. Compose runs three worker containers (`WORKER_ROLE=live|historical|match-processing`) against that shared queue. Spec: [`docs/specs/worker-architecture.md`](docs/specs/worker-architecture.md).
+Jobs run on [graphile-worker](https://worker.graphile.org) in Postgres — queue, retries, and cron are tables, not a separate broker. Compose runs three worker containers (`WORKER_ROLE=live|historical|match-processing`) against that shared queue. Spec: [`docs/specs/worker-architecture.md`](docs/specs/worker-architecture.md). Per-job calls, phase updates, and inserts: [`docs/specs/job-graph.md`](docs/specs/job-graph.md).
 
 ## Stack
 
@@ -49,15 +49,21 @@ bun run api       # another terminal
 | `poll_realtime_stats` | live | every 3s | `GetRealtimeStats` for live rows that have `server_steam_id` |
 | `fetch_leagues` | historical | hourly + startup | `GetLeagueInfoList`, upsert `leagues` |
 | `walk_league_history` | historical | continuous | `GetMatchHistory` pages (discovery only) |
-| `poll_finished_history` | historical | every 5s | `GetMatchHistory` waiter after a live match leaves the feed |
+| `poll_finished_history` | live + historical | every 5s | paginated `GetMatchHistory` waiter after a live match leaves the feed; independent of GC / replay |
+| `fetch_seq_details` | live + historical | on demand | `GetMatchHistoryBySequenceNum` for one match (parallel with GC) |
 | `process_league` | historical | via HTTP | reset + walk one league |
 | `fetch_match_details` | match-processing | on demand | GC `CMsgDOTAMatch` → replay URL |
 | `download_replay` | match-processing | after URL | Valve CDN → S3 |
+| `archive_parsed_replays` | match-processing | every 30s | parsed `.dem.bz2` → cold S3 (other bucket or `cold/` prefix) |
+| `replenish_accounts` | match-processing | interval + startup | buy API keys / GC accounts when the ready pool is short |
+| `retest_disabled_resources` | match-processing | interval + startup | probe disabled proxies / accounts / keys |
+| `maintain_request_logs` | match-processing | hourly + startup | retain Valve request-log partitions |
+| `sync_catalogs` | historical | boot + daily 05:00 UTC | heroes / items / patches from d2vpkr VPK + odota `json/` |
 | parser (Go) | parser | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*` |
 
 League status is **ours**, not Valve's `status` integer (that flag is stored as `valve_status`). A league is `LIVE` if it currently appears in live games, or now is between `start_timestamp` and `end_timestamp`; `UPCOMING` if start is in the future; `FINISHED` if the window ended, Valve marked it concluded (`status=5`), or activity is stale.
 
-`GetMatchHistory` is capped by Valve at **100** matches per call (a request of 1000 is silently truncated). History paginates by `league_id`. Match-processing does not call `GetMatchHistoryBySequenceNum`.
+`GetMatchHistory` is capped by Valve at **100** matches per call (a request of 1000 is silently truncated). History paginates by `league_id` until the waiting match is found or the league is exhausted. After a seqnum is known, `GetMatchHistoryBySequenceNum` runs in parallel with GC.
 
 ## Process a finished league
 

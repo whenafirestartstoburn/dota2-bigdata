@@ -5,76 +5,6 @@
 
 CREATE DATABASE IF NOT EXISTS dota;
 
-CREATE TABLE dota.live_match_ticks
-(
-    `match_id` UInt64 CODEC(Delta(8), ZSTD(1)),
-    `captured_at` DateTime64(3, 'UTC') CODEC(DoubleDelta, ZSTD(1)),
-    `league_id` UInt32,
-    `duration` Float32 CODEC(Gorilla, ZSTD(1)),
-    `radiant_score` UInt16,
-    `dire_score` UInt16,
-    `spectators` UInt32,
-    `tower_state_radiant` UInt32,
-    `tower_state_dire` UInt32,
-    `barracks_state_radiant` UInt32,
-    `barracks_state_dire` UInt32,
-    `roshan_respawn_timer` UInt16,
-    `series_type` UInt8,
-    `radiant_series_wins` UInt8,
-    `dire_series_wins` UInt8,
-    `stream_delay_s` UInt16,
-    `source` LowCardinality(String),
-    `lobby_id` UInt64 DEFAULT 0,
-    `game_number` UInt8 DEFAULT 0,
-    `league_series_id` UInt32 DEFAULT 0,
-    `league_game_id` UInt32 DEFAULT 0,
-    `league_tier` UInt8 DEFAULT 0,
-    `game_state` UInt8 DEFAULT 0,
-    `server_steam_id` UInt64 DEFAULT 0
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(captured_at)
-ORDER BY (match_id, captured_at)
-SETTINGS index_granularity = 8192;
-
-CREATE TABLE dota.live_player_ticks
-(
-    `match_id` UInt64 CODEC(Delta(8), ZSTD(1)),
-    `captured_at` DateTime64(3, 'UTC') CODEC(DoubleDelta, ZSTD(1)),
-    `player_slot` UInt8,
-    `account_id` UInt64 CODEC(Delta(8), ZSTD(1)),
-    `hero_id` Int32,
-    `kills` UInt16,
-    `deaths` UInt16,
-    `assists` UInt16,
-    `last_hits` UInt32 CODEC(Delta(4), ZSTD(1)),
-    `denies` UInt16,
-    `gold` UInt32 CODEC(Delta(4), ZSTD(1)),
-    `net_worth` UInt32 CODEC(Delta(4), ZSTD(1)),
-    `level` UInt8,
-    `gold_per_min` UInt16,
-    `xp_per_min` UInt16,
-    `x` Float32 CODEC(Gorilla, ZSTD(1)),
-    `y` Float32 CODEC(Gorilla, ZSTD(1)),
-    `source` LowCardinality(String),
-    `item0` UInt32 DEFAULT 0,
-    `item1` UInt32 DEFAULT 0,
-    `item2` UInt32 DEFAULT 0,
-    `item3` UInt32 DEFAULT 0,
-    `item4` UInt32 DEFAULT 0,
-    `item5` UInt32 DEFAULT 0,
-    `ultimate_state` UInt8 DEFAULT 0,
-    `ultimate_cooldown` UInt16 DEFAULT 0,
-    `respawn_timer` UInt16 DEFAULT 0,
-    `item6` UInt32 DEFAULT 0,
-    `item7` UInt32 DEFAULT 0,
-    `item8` UInt32 DEFAULT 0
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(captured_at)
-ORDER BY (match_id, captured_at, player_slot)
-SETTINGS index_granularity = 8192;
-
 CREATE TABLE dota.replay_ability_levels
 (
     `match_id` UInt64 CODEC(Delta(8), ZSTD(1)),
@@ -86,7 +16,6 @@ CREATE TABLE dota.replay_ability_levels
     `ability_id` String CODEC(ZSTD(1)),
     `ability_level` UInt8,
     `target` String CODEC(ZSTD(1)),
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -103,7 +32,6 @@ CREATE TABLE dota.replay_actions
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
     `order_type` UInt16 CODEC(T64, ZSTD(1)),
-    `parse_run_id` UInt64 DEFAULT 0,
     `unit_index` Int32 DEFAULT -1 CODEC(T64, ZSTD(1)),
     `target_index` Int32 DEFAULT -1 CODEC(T64, ZSTD(1)),
     `ability_id` Int32 DEFAULT -1 CODEC(T64, ZSTD(1)),
@@ -126,7 +54,6 @@ CREATE TABLE dota.replay_alerts
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8,
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `kind` LowCardinality(String),
     `player2` Int16 DEFAULT -1,
     `value` Int32 DEFAULT 0 CODEC(T64, ZSTD(1)),
@@ -156,7 +83,6 @@ CREATE TABLE dota.replay_announcements
     `player3` Int16 DEFAULT -1,
     `value2` UInt32 DEFAULT 0,
     `value3` UInt32 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -176,7 +102,6 @@ CREATE TABLE dota.replay_chat
     `key` String CODEC(ZSTD(1)),
     `unit` String DEFAULT '' CODEC(ZSTD(1)),
     `channel` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -210,9 +135,6 @@ CREATE TABLE dota.replay_combat_log
     `slow_duration` Float32 CODEC(Gorilla, ZSTD(1)),
     `sourcename` LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
     `targetsourcename` LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
-    `greevils_greed_stack` UInt16 DEFAULT 0,
-    `tracked_death` UInt8 DEFAULT 0,
-    `tracked_sourcename` LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
     `health` Int32 DEFAULT 0 CODEC(T64, ZSTD(1)),
     `ability_level` UInt8 DEFAULT 0,
     `location_x` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
@@ -279,7 +201,6 @@ CREATE TABLE dota.replay_combat_log
     `tracked_stat_id` UInt32 DEFAULT 0,
     `modifier_purged_duration` Float32 DEFAULT 0 CODEC(Gorilla, ZSTD(1)),
     `heal_from_regen` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `attacker_account_id` UInt32 DEFAULT 0,
     `target_account_id` UInt32 DEFAULT 0
@@ -298,7 +219,6 @@ CREATE TABLE dota.replay_cosmetics
     `slot` Int8,
     `parser_version` UInt16,
     `item_id` UInt32,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -321,7 +241,6 @@ CREATE TABLE dota.replay_draft
     `clock` Int32,
     `extra_time_radiant` Int32 DEFAULT 0,
     `extra_time_dire` Int32 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -367,8 +286,6 @@ CREATE TABLE dota.replay_intervals
     `repicked` UInt8 DEFAULT 0,
     `randomed` UInt8 DEFAULT 0,
     `pred_vict` UInt8 DEFAULT 0,
-    `observers_placed` UInt16 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `hp` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
     `max_hp` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
     `mana` UInt32 DEFAULT 0 CODEC(Delta(4), ZSTD(1)),
@@ -393,7 +310,6 @@ CREATE TABLE dota.replay_inventory
     `item_slot` Int8,
     `charges` UInt16,
     `secondary_charges` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -409,7 +325,6 @@ CREATE TABLE dota.replay_meta
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `playback_time` Float32 CODEC(Gorilla, ZSTD(1)),
     `playback_ticks` UInt32,
@@ -433,7 +348,6 @@ CREATE TABLE dota.replay_meta_inventory
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `item_ids` Array(Int32),
     `backpack_item_ids` Array(Int32),
@@ -460,7 +374,6 @@ CREATE TABLE dota.replay_meta_kills
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `team` UInt8,
     `kill_type` LowCardinality(String),
@@ -481,7 +394,6 @@ CREATE TABLE dota.replay_meta_player_kills
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `victim_slot` UInt8,
     `count` UInt32
@@ -499,7 +411,6 @@ CREATE TABLE dota.replay_meta_players
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `valve_slot` UInt8,
     `team_number` UInt8,
@@ -540,7 +451,6 @@ CREATE TABLE dota.replay_meta_purchases
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `item_id` Int32
 )
@@ -557,7 +467,6 @@ CREATE TABLE dota.replay_meta_teams
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `dota_team` UInt8,
     `cm_first_pick` UInt8,
@@ -580,7 +489,6 @@ CREATE TABLE dota.replay_meta_tips
     `tick` UInt32 CODEC(Delta(4), ZSTD(1)),
     `slot` Int8 CODEC(T64, ZSTD(1)),
     `parser_version` UInt16,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0,
     `source_slot` UInt8,
     `target_slot` UInt8,
@@ -603,9 +511,6 @@ CREATE TABLE dota.replay_neutrals
     `kind` LowCardinality(String),
     `key` String CODEC(ZSTD(1)),
     `value` Int32,
-    `is_neutral_active_drop` UInt8 DEFAULT 0,
-    `is_neutral_passive_drop` UInt8 DEFAULT 0,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -623,7 +528,6 @@ CREATE TABLE dota.replay_pings
     `parser_version` UInt16,
     `x` Float32 CODEC(Gorilla, ZSTD(1)),
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
-    `parse_run_id` UInt64 DEFAULT 0,
     `ping_type` UInt16 DEFAULT 0,
     `target` Int32 DEFAULT -1,
     `account_id` UInt32 DEFAULT 0
@@ -647,7 +551,6 @@ CREATE TABLE dota.replay_wards
     `y` Float32 CODEC(Gorilla, ZSTD(1)),
     `z` Float32 CODEC(Gorilla, ZSTD(1)),
     `ehandle` UInt32,
-    `parse_run_id` UInt64 DEFAULT 0,
     `account_id` UInt32 DEFAULT 0
 )
 ENGINE = MergeTree
@@ -680,4 +583,7 @@ INSERT INTO dota.schema_migrations (version) VALUES
     ('20260906010000'),
     ('20260911010000'),
     ('20260913020000'),
-    ('20260913030000');
+    ('20260913030000'),
+    ('20260915140000'),
+    ('20260915180000'),
+    ('20260916020000');

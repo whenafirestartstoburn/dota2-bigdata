@@ -10,7 +10,12 @@ export default defineConfig({
 	dbCredentials: { url },
 	schema: './packages/shared/src/db/schema.ts',
 	schemaFilter: ['public'],
-	tablesFilter: ['!schema_migrations'],
+	tablesFilter: [
+		'!schema_migrations',
+		'!steam_api_requests_*',
+		'!steam_gc_requests_*',
+		'!replay_requests_*',
+	],
 	out: './packages/shared/src/db',
 	introspect: { casing: 'preserve' },
 })

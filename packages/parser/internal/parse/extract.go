@@ -4,8 +4,9 @@ import (
 	"strings"
 
 	"dota2-collector/parser/internal/model"
-	"dota2-collector/parser/internal/replay"
-	"dota2-collector/parser/internal/valve"
+
+	"github.com/dotabuff/manta"
+	"github.com/dotabuff/manta/dota"
 )
 
 func stripPrefix(s, prefix string) string {
@@ -15,7 +16,7 @@ func stripPrefix(s, prefix string) string {
 	return s
 }
 
-func (s *Session) onCombat(m *valve.CMsgDOTACombatLogEntry) error {
+func (s *Session) onCombat(m *dota.CMsgDOTACombatLogEntry) error {
 	typ := stripPrefix(m.GetType().String(), "DOTA_COMBATLOG_")
 	if typ == "" || typ == "INVALID" {
 		typ = m.GetType().String()
@@ -246,7 +247,6 @@ func (s *Session) emitIntervals() error {
 			row.RunePickups = uint16(getInt(data, vecPath("m_vecDataTeam", ts, "m_iRunePickups")))
 			row.TowersKilled = uint8(getInt(data, vecPath("m_vecDataTeam", ts, "m_iTowerKills")))
 			row.RoshansKilled = uint8(getInt(data, vecPath("m_vecDataTeam", ts, "m_iRoshanKills")))
-			row.ObserversPlaced = row.ObsPlaced
 			row.Networth = uint32(getInt(data, vecPath("m_vecDataTeam", ts, "m_iNetWorth")))
 			row.Gold = uint32(getInt(data, vecPath("m_vecDataTeam", ts, "m_iTotalEarnedGold")))
 			row.LH = uint32(getInt(data, vecPath("m_vecDataTeam", ts, "m_iLastHitCount")))
@@ -321,7 +321,7 @@ func npcFromClass(class string) string {
 	return b.String()
 }
 
-func (s *Session) emitAbilities(hero *replay.Entity, pl *player, clock int32) {
+func (s *Session) emitAbilities(hero *manta.Entity, pl *player, clock int32) {
 	for i := 0; i < 24; i++ {
 		h := getUint64(hero, "m_hAbilities."+pad4(i))
 		if h == 0 {
@@ -360,7 +360,7 @@ func (s *Session) emitAbilities(hero *replay.Entity, pl *player, clock int32) {
 	}
 }
 
-func (s *Session) emitInventoryChanges(hero *replay.Entity, pl *player, clock int32) {
+func (s *Session) emitInventoryChanges(hero *manta.Entity, pl *player, clock int32) {
 	idx := int(pl.slot)
 	if idx < 0 || idx >= 10 {
 		return
@@ -463,7 +463,7 @@ func (s *Session) pollDraft() {
 	}
 }
 
-func (s *Session) trackWard(e *replay.Entity, op replay.Op, class string) {
+func (s *Session) trackWard(e *manta.Entity, op manta.EntityOp, class string) {
 	kind := "obs"
 	if strings.Contains(strings.ToLower(class), "sentry") {
 		kind = "sen"
@@ -482,7 +482,7 @@ func (s *Session) trackWard(e *replay.Entity, op replay.Op, class string) {
 	}
 	life := getInt(e, "m_lifeState")
 	existing, ok := s.wards[idx]
-	if op.Has(replay.OpCreated) || op.Has(replay.OpEntered) {
+	if op.Flag(manta.EntityOpCreated) || op.Flag(manta.EntityOpEntered) {
 		if !ok || !existing.alive {
 			s.out.Wards = append(s.out.Wards, model.Ward{
 				Header:  s.header(s.clock(), slot),
@@ -497,7 +497,7 @@ func (s *Session) trackWard(e *replay.Entity, op replay.Op, class string) {
 		s.wards[idx] = &wardWatch{kind: kind, slot: slot, x: x, y: y, z: z, alive: life == 0}
 		return
 	}
-	if ok && existing.alive && (life != 0 || op.Has(replay.OpDeleted) || op.Has(replay.OpLeft)) {
+	if ok && existing.alive && (life != 0 || op.Flag(manta.EntityOpDeleted) || op.Flag(manta.EntityOpLeft)) {
 		s.out.Wards = append(s.out.Wards, model.Ward{
 			Header:  s.header(s.clock(), existing.slot),
 			Kind:    existing.kind,
@@ -509,12 +509,12 @@ func (s *Session) trackWard(e *replay.Entity, op replay.Op, class string) {
 		})
 		existing.alive = false
 	}
-	if op.Has(replay.OpDeleted) {
+	if op.Flag(manta.EntityOpDeleted) {
 		delete(s.wards, idx)
 	}
 }
 
-func (s *Session) trackCosmetic(e *replay.Entity) {
+func (s *Session) trackCosmetic(e *manta.Entity) {
 	item := getUint(e, "m_iItemDefinitionIndex", "m_AttributeManager.m_Item.m_iItemDefinitionIndex")
 	if item == 0 {
 		return
@@ -535,8 +535,8 @@ func (s *Session) trackCosmetic(e *replay.Entity) {
 	})
 }
 
-func (s *Session) trackNeutralItem(e *replay.Entity, op replay.Op) {
-	if !op.Has(replay.OpCreated) && !op.Has(replay.OpEntered) {
+func (s *Session) trackNeutralItem(e *manta.Entity, op manta.EntityOp) {
+	if !op.Flag(manta.EntityOpCreated) && !op.Flag(manta.EntityOpEntered) {
 		return
 	}
 	name := e.GetClassName()
@@ -552,7 +552,7 @@ func (s *Session) trackNeutralItem(e *replay.Entity, op replay.Op) {
 	})
 }
 
-func (s *Session) onOrder(m *valve.CDOTAUserMsg_SpectatorPlayerUnitOrders) error {
+func (s *Session) onOrder(m *dota.CDOTAUserMsg_SpectatorPlayerUnitOrders) error {
 	slot := s.slotForPlayerID(m.GetEntindex())
 	pos := m.GetPosition()
 	var x, y, z float32
@@ -576,7 +576,7 @@ func (s *Session) onOrder(m *valve.CDOTAUserMsg_SpectatorPlayerUnitOrders) error
 	})
 }
 
-func (s *Session) onLocationPing(m *valve.CDOTAUserMsg_LocationPing) error {
+func (s *Session) onLocationPing(m *dota.CDOTAUserMsg_LocationPing) error {
 	slot := s.slotForPlayerID(int32(m.GetPlayerId()))
 	ping := m.GetLocationPing()
 	var x, y float32
@@ -597,7 +597,7 @@ func (s *Session) onLocationPing(m *valve.CDOTAUserMsg_LocationPing) error {
 	return nil
 }
 
-func (s *Session) onMinimap(m *valve.CDOTAUserMsg_MinimapEvent) error {
+func (s *Session) onMinimap(m *dota.CDOTAUserMsg_MinimapEvent) error {
 	slot := s.slotForPlayerID(int32(m.GetEntityHandle()))
 	if m.GetEventType() == 0 && m.GetX() == 0 && m.GetY() == 0 {
 		return nil
@@ -612,7 +612,7 @@ func (s *Session) onMinimap(m *valve.CDOTAUserMsg_MinimapEvent) error {
 	return nil
 }
 
-func (s *Session) onChatEvent(m *valve.CDOTAUserMsg_ChatEvent) error {
+func (s *Session) onChatEvent(m *dota.CDOTAUserMsg_ChatEvent) error {
 	kind := m.GetType().String()
 	if kind == "" {
 		kind = "CHAT_MESSAGE_UNKNOWN"
@@ -632,7 +632,7 @@ func (s *Session) onChatEvent(m *valve.CDOTAUserMsg_ChatEvent) error {
 	return nil
 }
 
-func (s *Session) onChatMessage(m *valve.CDOTAUserMsg_ChatMessage) error {
+func (s *Session) onChatMessage(m *dota.CDOTAUserMsg_ChatMessage) error {
 	slot := s.slotForPlayerID(int32(m.GetSourcePlayerId()))
 	s.out.Chat = append(s.out.Chat, model.Chat{
 		Header:  s.header(s.clock(), slot),
@@ -643,7 +643,7 @@ func (s *Session) onChatMessage(m *valve.CDOTAUserMsg_ChatMessage) error {
 	return nil
 }
 
-func (s *Session) onChatWheel(m *valve.CDOTAUserMsg_ChatWheel) error {
+func (s *Session) onChatWheel(m *dota.CDOTAUserMsg_ChatWheel) error {
 	slot := s.slotForPlayerID(int32(m.GetPlayerId()))
 	s.out.Chat = append(s.out.Chat, model.Chat{
 		Header: s.header(s.clock(), slot),
@@ -653,7 +653,7 @@ func (s *Session) onChatWheel(m *valve.CDOTAUserMsg_ChatWheel) error {
 	return nil
 }
 
-func (s *Session) onSayText2(m *valve.CUserMessageSayText2) error {
+func (s *Session) onSayText2(m *dota.CUserMessageSayText2) error {
 	slot := int8(-1)
 	if name := m.GetParam1(); name != "" {
 		if found, ok := s.nameToSlot[name]; ok {
@@ -664,7 +664,7 @@ func (s *Session) onSayText2(m *valve.CUserMessageSayText2) error {
 	}
 	if slot < 0 {
 		if idx := int32(m.GetEntityindex()); idx > 0 {
-			if e := s.parser.FindEntity(idx); e != nil && !e.Discarded() {
+			if e := s.parser.FindEntity(idx); e != nil {
 				slot = s.slotForName(e.GetClassName())
 				if slot < 0 {
 					slot = s.slotForName(npcFromClass(e.GetClassName()))
@@ -681,7 +681,7 @@ func (s *Session) onSayText2(m *valve.CUserMessageSayText2) error {
 	return nil
 }
 
-func (s *Session) onNeutralFound(m *valve.CDOTAUserMsg_FoundNeutralItem) error {
+func (s *Session) onNeutralFound(m *dota.CDOTAUserMsg_FoundNeutralItem) error {
 	slot := s.slotForPlayerID(int32(m.GetPlayerId()))
 	s.out.Neutrals = append(s.out.Neutrals, model.Neutral{
 		Header: s.header(s.clock(), slot),
@@ -715,7 +715,7 @@ func fmtInt(n int64) string {
 	return string(buf[i:])
 }
 
-func (s *Session) objectiveFromChat(kind string, m *valve.CDOTAUserMsg_ChatEvent, slot int8) {
+func (s *Session) objectiveFromChat(kind string, m *dota.CDOTAUserMsg_ChatEvent, slot int8) {
 	clock := s.clock()
 	switch kind {
 	case "CHAT_MESSAGE_TOWER_KILL", "CHAT_MESSAGE_TOWER_DENY":
@@ -975,7 +975,7 @@ func teamPtr(slot int8) *int16 {
 	return &v
 }
 
-func teamFromChat(m *valve.CDOTAUserMsg_ChatEvent) *int16 {
+func teamFromChat(m *dota.CDOTAUserMsg_ChatEvent) *int16 {
 	// value often encodes the killing team
 	if m.GetValue() == 3 {
 		v := int16(1)

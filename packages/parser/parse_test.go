@@ -31,9 +31,6 @@ func TestParseAttachedDemos(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.ParseRunID == 0 {
-				t.Fatal("parse_run_id is 0")
-			}
 			if len(res.CombatLog) < 100 {
 				t.Fatalf("combat log too small: %d", len(res.CombatLog))
 			}
@@ -47,9 +44,6 @@ func TestParseAttachedDemos(t *testing.T) {
 			for _, row := range res.CombatLog {
 				if row.Type == "" {
 					t.Fatal("empty combat-log type")
-				}
-				if row.ParseRunID != res.ParseRunID {
-					t.Fatal("combat-log parse_run_id mismatch")
 				}
 				seenType = true
 				break

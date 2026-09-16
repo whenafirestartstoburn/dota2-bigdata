@@ -88,13 +88,13 @@ Collector cadence (was env):
 
 | key | seed | meaning |
 |---|---|---|
-| `live_poll_interval_ms` | 3000 | `poll_live_games` period |
+| `live_poll_interval_ms` | 2000 | `poll_live_games` period |
 | `live_missing_threshold` | 2 | missing live ticks before finish |
 | `replay_live_delay_ms` | 30000 | first live replay download wait after finish. 404s: 1 m, 1 m, 3 m × 20, 1 h × 24, then `replay_unavailable` |
-| `history_fast_poll_ms` | 5000 | GetMatchHistory waiter interval (first 100 misses) |
-| `history_fast_poll_limit` | 100 | fast-poll attempts per finished live match |
+| `history_fast_poll_ms` | 5000 | GetMatchHistory waiter interval (first 720 misses / 60 min) |
+| `history_fast_poll_limit` | 720 | fast-poll attempts per finished live match (60 min at 5 s) |
 | `history_slow_poll_ms` | 60000 | waiter interval after the fast budget |
-| `history_slow_poll_limit` | 100 | slow-poll attempts before `history_timeout` |
+| `history_slow_poll_limit` | 180 | slow-poll attempts before `history_timeout` (3 h at 60 s) |
 | `history_page_size` | 100 | GetMatchHistory page (Valve max 100) |
 | `history_details_enqueue_limit` | 5 | runnable historical details jobs plus parked `run_scheduled_job` hops (locked-queue waiters and exhausted retries do not count; run cap is 5 `details:*` queues) |
 | `history_replay_enqueue_limit` | 50 | queued historical download_replay jobs plus parked hops (run cap is 10 `replay-historical:*` queues) |
@@ -104,6 +104,9 @@ Collector cadence (was env):
 | `history_exhausted_refresh_ms` | 86400000 | retry exhausted leagues |
 | `replenish_interval_ms` | 60000 | inventory buy check |
 | `retest_interval_ms` | 300000 | disabled-resource probe |
+| `replay_archive_interval_ms` | 30000 | `archive_parsed_replays` period when the batch is not full |
+| `replay_archive_batch_size` | 10 | parsed replays copied to cold storage per tick |
+| `log_valve_requests` | true | write `steam_api_requests` / `steam_gc_requests` / `replay_requests` for each Valve attempt |
 
 Marketplace / GC:
 

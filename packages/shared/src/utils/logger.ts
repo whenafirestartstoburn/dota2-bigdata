@@ -24,6 +24,7 @@ const redact = {
 		'*.proxy_url',
 		'STEAM_SEED_PASSWORD',
 		'S3_SECRET_KEY',
+		'S3_ARCHIVE_SECRET_KEY',
 	],
 	censor: '[redacted]',
 }

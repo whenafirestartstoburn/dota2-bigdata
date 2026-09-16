@@ -28,6 +28,16 @@ describe('extractMatchFacts', () => {
 		expect(facts.radiantTeamName).toBe('Team A')
 	})
 
+	test('maps seq captains', () => {
+		const facts = extractMatchFacts({
+			match_id: 4,
+			radiant_captain: 111,
+			dire_captain: 222,
+		})
+		expect(facts.radiantCaptain).toBe(111)
+		expect(facts.direCaptain).toBe(222)
+	})
+
 	test('does not copy a lone barracks value onto dire', () => {
 		const facts = extractMatchFacts({
 			match_id: 8,

@@ -5,6 +5,7 @@ export const QUEUE = {
 	live: 'live',
 	historical: 'historical',
 	details: 'details',
+	seq: 'seq',
 	replayLive: 'replay-live',
 	replayHistorical: 'replay-historical',
 	gc: 'dota-gc',
@@ -19,6 +20,12 @@ export const REPLAY_PARALLELISM = 10
 export function detailsQueue(matchId: number): string {
 	const n = DETAILS_PARALLELISM
 	return `${QUEUE.details}:${((matchId % n) + n) % n}`
+}
+
+/** Parallel with `details:*` so seq-num and GC for one match do not serialize. */
+export function seqQueue(matchId: number): string {
+	const n = DETAILS_PARALLELISM
+	return `${QUEUE.seq}:${((matchId % n) + n) % n}`
 }
 
 export function replayQueue(
@@ -39,6 +46,8 @@ export const PRIORITY = {
 	walkHistory: 20,
 	replayHistorical: 20,
 	retest: 25,
+	archive: 30,
+	maintainLogs: 40,
 } as const
 
 /** Off-queue waiter. When `run_at` comes, hops back onto a named queue. */

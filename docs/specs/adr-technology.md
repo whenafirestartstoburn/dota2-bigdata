@@ -94,9 +94,9 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Object storage
 
-**Decision:** Object store (`S3_*` in `.env`) for `.dem.bz2`. `S3_BUCKET=gs://…` talks to GCS with the GCE instance service account (metadata token, no HMAC keys). A plain bucket name uses the S3 API and `S3_ACCESS_KEY` / `S3_SECRET_KEY`. Parser reads the object; re-parse does not need Valve’s replay CDN.
+**Decision:** Object store (`S3_*` in `.env`) for `.dem.bz2`. `S3_BUCKET=gs://…` talks to GCS with the GCE instance service account (metadata token, no HMAC keys). A plain bucket name uses the S3 API and `S3_ACCESS_KEY` / `S3_SECRET_KEY`. Parser reads the object; re-parse does not need Valve’s replay CDN. After parse, `archive_parsed_replays` moves the blob to cold storage (`S3_ARCHIVE_BUCKET` and/or `S3_ARCHIVE_PREFIX`, optional `S3_ARCHIVE_STORAGE_CLASS`). Dev keeps the same bucket and a `cold/` prefix; production may use another bucket and a cheaper storage class.
 
-**Why.** Files are tens to hundreds of MB; they are not rows. The blob store is durable; Postgres `match_replays` is the locator and status. Production replays live in GCS on the collector VM.
+**Why.** Files are tens to hundreds of MB; they are not rows. The blob store is durable; Postgres `match_replays` is the locator and status. Hot storage is for the parse path; cold is the re-parse backup. Production replays live in GCS on the collector VM today.
 
 **Rejected.** Storing demos in Postgres `bytea`. Filesystem on the worker box (replicas, no shared disk).
 
@@ -104,7 +104,7 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 **Decision:** [graphile-worker](https://worker.graphile.org) in the **same Postgres**. Queues, retries, cron, and `jobKey` dedupe are tables. Three worker processes share that queue; each registers only its `WORKER_ROLE` task identifiers (live discovery, historical discovery, match processing). Parse stays a separate Go process.
 
-**Why.** The 1 rps limiter and job state already live in Postgres. A Redis/NATS broker would be a second failover and a second place to look when a match is stuck. `jobKey` + `preserve_run_at` is how live poll and replay delays work. Splitting processes keeps a 20-shard download storm from delaying the 3 s live poll without a second broker.
+**Why.** The 1 rps limiter and job state already live in Postgres. A Redis/NATS broker would be a second failover and a second place to look when a match is stuck. `jobKey` + `preserve_run_at` is how live poll and replay delays work. Splitting processes keeps a 20-shard download storm from delaying the 2 s live poll without a second broker.
 
 **Rejected.** BullMQ / Redis. Kafka (overkill for “one GetMatchDetails”). Temporal (ops surface we do not need). In-process `setInterval` only — no retries, no inspectable queue.
 
@@ -128,11 +128,11 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Replay parser
 
-**Decision:** Go service in `packages/parser`. Our own Source 2 decoder (`internal/replay`) plus Valve protobuf types; extraction and ClickHouse/Postgres commit are ours. The TypeScript worker still only downloads. Spec: [`replay-parser.md`](./replay-parser.md).
+**Decision:** Go service in `packages/parser`. Source 2 decode is [dotabuff/manta](https://github.com/dotabuff/manta). Extract into `replay_*` plus ClickHouse/Postgres commit stay ours. The TypeScript worker still only downloads. Spec: [`replay-parser.md`](./replay-parser.md).
 
-**Why.** Parse is CPU-heavy and does not belong on the Steam-session worker. A third-party parser as a library would own the decode path we need to version and test. MergeTree writes stay append-only; `parse_run_id` is the everything-or-nothing token without changing the engine.
+**Why.** Parse is CPU-heavy and does not belong on the Steam-session worker. Manta already implements the demo wire (PBDEMS2, sendtables, field paths) and Valve proto types; maintaining a second copy of that decoder drifted from the library the rest of the ecosystem uses. MergeTree writes stay append-only; a re-parse or failed attempt deletes the `match_id` and inserts again, without changing the engine.
 
-**Rejected.** A Java Clarity sidecar. OpenDota HTTP. Parsing inside `download_replay`. Copying `example_projects/*` wholesale.
+**Rejected.** A Java Clarity sidecar. OpenDota HTTP. Parsing inside `download_replay`. Copying `example_projects/*` wholesale. A private Source 2 decoder in `internal/replay` (removed).
 
 ## Logging and formatting
 
@@ -169,7 +169,7 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 | Demos | S3 | bytea, local disk |
 | Queue | graphile-worker in PG | Bull / Kafka / in-process timers |
 | Steam HTTP vs GC | fetch+Zod vs steam-user | one account for both roles |
-| Parse | Go `packages/parser` (own Source 2 decoder) | manta/Clarity as a dependency, third-party match API, Java sidecar, parse-in-download |
+| Parse | Go `packages/parser` + manta decode | Clarity sidecar, third-party match API, parse-in-download, private Source 2 decoder |
 | Domain flow | `async`/`await`, `Promise` | Effect, neverthrow, RxJS |
 | Metrics | Prometheus scrape + Grafana dashboards | OpenTelemetry SDK, per-match labels |
 

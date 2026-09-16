@@ -257,7 +257,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (job, result) (rate(dota_jobs_total{job=~\"walk_league_history|fetch_match_details|download_replay\"}[2m]))",
+          "expr": "sum by (job, result) (rate(dota_jobs_total{job=~\"walk_league_history|poll_finished_history|fetch_seq_details|fetch_match_details|download_replay\"}[2m]))",
           "legendFormat": "{{job}} {{result}}",
           "refId": "A"
         }
@@ -306,7 +306,7 @@
       "targets": [
         {
           "expr": "dota_matches",
-          "legendFormat": "{{phase}}",
+          "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],

@@ -2,7 +2,8 @@
 
 Companions: [`worker-architecture.md`](./worker-architecture.md),
 [`marketplace-buy-account.md`](./marketplace-buy-account.md),
-[`replay-parser.md`](./replay-parser.md).
+[`replay-parser.md`](./replay-parser.md),
+[`request-logs.md`](./request-logs.md).
 
 Worker and parser expose Prometheus text on `GET /metrics`. Compose scrapes
 both into Prometheus; Grafana loads provisioned dashboards from
@@ -44,19 +45,24 @@ Three Valve planes, plus marketplace and the local pipeline.
 | `source` / plane | Where | Methods |
 |---|---|---|
 | `dota2` | `www.dota2.com/webapi` | `GetLeagueInfoList` |
-| `steam` | `api.steampowered.com` | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory` |
+| `steam` | `api.steampowered.com` | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory`, `GetMatchHistoryBySequenceNum` |
 | GC | `steam-user` session | `match_details` (`CMsgGCMatchDetailsRequest`), logon |
 | marketplace | Dark Shopping HTTP | `order/create`, `order/status`, `order/download`, `delivery` |
-| pipeline | graphile jobs, S3 download, parser | job names, replay status, match phase |
+| pipeline | graphile jobs, S3 download, parser | job names, replay status, match status |
 
 One increment per **logical** Valve call (retries inside `getJson` stay
 internal). Marketplace HTTP counts each attempt, including 429 retries.
 
-GC is on-demand and sparse. Dashboards graph the **counters** and
-`sum / count` mean latency, not `rate()` / `histogram_quantile` — those
-stay empty or NaN after a single scrape that already contains the first
-increment. The process seeds zero `match_details` / logon series so the
-lines exist before the first session.
+GC is on-demand and sparse. The Valve APIs dashboard graphs
+`rate()` RPS and windowed mean / p95 latency **per method**, plus
+stacked statuses. Idle GC is 0 rps, not a lifetime counter staircase.
+GetLeagueInfoList is a Steam-board method (`source="dota2"`), not a
+separate product. Replay downloads carry `method="GetReplay"`.
+
+Per-attempt Valve bodies, HTTP / GC status, and match id live in
+Postgres (`steam_api_requests`, `steam_gc_requests`, `replay_requests`)
+when `settings.log_valve_requests` is true. Spec:
+[`request-logs.md`](./request-logs.md).
 
 ## Result classes
 
@@ -75,6 +81,8 @@ Jobs: `success`, `error` (`skipped` when the task swallows “no ready Steam
 API key”).
 
 Replay download: `success`, `already_stored`, `not_found`, `error`.
+
+Replay archive: `success`, `already`, `error`.
 
 Parser: `success`, `s3`, `parse`, `clickhouse`, `publish`.
 
@@ -96,9 +104,12 @@ counters; only the worker serves them.
 | `dota_jobs_total` | counter | `job`, `result` | graphile task outcomes |
 | `dota_job_duration_seconds` | histogram | `job` | |
 | `dota_jobs_in_progress` | gauge | `job` | currently running tasks |
-| `dota_replay_downloads_total` | counter | `result` | Valve CDN → S3 |
-| `dota_replay_download_duration_seconds` | histogram | | |
+| `dota_replay_downloads_total` | counter | `method`, `result` | Valve CDN → S3 (`method=GetReplay`) |
+| `dota_replay_download_duration_seconds` | histogram | `method` | |
 | `dota_replay_download_bytes_total` | counter | | stored object size |
+| `dota_replay_archives_total` | counter | `result` | parsed `.dem.bz2` copies to cold storage |
+| `dota_replay_archive_duration_seconds` | histogram | | per-object copy wall time |
+| `dota_replay_archive_bytes_total` | counter | | bytes of objects archived |
 | `dota_marketplace_http_requests_total` | counter | `store`, `method`, `result` | Dark Shopping HTTP |
 | `dota_marketplace_http_request_duration_seconds` | histogram | `store`, `method` | |
 | `dota_marketplace_orders_total` | counter | `store`, `kind`, `status` | local order finish (`success` / `failed` / `pending`) |
@@ -112,7 +123,9 @@ row counts under three `role=` labels. Process-local counters
 (Web API, jobs, downloads) stay on the role that increments them.
 
 Idle GC / walk zero series are seeded only on the role that owns that
-plane (`match-processing` / `historical`).
+plane (`match-processing` / `historical`). Web API duration histograms
+and replay download zeros are seeded on every worker so the Valve APIs
+dashboard has lines before the first call.
 
 Inventory gauges:
 
@@ -122,9 +135,10 @@ Inventory gauges:
 | `dota_accounts_ready` | `pool` | same predicate as replenish (`api_key` / `gc`) |
 | `dota_accounts_desired` | `pool` | `settings.desired_*` |
 | `dota_marketplace_orders` | `store`, `kind`, `status` | rows on `marketplace_orders` |
-| `dota_matches` | `phase` | `matches.phase` |
-| `dota_live_matches` | | `phase = live` (convenience) |
+| `dota_matches` | `status` | `matches.status` |
+| `dota_live_matches` | | `status = live` (convenience) |
 | `dota_replays` | `status` | `match_replays.status` |
+| `dota_replays_unarchived` | | `parsed` rows with `archived_at` null |
 | `dota_graphile_jobs` | `identifier`, `state` | `queued` / `running` / `scheduled` |
 | `dota_leagues` | `state` | `walkable` / `visited` / `exhausted` / `never_walked` |
 
@@ -153,9 +167,9 @@ Datasource uid `prometheus`. Dashboards:
 | File | What |
 |---|---|
 | `collector-overview.json` | live matches, job rates, ready vs desired accounts, parser inflight |
-| `upstream-apis.json` | Dota2 / Steam / GC success–fail and latency |
+| `upstream-apis.json` | Steam / GC / replay CDN: RPS, latency, statuses **per method** |
 | `accounts-marketplace.json` | inventory, purchases, marketplace HTTP |
-| `parser-replays.json` | download + parse + replay/match queues |
+| `parser-replays.json` | download + parse + archive + replay/match queues |
 | `historical-worker.json` | walk speed (matches/min, pages), league progress, historical jobs |
 
 Anonymous Grafana Viewer is on for local browse; admin is `admin`/`admin`.

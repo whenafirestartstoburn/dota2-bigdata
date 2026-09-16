@@ -2,7 +2,8 @@ package parse
 
 import (
 	"dota2-collector/parser/internal/model"
-	"dota2-collector/parser/internal/valve"
+
+	"github.com/dotabuff/manta/dota"
 )
 
 func valvePlayerSlot(valveSlot uint32) int8 {
@@ -19,15 +20,15 @@ func valvePlayerSlot(valveSlot uint32) int8 {
 	return int8(valveSlot)
 }
 
-func killTypeName(t valve.CDOTAMatchMetadata_Team_KillInfo_KillType) string {
+func killTypeName(t dota.CDOTAMatchMetadata_Team_KillInfo_KillType) string {
 	switch t {
-	case valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_TOWER:
+	case dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_TOWER:
 		return "tower"
-	case valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_BARRACKS:
+	case dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_BARRACKS:
 		return "barracks"
-	case valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_ROSHAN:
+	case dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_ROSHAN:
 		return "roshan"
-	case valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_MINIBOSS:
+	case dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_MINIBOSS:
 		return "miniboss"
 	default:
 		return "player"
@@ -41,7 +42,7 @@ func (s *Session) ensureMeta() {
 	s.out.Meta.Header = s.header(0, -1)
 }
 
-func (s *Session) applyMetadata(meta *valve.CDOTAMatchMetadata) {
+func (s *Session) applyMetadata(meta *dota.CDOTAMatchMetadata) {
 	if meta == nil {
 		return
 	}
@@ -80,7 +81,7 @@ func (s *Session) applyMetadata(meta *valve.CDOTAMatchMetadata) {
 	}
 }
 
-func (s *Session) addMetaTeam(team *valve.CDOTAMatchMetadata_Team) {
+func (s *Session) addMetaTeam(team *dota.CDOTAMatchMetadata_Team) {
 	dotaTeam := uint8(team.GetDotaTeam())
 	first := uint8(0)
 	if team.GetCmFirstPick() {
@@ -98,7 +99,7 @@ func (s *Session) addMetaTeam(team *valve.CDOTAMatchMetadata_Team) {
 	})
 }
 
-func (s *Session) addMetaPlayer(pl *valve.CDOTAMatchMetadata_Team_Player) {
+func (s *Session) addMetaPlayer(pl *dota.CDOTAMatchMetadata_Team_Player) {
 	valvePlayer := pl.GetPlayerSlot()
 	slot := valvePlayerSlot(valvePlayer)
 	s.out.MetaPlayers = append(s.out.MetaPlayers, model.MetaPlayer{
@@ -169,13 +170,13 @@ func (s *Session) addMetaPlayer(pl *valve.CDOTAMatchMetadata_Team_Player) {
 	}
 }
 
-func (s *Session) addMetaKill(dotaTeam uint32, kill *valve.CDOTAMatchMetadata_Team_KillInfo) {
+func (s *Session) addMetaKill(dotaTeam uint32, kill *dota.CDOTAMatchMetadata_Team_KillInfo) {
 	killers := kill.GetKillerPlayerSlot()
 	slots := make([]uint8, 0, len(killers))
 	var actor int8 = -1
 	if len(killers) > 0 {
 		actor = valvePlayerSlot(killers[0])
-	} else if kill.GetVictimPlayerSlot() != 0 || kill.GetKillType() == valve.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_PLAYER {
+	} else if kill.GetVictimPlayerSlot() != 0 || kill.GetKillType() == dota.CDOTAMatchMetadata_Team_KillInfo_KILL_TYPE_PLAYER {
 		actor = valvePlayerSlot(kill.GetVictimPlayerSlot())
 	}
 	for _, k := range killers {

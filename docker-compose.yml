@@ -140,6 +140,7 @@ services:
     ports:
       - "3004:8080"
     deploy:
+      replicas: ${WORKER_HISTORICAL_REPLICAS:-0}
       resources:
         limits:
           cpus: "0.30"
@@ -230,6 +231,7 @@ services:
         condition: service_healthy
       worker-historical:
         condition: service_healthy
+        required: false
       worker-match-processing:
         condition: service_healthy
       parser:
@@ -255,10 +257,15 @@ services:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     depends_on:
-      - worker-live
-      - worker-historical
-      - worker-match-processing
-      - parser
+      worker-live:
+        condition: service_started
+      worker-historical:
+        condition: service_started
+        required: false
+      worker-match-processing:
+        condition: service_started
+      parser:
+        condition: service_started
     deploy:
       resources:
         limits:

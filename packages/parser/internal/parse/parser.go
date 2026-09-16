@@ -2,22 +2,20 @@ package parse
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"dota2-collector/parser/internal/model"
-	"dota2-collector/parser/internal/replay"
-	"dota2-collector/parser/internal/valve"
 	"dota2-collector/parser/internal/version"
+
+	"github.com/dotabuff/manta"
+	"github.com/dotabuff/manta/dota"
 )
 
-const intervalSeconds = 1
+const intervalSeconds = 2
 
-// Job is enough match metadata to stamp ClickHouse partitions.
 type Job struct {
 	MatchID   uint64
 	StartTime time.Time
@@ -51,8 +49,7 @@ type wardWatch struct {
 
 type Session struct {
 	job    Job
-	runID  uint64
-	parser *replay.Session
+	parser *manta.Parser
 
 	out  *model.Result
 	sink Sink
@@ -65,10 +62,10 @@ type Session struct {
 	serverTick   uint32
 	gameState    int32
 
-	playerResource *replay.Entity
-	gamerules      *replay.Entity
-	radiantData    *replay.Entity
-	direData       *replay.Entity
+	playerResource *manta.Entity
+	gamerules      *manta.Entity
+	radiantData    *manta.Entity
+	direData       *manta.Entity
 	players        [24]*player
 	playerCount    int
 	playersReady   bool
@@ -91,18 +88,6 @@ type Session struct {
 	raxRadiant uint16
 	raxDire    uint16
 	raxSeen    bool
-}
-
-func newRunID() uint64 {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return uint64(time.Now().UnixNano())
-	}
-	id := binary.LittleEndian.Uint64(b[:])
-	if id == 0 {
-		return 1
-	}
-	return id
 }
 
 // ParseReader consumes a (possibly compressed) demo stream.
@@ -133,7 +118,7 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 	if job.StartTime.IsZero() {
 		job.StartTime = time.Unix(0, 0).UTC()
 	}
-	p, err := replay.New(r)
+	p, err := manta.NewStreamParser(r)
 	if err != nil {
 		return nil, fmt.Errorf("demo: %w", err)
 	}
@@ -143,7 +128,6 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 	}
 	s := &Session{
 		job:           job,
-		runID:         newRunID(),
 		parser:        p,
 		sink:          sink,
 		tickInterval:  1.0 / 30.0,
@@ -159,7 +143,6 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 		out: &model.Result{
 			MatchID:       job.MatchID,
 			StartTime:     job.StartTime,
-			ParseRunID:    0,
 			ParserVersion: version.Schema,
 			CombatLog:     make([]model.CombatLog, 0, combatCap),
 			Intervals:     make([]model.Interval, 0, intervalCap),
@@ -177,7 +160,6 @@ func parseStream(ctx context.Context, job Job, r io.Reader, sink Sink) (*model.R
 			Objectives:    make([]model.Objective, 0, 32),
 		},
 	}
-	s.out.ParseRunID = s.runID
 	s.wire()
 	if err := p.Start(); err != nil {
 		if ctx.Err() != nil {
@@ -202,7 +184,6 @@ func (s *Session) header(clock int32, slot int8) model.Header {
 		Slot:          slot,
 		AccountID:     s.accountForSlot(slot),
 		ParserVersion: version.Schema,
-		ParseRunID:    s.runID,
 	}
 }
 
@@ -218,46 +199,47 @@ func (s *Session) clock() int32 {
 }
 
 func (s *Session) wire() {
-	s.parser.Hooks.ServerInfo = func(m *valve.CSVCMsg_ServerInfo) error {
+	p := s.parser
+	p.Callbacks.OnCSVCMsg_ServerInfo(func(m *dota.CSVCMsg_ServerInfo) error {
 		if m.GetTickInterval() > 0 {
 			s.tickInterval = m.GetTickInterval()
 		}
 		return nil
-	}
-	s.parser.Hooks.Tick = func(m *valve.CNETMsg_Tick) error {
+	})
+	p.Callbacks.OnCNETMsg_Tick(func(m *dota.CNETMsg_Tick) error {
 		s.serverTick = m.GetTick()
 		return nil
-	}
-	s.parser.OnEntity(s.onEntity)
-	s.parser.Hooks.PacketEntities = func(_ *valve.CSVCMsg_PacketEntities) error {
+	})
+	p.OnEntity(s.onEntity)
+	p.Callbacks.OnCSVCMsg_PacketEntities(func(_ *dota.CSVCMsg_PacketEntities) error {
 		return s.tickWorld()
-	}
-	s.parser.Hooks.CombatLog = s.onCombat
-	s.parser.Hooks.UnitOrders = s.onOrder
-	s.parser.Hooks.LocationPing = s.onLocationPing
-	s.parser.Hooks.Minimap = s.onMinimap
-	s.parser.Hooks.ChatEvent = s.onChatEvent
-	s.parser.Hooks.ChatMessage = s.onChatMessage
-	s.parser.Hooks.ChatWheel = s.onChatWheel
-	s.parser.Hooks.SayText2 = s.onSayText2
-	s.parser.Hooks.GamerulesState = func(m *valve.CDOTAUserMsg_GamerulesStateChanged) error {
+	})
+	p.Callbacks.OnCMsgDOTACombatLogEntry(s.onCombat)
+	p.Callbacks.OnCDOTAUserMsg_SpectatorPlayerUnitOrders(s.onOrder)
+	p.Callbacks.OnCDOTAUserMsg_LocationPing(s.onLocationPing)
+	p.Callbacks.OnCDOTAUserMsg_MinimapEvent(s.onMinimap)
+	p.Callbacks.OnCDOTAUserMsg_ChatEvent(s.onChatEvent)
+	p.Callbacks.OnCDOTAUserMsg_ChatMessage(s.onChatMessage)
+	p.Callbacks.OnCDOTAUserMsg_ChatWheel(s.onChatWheel)
+	p.Callbacks.OnCUserMessageSayText2(s.onSayText2)
+	p.Callbacks.OnCDOTAUserMsg_GamerulesStateChanged(func(m *dota.CDOTAUserMsg_GamerulesStateChanged) error {
 		s.gameState = int32(m.GetState())
 		return nil
-	}
-	s.parser.Hooks.NeutralFound = s.onNeutralFound
-	s.parser.Hooks.FileInfo = s.onFileInfo
-	s.parser.Hooks.Metadata = s.onMetadata
-	s.parser.Hooks.UserMessage = s.onUserMessage
+	})
+	p.Callbacks.OnCDOTAUserMsg_FoundNeutralItem(s.onNeutralFound)
+	p.Callbacks.OnCDemoFileInfo(s.onFileInfo)
+	p.Callbacks.OnCDOTAMatchMetadataFile(s.onMetadata)
+	s.wireAlerts()
 }
 
-func (s *Session) onEntity(e *replay.Entity, op replay.Op) error {
-	if e == nil || e.Discarded() {
+func (s *Session) onEntity(e *manta.Entity, op manta.EntityOp) error {
+	if e == nil {
 		return nil
 	}
 	class := e.GetClassName()
 	switch {
 	case class == "CDOTA_PlayerResource":
-		if op.Has(replay.OpDeleted) {
+		if op.Flag(manta.EntityOpDeleted) {
 			if s.playerResource == e {
 				s.playerResource = nil
 			}
@@ -265,15 +247,15 @@ func (s *Session) onEntity(e *replay.Entity, op replay.Op) error {
 		}
 		s.playerResource = e
 	case class == "CDOTAGamerulesProxy" || class == "CDOTA_GamerulesProxy":
-		if !op.Has(replay.OpDeleted) {
+		if !op.Flag(manta.EntityOpDeleted) {
 			s.gamerules = e
 		}
 	case class == "CDOTA_DataRadiant":
-		if !op.Has(replay.OpDeleted) {
+		if !op.Flag(manta.EntityOpDeleted) {
 			s.radiantData = e
 		}
 	case class == "CDOTA_DataDire":
-		if !op.Has(replay.OpDeleted) {
+		if !op.Flag(manta.EntityOpDeleted) {
 			s.direData = e
 		}
 	case strings.Contains(class, "Observer_Ward") || strings.HasSuffix(class, "_ObserverWard") ||
@@ -564,7 +546,7 @@ func (s *Session) rememberHero(pl *player) {
 	}
 }
 
-func (s *Session) dataTeam(team int32) *replay.Entity {
+func (s *Session) dataTeam(team int32) *manta.Entity {
 	if team == 2 {
 		return s.radiantData
 	}
@@ -574,7 +556,7 @@ func (s *Session) dataTeam(team int32) *replay.Entity {
 	return nil
 }
 
-func (s *Session) onFileInfo(m *valve.CDemoFileInfo) error {
+func (s *Session) onFileInfo(m *dota.CDemoFileInfo) error {
 	if m == nil {
 		return nil
 	}
@@ -599,7 +581,7 @@ func (s *Session) onFileInfo(m *valve.CDemoFileInfo) error {
 	return nil
 }
 
-func (s *Session) onMetadata(m *valve.CDOTAMatchMetadataFile) error {
+func (s *Session) onMetadata(m *dota.CDOTAMatchMetadataFile) error {
 	if m == nil {
 		return nil
 	}
@@ -609,7 +591,7 @@ func (s *Session) onMetadata(m *valve.CDOTAMatchMetadataFile) error {
 	return nil
 }
 
-func (s *Session) mergeFileInfoDraft(picks []*valve.CGameInfo_CDotaGameInfo_CHeroSelectEvent) {
+func (s *Session) mergeFileInfoDraft(picks []*dota.CGameInfo_CDotaGameInfo_CHeroSelectEvent) {
 	if len(picks) == 0 {
 		return
 	}
@@ -628,7 +610,6 @@ func (s *Session) mergeFileInfoDraft(picks []*valve.CGameInfo_CDotaGameInfo_CHer
 			HeroID: int32(pb.GetHeroId()),
 			Team:   team,
 			Ord:    uint16(i),
-			Clock:  s.clock(),
 		}
 		s.out.PickBans = append(s.out.PickBans, row)
 		if len(s.out.Draft) == 0 {

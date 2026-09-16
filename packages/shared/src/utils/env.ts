@@ -23,6 +23,16 @@ export const baseEnv = z.object({
 		.string()
 		.default('false')
 		.transform((value) => value !== 'false'),
+	S3_ARCHIVE_BUCKET: z.string().default(''),
+	S3_ARCHIVE_PREFIX: z.string().default('cold/'),
+	S3_ARCHIVE_STORAGE_CLASS: z.string().default(''),
+	S3_ARCHIVE_ENDPOINT: z.preprocess(
+		(value) => (value === '' ? undefined : value),
+		z.string().optional(),
+	),
+	S3_ARCHIVE_REGION: z.string().default(''),
+	S3_ARCHIVE_ACCESS_KEY: z.string().default(''),
+	S3_ARCHIVE_SECRET_KEY: z.string().default(''),
 	STEAM_SEED_LOGIN: z.string().default(''),
 	STEAM_SEED_PASSWORD: z.string().default(''),
 	STEAM_SEED_API_KEY: z.string().default(''),

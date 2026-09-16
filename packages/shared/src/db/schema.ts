@@ -6,11 +6,13 @@ import {
 	bigserial,
 	boolean,
 	check,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
+	primaryKey,
 	real,
 	smallint,
 	text,
@@ -32,7 +34,7 @@ export const resource_status = pgEnum('resource_status', [
 ])
 export const proxy_kind = pgEnum('proxy_kind', ['http', 'socks5'])
 export const proxy_purpose = pgEnum('proxy_purpose', ['api', 'gc', 'both'])
-export const match_phase = pgEnum('match_phase', [
+export const match_status = pgEnum('match_status', [
 	'discovered',
 	'live',
 	'awaiting_details',
@@ -47,16 +49,6 @@ export const match_phase = pgEnum('match_phase', [
 ])
 export const match_source = pgEnum('match_source', ['live', 'historical'])
 export const replay_priority = pgEnum('replay_priority', ['live', 'historical'])
-export const replay_status = pgEnum('replay_status', [
-	'pending',
-	'awaiting_gc',
-	'downloading',
-	'stored',
-	'parsing',
-	'parsed',
-	'unavailable',
-	'failed',
-])
 export const ingest_run_status = pgEnum('ingest_run_status', [
 	'queued',
 	'running',
@@ -77,6 +69,15 @@ export const resource_kind = pgEnum('resource_kind', [
 	'proxy',
 	'gc_account',
 	'api_key',
+])
+export const replay_status = pgEnum('replay_status', [
+	'pending',
+	'downloading',
+	'stored',
+	'parsing',
+	'parsed',
+	'unavailable',
+	'failed',
 ])
 
 export const abilities = pgTable(
@@ -272,8 +273,123 @@ export const leagues = pgTable(
 			'btree',
 			table.most_recent_activity.desc().nullsFirst(),
 		),
+		index('leagues_history_walk_idx').using(
+			'btree',
+			table.status.asc().nullsLast(),
+			table.history_exhausted.asc().nullsLast(),
+			table.history_checked_at.asc().nullsLast(),
+		),
 		index('leagues_status_idx').using('btree', table.status.asc().nullsLast()),
 		unique('leagues_league_id_key').on(table.league_id),
+	],
+)
+
+export const live_match_ticks = pgTable(
+	'live_match_ticks',
+	{
+		id: bigserial({ mode: 'number' }).primaryKey(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		match_id: bigint({ mode: 'number' })
+			.notNull()
+			.references(() => matches.match_id),
+		captured_at: timestamp({ withTimezone: true }).notNull(),
+		league_id: integer().default(0).notNull(),
+		duration: real().default(0).notNull(),
+		radiant_score: integer().default(0).notNull(),
+		dire_score: integer().default(0).notNull(),
+		spectators: integer().default(0).notNull(),
+		tower_state_radiant: integer().default(0).notNull(),
+		tower_state_dire: integer().default(0).notNull(),
+		barracks_state_radiant: integer().default(0).notNull(),
+		barracks_state_dire: integer().default(0).notNull(),
+		roshan_respawn_timer: integer().default(0).notNull(),
+		series_type: smallint().default(0).notNull(),
+		radiant_series_wins: smallint().default(0).notNull(),
+		dire_series_wins: smallint().default(0).notNull(),
+		stream_delay_s: integer().default(0).notNull(),
+		source: text().notNull(),
+		lobby_id: bigint({ mode: 'number' }).default(0).notNull(),
+		game_number: smallint().default(0).notNull(),
+		league_series_id: integer().default(0).notNull(),
+		league_game_id: integer().default(0).notNull(),
+		league_tier: smallint().default(0).notNull(),
+		game_state: smallint().default(0).notNull(),
+		server_steam_id: bigint({ mode: 'number' }).default(0).notNull(),
+	},
+	(table) => [
+		index('live_match_ticks_captured_idx').using(
+			'btree',
+			table.captured_at.desc().nullsFirst(),
+		),
+		index('live_match_ticks_match_captured_idx').using(
+			'btree',
+			table.match_id.asc().nullsLast(),
+			table.captured_at.desc().nullsFirst(),
+		),
+		unique('live_match_ticks_match_id_captured_at_source_key').on(
+			table.match_id,
+			table.captured_at,
+			table.source,
+		),
+	],
+)
+
+export const live_player_ticks = pgTable(
+	'live_player_ticks',
+	{
+		id: bigserial({ mode: 'number' }).primaryKey(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		match_id: bigint({ mode: 'number' })
+			.notNull()
+			.references(() => matches.match_id),
+		captured_at: timestamp({ withTimezone: true }).notNull(),
+		player_slot: smallint().notNull(),
+		account_id: bigint({ mode: 'number' }).default(0).notNull(),
+		hero_id: integer().default(0).notNull(),
+		kills: integer().default(0).notNull(),
+		deaths: integer().default(0).notNull(),
+		assists: integer().default(0).notNull(),
+		last_hits: integer().default(0).notNull(),
+		denies: integer().default(0).notNull(),
+		gold: integer().default(0).notNull(),
+		net_worth: integer().default(0).notNull(),
+		level: smallint().default(0).notNull(),
+		gold_per_min: integer().default(0).notNull(),
+		xp_per_min: integer().default(0).notNull(),
+		x: real().default(0).notNull(),
+		y: real().default(0).notNull(),
+		source: text().notNull(),
+		item0: integer().default(0).notNull(),
+		item1: integer().default(0).notNull(),
+		item2: integer().default(0).notNull(),
+		item3: integer().default(0).notNull(),
+		item4: integer().default(0).notNull(),
+		item5: integer().default(0).notNull(),
+		item6: integer().default(0).notNull(),
+		item7: integer().default(0).notNull(),
+		item8: integer().default(0).notNull(),
+		ultimate_state: smallint().default(0).notNull(),
+		ultimate_cooldown: integer().default(0).notNull(),
+		respawn_timer: integer().default(0).notNull(),
+	},
+	(table) => [
+		index('live_player_ticks_captured_idx').using(
+			'btree',
+			table.captured_at.desc().nullsFirst(),
+		),
+		index('live_player_ticks_match_captured_idx').using(
+			'btree',
+			table.match_id.asc().nullsLast(),
+			table.captured_at.desc().nullsFirst(),
+		),
+		unique('live_player_ticks_match_id_captured_at_player_slot_source_key').on(
+			table.match_id,
+			table.captured_at,
+			table.player_slot,
+			table.source,
+		),
 	],
 )
 
@@ -621,6 +737,10 @@ export const match_players = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_players_account_idx').using(
+			'btree',
+			table.account_id.asc().nullsLast(),
+		),
 		unique('match_players_match_id_player_slot_key').on(
 			table.match_id,
 			table.player_slot,
@@ -660,9 +780,28 @@ export const match_replays = pgTable(
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
-		parse_run_id: bigint({ mode: 'number' }),
+		archived_at: timestamp({ withTimezone: true }),
 	},
 	(table) => [
+		index('match_replays_claim_idx')
+			.using(
+				'btree',
+				table.priority.asc().nullsLast(),
+				table.stored_at.asc().nullsLast(),
+				table.id.asc().nullsLast(),
+			)
+			.where(
+				sql`((status = 'stored'::replay_status) AND (s3_key IS NOT NULL) AND (s3_key <> ''::text))`,
+			),
+		index('match_replays_parsed_unarchived_idx')
+			.using(
+				'btree',
+				table.parsed_at.asc().nullsLast(),
+				table.id.asc().nullsLast(),
+			)
+			.where(
+				sql`((status = 'parsed'::replay_status) AND (archived_at IS NULL))`,
+			),
 		index('match_replays_status_idx').using(
 			'btree',
 			table.status.asc().nullsLast(),
@@ -701,7 +840,7 @@ export const matches = pgTable(
 		}),
 		league_node_id: integer(),
 		stream_delay_s: integer(),
-		phase: match_phase().default('discovered').notNull(),
+		status: match_status().default('discovered').notNull(),
 		source: match_source().default('historical').notNull(),
 		live_seen_at: timestamp({ withTimezone: true }),
 		live_disappeared_at: timestamp({ withTimezone: true }),
@@ -727,18 +866,6 @@ export const matches = pgTable(
 		patch: text().references(() => patches.patch, { onDelete: 'set null' }),
 		last_error: text(),
 		last_error_at: timestamp({ withTimezone: true }),
-		last_api_key_id: bigint({ mode: 'number' }).references(
-			() => steam_api_keys.id,
-			{ onDelete: 'set null' },
-		),
-		last_steam_account_id: bigint({ mode: 'number' }).references(
-			() => steam_accounts.id,
-			{ onDelete: 'set null' },
-		),
-		last_proxy_id: bigint({ mode: 'number' }).references(() => proxies.id, {
-			onDelete: 'set null',
-		}),
-		attempts: integer().default(0).notNull(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		lobby_id: bigint({ mode: 'number' }),
@@ -762,7 +889,6 @@ export const matches = pgTable(
 		league_tier: integer(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
 		ingest_sources: text().array().default([]).notNull(),
-		waiting_for: text(),
 		last_error_kind: text(),
 		server_steam_id: bigint({ mode: 'number' }),
 		live_league_missed_polls: integer().default(0).notNull(),
@@ -774,52 +900,64 @@ export const matches = pgTable(
 		seq_fetched_at: timestamp({ withTimezone: true }),
 		last_realtime_at: timestamp({ withTimezone: true }),
 		live_duration_max: real().default(0).notNull(),
+		attempts: integer().default(0).notNull(),
+		next_attempt_at: timestamp({ withTimezone: true }),
 	},
 	(table) => [
+		index('matches_details_pending_idx')
+			.using(
+				'btree',
+				table.source.asc().nullsLast(),
+				table.start_time.desc().nullsFirst(),
+			)
+			.where(
+				sql`((details_fetched_at IS NULL) AND (status = ANY (ARRAY['discovered'::match_status, 'awaiting_details'::match_status])))`,
+			),
 		index('matches_history_poll_idx')
 			.using(
 				'btree',
 				table.league_id.asc().nullsLast(),
 				table.history_next_poll_at.asc().nullsLast(),
 			)
-			.where(sql`(phase = 'awaiting_history'::match_phase)`),
+			.where(
+				sql`((history_next_poll_at IS NOT NULL) AND (match_seq_num IS NULL))`,
+			),
 		index('matches_league_idx').using(
 			'btree',
 			table.league_id.asc().nullsLast(),
 		),
-		index('matches_phase_idx').using('btree', table.phase.asc().nullsLast()),
+		index('matches_patch_idx')
+			.using('btree', table.patch.asc().nullsLast())
+			.where(sql`(patch IS NOT NULL)`),
 		index('matches_realtime_idx')
 			.using('btree', table.last_realtime_at.asc().nullsLast())
 			.where(
-				sql`((phase = 'live'::match_phase) AND (server_steam_id IS NOT NULL))`,
+				sql`((status = 'live'::match_status) AND (server_steam_id IS NOT NULL))`,
 			),
 		index('matches_replay_available_idx')
 			.using('btree', table.replay_available_at.asc().nullsLast())
 			.where(
-				sql`(phase = ANY (ARRAY['details_ready'::match_phase, 'awaiting_replay'::match_phase]))`,
+				sql`(status = ANY (ARRAY['details_ready'::match_status, 'awaiting_replay'::match_status]))`,
 			),
 		index('matches_seq_idx').using(
 			'btree',
 			table.match_seq_num.asc().nullsLast(),
 		),
-		index('matches_source_phase_idx').using(
+		index('matches_source_status_idx').using(
 			'btree',
 			table.source.asc().nullsLast(),
-			table.phase.asc().nullsLast(),
+			table.status.asc().nullsLast(),
 		),
 		index('matches_start_time_idx').using(
 			'btree',
 			table.league_id.asc().nullsLast(),
 			table.start_time.desc().nullsFirst(),
 		),
+		index('matches_status_idx').using('btree', table.status.asc().nullsLast()),
 		unique('matches_match_id_key').on(table.match_id),
 		check(
 			'matches_last_error_kind_check',
 			sql`((last_error_kind IS NULL) OR (last_error_kind = ANY (ARRAY['network'::text, 'rate_limit'::text, 'auth'::text, 'not_ready'::text, 'unavailable'::text, 'history_timeout'::text, 'not_started'::text, 'other'::text])))`,
-		),
-		check(
-			'matches_waiting_for_check',
-			sql`((waiting_for IS NULL) OR (waiting_for = ANY (ARRAY['live_end'::text, 'history'::text, 'seq'::text, 'gc'::text, 'replay'::text, 'parse'::text])))`,
 		),
 	],
 )
@@ -833,7 +971,13 @@ export const patches = pgTable(
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
-	(table) => [unique('patches_patch_key').on(table.patch)],
+	(table) => [
+		index('patches_released_idx').using(
+			'btree',
+			table.released_at.desc().nullsFirst(),
+		),
+		unique('patches_patch_key').on(table.patch),
+	],
 )
 
 export const permanent_buffs = pgTable(
@@ -864,7 +1008,12 @@ export const players = pgTable(
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
-	(table) => [unique('players_account_id_key').on(table.account_id)],
+	(table) => [
+		index('players_team_idx')
+			.using('btree', table.current_team_id.asc().nullsLast())
+			.where(sql`(current_team_id IS NOT NULL)`),
+		unique('players_account_id_key').on(table.account_id),
+	],
 )
 
 export const proxies = pgTable(
@@ -884,7 +1033,14 @@ export const proxies = pgTable(
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		retest_count: integer().default(0).notNull(),
 	},
-	(table) => [unique('proxies_url_key').on(table.url)],
+	(table) => [
+		index('proxies_pick_idx').using(
+			'btree',
+			table.purpose.asc().nullsLast(),
+			table.status.asc().nullsLast(),
+		),
+		unique('proxies_url_key').on(table.url),
+	],
 )
 
 export const regions = pgTable(
@@ -897,6 +1053,31 @@ export const regions = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [unique('regions_region_key').on(table.region)],
+)
+
+export const replay_requests = pgTable(
+	'replay_requests',
+	{
+		id: bigint({ mode: 'number' }).generatedByDefaultAsIdentity(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		match_id: bigint({ mode: 'number' }),
+		method_name: text().notNull(),
+		response_time: doublePrecision(),
+		response_status: text(),
+		response_size_kb: doublePrecision(),
+		error_response: text(),
+	},
+	(table) => [
+		primaryKey({
+			columns: [table.id, table.created_at],
+			name: 'replay_requests_pkey',
+		}),
+		check(
+			'replay_requests_error_len',
+			sql`((error_response IS NULL) OR (char_length(error_response) <= 1000))`,
+		),
+	],
 )
 
 export const resource_attempts = pgTable(
@@ -993,7 +1174,16 @@ export const steam_accounts = pgTable(
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		retest_count: integer().default(0).notNull(),
 	},
-	(table) => [unique('steam_accounts_login_key').on(table.login)],
+	(table) => [
+		index('steam_accounts_proxy_idx')
+			.using('btree', table.proxy_id.asc().nullsLast())
+			.where(sql`(proxy_id IS NOT NULL)`),
+		index('steam_accounts_status_idx').using(
+			'btree',
+			table.status.asc().nullsLast(),
+		),
+		unique('steam_accounts_login_key').on(table.login),
+	],
 )
 
 export const steam_api_keys = pgTable(
@@ -1016,7 +1206,75 @@ export const steam_api_keys = pgTable(
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		retest_count: integer().default(0).notNull(),
 	},
-	(table) => [unique('steam_api_keys_api_key_key').on(table.api_key)],
+	(table) => [
+		index('steam_api_keys_account_idx').using(
+			'btree',
+			table.account_id.asc().nullsLast(),
+		),
+		index('steam_api_keys_pick_idx')
+			.using('btree', table.last_used_at.asc().nullsFirst())
+			.where(
+				sql`(status = ANY (ARRAY['ready'::resource_status, 'active'::resource_status, 'rate_limited'::resource_status]))`,
+			),
+		index('steam_api_keys_proxy_idx')
+			.using('btree', table.proxy_id.asc().nullsLast())
+			.where(sql`(proxy_id IS NOT NULL)`),
+		unique('steam_api_keys_api_key_key').on(table.api_key),
+	],
+)
+
+export const steam_api_requests = pgTable(
+	'steam_api_requests',
+	{
+		id: bigint({ mode: 'number' }).generatedByDefaultAsIdentity(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		match_id: bigint({ mode: 'number' }),
+		method_name: text().notNull(),
+		response_time: doublePrecision(),
+		response_status: text(),
+		response_size_kb: doublePrecision(),
+		error_response: text(),
+		steam_api_key_id: bigint({ mode: 'number' }),
+		steam_account_id: bigint({ mode: 'number' }),
+	},
+	(table) => [
+		primaryKey({
+			columns: [table.id, table.created_at],
+			name: 'steam_api_requests_pkey',
+		}),
+		check(
+			'steam_api_requests_error_len',
+			sql`((error_response IS NULL) OR (char_length(error_response) <= 1000))`,
+		),
+	],
+)
+
+export const steam_gc_requests = pgTable(
+	'steam_gc_requests',
+	{
+		id: bigint({ mode: 'number' }).generatedByDefaultAsIdentity(),
+		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
+		match_id: bigint({ mode: 'number' }),
+		method_name: text().notNull(),
+		response_time: doublePrecision(),
+		response_status: text(),
+		response_size_kb: doublePrecision(),
+		error_response: text(),
+		steam_api_key_id: bigint({ mode: 'number' }),
+		steam_account_id: bigint({ mode: 'number' }),
+	},
+	(table) => [
+		primaryKey({
+			columns: [table.id, table.created_at],
+			name: 'steam_gc_requests_pkey',
+		}),
+		check(
+			'steam_gc_requests_error_len',
+			sql`((error_response IS NULL) OR (char_length(error_response) <= 1000))`,
+		),
+	],
 )
 
 export const teams = pgTable(

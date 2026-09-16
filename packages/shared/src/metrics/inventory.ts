@@ -13,15 +13,15 @@ import {
 	leagues,
 	liveMatches,
 	marketplaceOrderRows,
-	matchesByPhase,
+	matchesByStatus,
 	replaysByStatus,
+	replaysUnarchived,
 	resources,
 } from './observe'
 
 type CountRow = {
 	kind?: unknown
 	status?: unknown
-	phase?: unknown
 	store?: unknown
 	identifier?: unknown
 	state?: unknown
@@ -37,9 +37,10 @@ export async function collectInventory(): Promise<void> {
 	accountsReady.reset()
 	accountsDesired.reset()
 	marketplaceOrderRows.reset()
-	matchesByPhase.reset()
+	matchesByStatus.reset()
 	liveMatches.reset()
 	replaysByStatus.reset()
+	replaysUnarchived.reset()
 	graphileJobs.reset()
 	leagues.reset()
 
@@ -48,6 +49,7 @@ export async function collectInventory(): Promise<void> {
 			resourceRows,
 			matchRows,
 			replayRows,
+			unarchivedRows,
 			orderRows,
 			readyKeys,
 			readyGc,
@@ -72,14 +74,19 @@ export async function collectInventory(): Promise<void> {
 				GROUP BY status
 			`),
 			db.execute(sql`
-				SELECT phase::text AS phase, count(*)::int AS n
+				SELECT status::text AS status, count(*)::int AS n
 				FROM matches
-				GROUP BY phase
+				GROUP BY status
 			`),
 			db.execute(sql`
 				SELECT status::text AS status, count(*)::int AS n
 				FROM match_replays
 				GROUP BY status
+			`),
+			db.execute(sql`
+				SELECT count(*)::int AS n
+				FROM match_replays
+				WHERE status = 'parsed' AND archived_at IS NULL
 			`),
 			db.execute(sql`
 				SELECT store::text AS store, kind::text AS kind,
@@ -109,11 +116,11 @@ export async function collectInventory(): Promise<void> {
 			resources.set({ kind, status }, asNumber(row.n) ?? 0)
 		}
 		for (const row of matchRows as CountRow[]) {
-			const phase = asString(row.phase)
-			if (phase == null) continue
+			const status = asString(row.status)
+			if (status == null) continue
 			const n = asNumber(row.n) ?? 0
-			matchesByPhase.set({ phase }, n)
-			if (phase === 'live') liveMatches.setValue(n)
+			matchesByStatus.set({ status }, n)
+			if (status === 'live') liveMatches.setValue(n)
 		}
 		if (liveMatches.get() === 0) liveMatches.setValue(0)
 		for (const row of replayRows as CountRow[]) {
@@ -121,6 +128,9 @@ export async function collectInventory(): Promise<void> {
 			if (status == null) continue
 			replaysByStatus.set({ status }, asNumber(row.n) ?? 0)
 		}
+		replaysUnarchived.setValue(
+			asNumber((unarchivedRows as CountRow[])[0]?.n) ?? 0,
+		)
 		for (const row of orderRows as CountRow[]) {
 			const store = asString(row.store)
 			const kind = asString(row.kind)

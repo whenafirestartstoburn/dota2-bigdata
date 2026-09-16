@@ -4,6 +4,10 @@ import {
 	REPLAY_STATE,
 } from '@app/shared/src/gc/protobuf'
 import {
+	adoptExistingReplayObject,
+	type ReplayObjectRow,
+} from '@app/shared/src/jobs/adopt-replay-object'
+import {
 	enqueueDownloadReplay,
 	enqueueFetchMatchDetails,
 	matchOrigin,
@@ -25,7 +29,8 @@ import {
 	copyReplayLocatorFromMatch,
 	ensureReplayRow,
 	getReplay,
-	markMatchReplayPhase,
+	markMatchReplayStatus,
+	replayDownloadShouldKeepStatus,
 	updateReplay,
 } from '@app/shared/src/store/replays'
 import { db } from '@app/shared/src/utils/db'
@@ -46,6 +51,9 @@ export async function runFetchMatchDetails(input: {
 	const existingUrl = asString(replay?.source_url)
 
 	if (cluster != null && salt != null && existingUrl != null) {
+		if (await skipDownloadIfPresent(input.matchId, replay)) {
+			return { saved: 0, url: existingUrl }
+		}
 		if (await markUnpublishedReplayCdn(input.matchId, cluster, existingUrl)) {
 			return { saved: 0, url: existingUrl }
 		}
@@ -79,7 +87,7 @@ export async function runFetchMatchDetails(input: {
 			proxyId: locator.proxyId,
 			error: message,
 		})
-		await markMatchReplayPhase(input.matchId, 'replay_unavailable', {
+		await markMatchReplayStatus(input.matchId, 'replay_unavailable', {
 			error: message,
 			errorKind: ERROR_KIND.unavailable,
 		})
@@ -143,6 +151,14 @@ export async function runFetchMatchDetails(input: {
 		steamAccountId: locator.accountId,
 		proxyId: locator.proxyId,
 	})
+	const stored = await getReplay(input.matchId)
+	if (await skipDownloadIfPresent(input.matchId, stored)) {
+		logger.info(
+			{ matchId: input.matchId, url },
+			'GC match details; replay already in object store',
+		)
+		return { saved: 1, url }
+	}
 	if (await markUnpublishedReplayCdn(input.matchId, cluster, url)) {
 		return { saved: 1, url }
 	}
@@ -153,6 +169,24 @@ export async function runFetchMatchDetails(input: {
 	)
 	logger.info({ matchId: input.matchId, url }, 'GC match details + replay url')
 	return { saved: 1, url }
+}
+
+async function skipDownloadIfPresent(
+	matchId: number,
+	replay: ReplayObjectRow | null,
+): Promise<boolean> {
+	if (replayDownloadShouldKeepStatus(asString(replay?.status))) return true
+	const adopted = await adoptExistingReplayObject(matchId, replay)
+	if (adopted == null) return false
+	logger.info(
+		{
+			matchId,
+			key: adopted.hit.key,
+			archived: adopted.hit.archived,
+		},
+		'replay already in object store',
+	)
+	return true
 }
 
 async function markUnpublishedReplayCdn(
@@ -167,7 +201,7 @@ async function markUnpublishedReplayCdn(
 		error: reason,
 		nextAttemptAt: null,
 	})
-	await markMatchReplayPhase(matchId, 'replay_unavailable', {
+	await markMatchReplayStatus(matchId, 'replay_unavailable', {
 		error: reason,
 		errorKind: ERROR_KIND.unavailable,
 	})

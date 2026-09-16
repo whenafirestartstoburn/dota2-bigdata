@@ -1,5 +1,5 @@
+import { fetchCatalogRaw } from '#src/jobs/catalog-constants'
 import {
-	type CatalogRaw,
 	countHeroes,
 	parseCatalogs,
 	persistCatalogs,
@@ -7,67 +7,7 @@ import {
 import { errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
 
-const RESOURCES = [
-	'heroes',
-	'items',
-	'abilities',
-	'ability_ids',
-	'hero_abilities',
-	'patch',
-	'game_mode',
-	'lobby_type',
-	'region',
-	'cluster',
-	'permanent_buffs',
-	'xp_level',
-] as const
-
-type Resource = (typeof RESOURCES)[number]
-
-const SOURCES = [
-	'https://raw.githubusercontent.com/odota/dotaconstants/master/build',
-	'https://api.opendota.com/api/constants',
-] as const
-
-async function fetchJson(url: string): Promise<unknown> {
-	const response = await fetch(url, { signal: AbortSignal.timeout(45_000) })
-	if (!response.ok) {
-		throw new Error(`catalog HTTP ${response.status} ${url}`)
-	}
-	return response.json()
-}
-
-async function fetchResource(
-	base: string,
-	resource: Resource,
-): Promise<unknown> {
-	const suffix = base.includes('opendota.com')
-		? `/${resource}`
-		: `/${resource}.json`
-	return fetchJson(`${base}${suffix}`)
-}
-
-export async function fetchCatalogRaw(): Promise<CatalogRaw> {
-	let lastError: unknown
-	for (const base of SOURCES) {
-		try {
-			const raw = {} as Record<Resource, unknown>
-			for (const resource of RESOURCES) {
-				raw[resource] = await fetchResource(base, resource)
-			}
-			return raw
-		} catch (error) {
-			lastError = error
-			logger.warn(
-				{ err: errorMessage(error), base },
-				'catalog source failed, trying next',
-			)
-		}
-	}
-	throw new Error(
-		`catalog fetch failed: ${errorMessage(lastError ?? 'no source')}`,
-	)
-}
+export { fetchCatalogRaw } from '#src/jobs/catalog-constants'
 
 export async function runSyncCatalogs(): Promise<{
 	heroes: number

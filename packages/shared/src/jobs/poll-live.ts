@@ -1,7 +1,7 @@
-import { insertJsonEachRow } from '#src/components/clickhouse'
 import { setCursor } from '#src/components/rate-limit'
 import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
+import { enqueueLiveFinishedDetails } from '#src/jobs/fetch-match-details'
 import type { LiveLeagueGame } from '#src/steam/schemas'
 import { getLiveLeagueGames } from '#src/steam/web-api'
 import {
@@ -13,6 +13,11 @@ import {
 } from '#src/store/coerce'
 import { ensureLeagueStub } from '#src/store/leagues'
 import {
+	insertLiveTicks,
+	type LiveMatchTick,
+	type LivePlayerTick,
+} from '#src/store/live-ticks'
+import {
 	normalizeValvePlayerSlot,
 	partialPlayerFacts,
 	valvePlayerSlot,
@@ -20,6 +25,7 @@ import {
 import { INGEST } from '#src/store/match-phase'
 import {
 	finishMissingLiveMatches,
+	matchPostgameWritten,
 	noteLiveClock,
 	noteLiveFeedMisses,
 	noteLiveFeedSeen,
@@ -32,7 +38,6 @@ import {
 } from '#src/store/matches'
 import { db } from '#src/utils/db'
 import { logger } from '#src/utils/logger'
-import { chNow } from './time'
 
 const hashes = new Map<number, string>()
 
@@ -64,9 +69,9 @@ export async function runPollLiveGames(): Promise<{
 		await ensureLeagueStub(leagueId)
 	}
 
-	const capturedAt = chNow()
-	const tickRows: Array<Record<string, unknown>> = []
-	const playerTickRows: Array<Record<string, unknown>> = []
+	const capturedAt = new Date()
+	const tickRows: LiveMatchTick[] = []
+	const playerTickRows: LivePlayerTick[] = []
 	let wrote = 0
 	let finished: number[] = []
 
@@ -99,6 +104,9 @@ export async function runPollLiveGames(): Promise<{
 				players: game.players,
 			})
 			const changed = hashes.get(game.match_id) !== digest
+			const fillOnly = changed
+				? await matchPostgameWritten(tx, game.match_id)
+				: false
 			if (!changed) {
 				await noteLiveFeedSeen(tx, INGEST.liveLeague, game.match_id)
 			}
@@ -130,7 +138,7 @@ export async function runPollLiveGames(): Promise<{
 				})
 
 				const roster = rosterFromLivePlayers(game.players)
-				await upsertMatchPlayers(tx, game.match_id, roster)
+				await upsertMatchPlayers(tx, game.match_id, roster, { fillOnly })
 				for (const player of roster) {
 					await upsertPlayer(tx, {
 						accountId: player.accountId,
@@ -143,7 +151,9 @@ export async function runPollLiveGames(): Promise<{
 						matchId: game.match_id,
 					})
 				}
-				await replaceMatchDraft(tx, game.match_id, collectDraft(game))
+				await replaceMatchDraft(tx, game.match_id, collectDraft(game), {
+					fillOnly,
+				})
 				hashes.set(game.match_id, digest)
 				wrote += 1
 			}
@@ -190,7 +200,7 @@ export async function runPollLiveGames(): Promise<{
 					})
 				})
 				if (liveStats.length > 0) {
-					await upsertMatchPlayers(tx, game.match_id, liveStats)
+					await upsertMatchPlayers(tx, game.match_id, liveStats, { fillOnly })
 				}
 			}
 		}
@@ -205,10 +215,10 @@ export async function runPollLiveGames(): Promise<{
 			)
 			for (const matchId of finished) hashes.delete(matchId)
 		}
+		await insertLiveTicks(tx, tickRows, playerTickRows)
 	})
 
-	await insertJsonEachRow('live_match_ticks', tickRows)
-	await insertJsonEachRow('live_player_ticks', playerTickRows)
+	await enqueueLiveFinishedDetails(finished)
 
 	logger.info(
 		{
@@ -255,13 +265,13 @@ export function rosterFromLivePlayers(
 
 function appendTicks(
 	game: LiveLeagueGame,
-	capturedAt: string,
-	tickRows: Array<Record<string, unknown>>,
-	playerTickRows: Array<Record<string, unknown>>,
+	capturedAt: Date,
+	tickRows: LiveMatchTick[],
+	playerTickRows: LivePlayerTick[],
 ): void {
 	const board = game.scoreboard
 	tickRows.push({
-		match_id: String(game.match_id),
+		match_id: game.match_id,
 		captured_at: capturedAt,
 		league_id: game.league_id,
 		duration: board?.duration ?? 0,
@@ -277,12 +287,14 @@ function appendTicks(
 		radiant_series_wins: game.radiant_series_wins,
 		dire_series_wins: game.dire_series_wins,
 		stream_delay_s: game.stream_delay_s,
-		lobby_id: String(game.lobby_id ?? 0),
+		lobby_id: asPgInt8(game.lobby_id) ?? 0,
 		game_number: game.game_number ?? 0,
 		league_series_id: game.league_series_id ?? 0,
 		league_game_id: game.league_game_id ?? 0,
 		league_tier: game.league_tier ?? 0,
 		source: 'GetLiveLeagueGames',
+		game_state: 0,
+		server_steam_id: 0,
 	})
 
 	for (const side of ['radiant', 'dire'] as const) {
@@ -292,10 +304,10 @@ function appendTicks(
 			const row = item as Record<string, unknown>
 			const ident = resolveLivePlayerTick(game.players, side, index, row)
 			playerTickRows.push({
-				match_id: String(game.match_id),
+				match_id: game.match_id,
 				captured_at: capturedAt,
 				player_slot: asUInt32(ident.playerSlot),
-				account_id: String(asUInt32(ident.accountId)),
+				account_id: asUInt32(ident.accountId),
 				hero_id: asNumber(row.hero_id) ?? 0,
 				kills: asUInt32(row.kills),
 				deaths: asUInt32(row.death ?? row.deaths),
@@ -315,6 +327,9 @@ function appendTicks(
 				item3: asUInt32(row.item3 ?? row.item_3),
 				item4: asUInt32(row.item4 ?? row.item_4),
 				item5: asUInt32(row.item5 ?? row.item_5),
+				item6: 0,
+				item7: 0,
+				item8: 0,
 				ultimate_state: asUInt32(row.ultimate_state),
 				ultimate_cooldown: asUInt32(row.ultimate_cooldown),
 				respawn_timer: asUInt32(row.respawn_timer),

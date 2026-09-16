@@ -23,6 +23,13 @@ import {
 import { MissingProxyError, steamFetch } from '#src/steam/http'
 import { parseSteamJson } from '#src/steam/json'
 import { errorMessage } from '#src/store/coerce'
+import {
+	beginRequest,
+	bytesToKb,
+	finishRequest,
+	requestLogStatusFromError,
+	truncateErrorResponse,
+} from '#src/store/request-logs'
 import { logger } from '#src/utils/logger'
 import {
 	type HistoryMatch,
@@ -58,9 +65,11 @@ export class SteamApiError extends Error {
 export type SteamRequestContext = {
 	apiKey: string
 	keyId: number
+	accountId: number
 	proxyId: number
 	proxyUrl: string
 	purpose: ApiCallPurpose
+	matchId?: number | null
 }
 
 const LEAGUE_INFO_URL =
@@ -89,13 +98,52 @@ function toSteamApiError(error: unknown, url?: string): SteamApiError {
 async function getJsonOnce(
 	url: string,
 	ctx: SteamRequestContext,
+	methodName: string,
 ): Promise<unknown> {
 	await acquireSteamApiSlot(ctx.keyId, ctx.purpose)
-	const response = await steamFetch(url, {
-		proxy: ctx.proxyUrl,
-		signal: AbortSignal.timeout(45_000),
+	const started = performance.now()
+	const logRow = await beginRequest('steam_api_requests', {
+		matchId: ctx.matchId,
+		methodName,
+		steamApiKeyId: ctx.keyId,
+		steamAccountId: ctx.accountId,
 	})
+	let response: Response
+	try {
+		response = await steamFetch(url, {
+			proxy: ctx.proxyUrl,
+			signal: AbortSignal.timeout(45_000),
+		})
+	} catch (error) {
+		await finishRequest(logRow, {
+			responseTimeMs: performance.now() - started,
+			responseStatus: requestLogStatusFromError(error),
+			errorResponse: truncateErrorResponse(errorMessage(error)),
+		})
+		throw error
+	}
+	let bodyText = ''
+	try {
+		bodyText = await response.text()
+	} catch (error) {
+		await finishRequest(logRow, {
+			responseTimeMs: performance.now() - started,
+			responseStatus: String(response.status),
+			errorResponse: truncateErrorResponse(errorMessage(error)),
+		})
+		throw error
+	}
+	const sizeKb = bytesToKb(Buffer.byteLength(bodyText))
+	const elapsed = performance.now() - started
 	if (response.status === 407) {
+		await finishRequest(logRow, {
+			responseTimeMs: elapsed,
+			responseStatus: '407',
+			responseSizeKb: sizeKb,
+			errorResponse: truncateErrorResponse(
+				`proxy HTTP 407 for ${proxyHostPort(ctx.proxyUrl)}`,
+			),
+		})
 		throw new Error(`proxy HTTP 407 for ${proxyHostPort(ctx.proxyUrl)}`)
 	}
 	if (response.status === 429) {
@@ -106,6 +154,14 @@ async function getJsonOnce(
 		})
 	}
 	if (!response.ok) {
+		await finishRequest(logRow, {
+			responseTimeMs: elapsed,
+			responseStatus: String(response.status),
+			responseSizeKb: sizeKb,
+			errorResponse: truncateErrorResponse(
+				bodyText !== '' ? bodyText : `steam HTTP ${response.status}`,
+			),
+		})
 		throw new SteamApiError({
 			message: `steam HTTP ${response.status}`,
 			status: response.status,
@@ -113,7 +169,12 @@ async function getJsonOnce(
 		})
 	}
 	try {
-		const body = parseSteamJson(await response.text())
+		const body = parseSteamJson(bodyText)
+		await finishRequest(logRow, {
+			responseTimeMs: elapsed,
+			responseStatus: String(response.status),
+			responseSizeKb: sizeKb,
+		})
 		await recordResourceAttempt({
 			kind: 'proxy',
 			resourceId: ctx.proxyId,
@@ -127,6 +188,12 @@ async function getJsonOnce(
 		await clearApiKeyRateLimit(ctx.keyId)
 		return body
 	} catch (error) {
+		await finishRequest(logRow, {
+			responseTimeMs: elapsed,
+			responseStatus: String(response.status),
+			responseSizeKb: sizeKb,
+			errorResponse: truncateErrorResponse(errorMessage(error)),
+		})
 		throw toSteamApiError(error, url)
 	}
 }
@@ -134,12 +201,13 @@ async function getJsonOnce(
 async function getJson(
 	url: string,
 	ctx: SteamRequestContext,
+	methodName: string,
 	attempts = 4,
 ): Promise<unknown> {
 	let lastError: SteamApiError | undefined
 	for (let attempt = 0; attempt < attempts; attempt++) {
 		try {
-			return await getJsonOnce(url, ctx)
+			return await getJsonOnce(url, ctx, methodName)
 		} catch (error) {
 			if (error instanceof SteamApiError && error.status === 403) {
 				await disableResource({
@@ -195,7 +263,7 @@ async function steamCall<T>(
 ): Promise<T> {
 	const started = performance.now()
 	try {
-		const value = parse(await getJson(url, ctx))
+		const value = parse(await getJson(url, ctx, method))
 		observeWebApi(source, method, 'success', started)
 		return value
 	} catch (error) {

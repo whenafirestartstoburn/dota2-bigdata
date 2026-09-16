@@ -2,19 +2,11 @@ export const INGEST = {
 	liveLeague: 'GetLiveLeagueGames',
 	topLive: 'GetTopLiveGame',
 	history: 'GetMatchHistory',
+	seq: 'GetMatchHistoryBySequenceNum',
 } as const
 
 export type IngestSource = (typeof INGEST)[keyof typeof INGEST]
 export type LiveIngest = typeof INGEST.liveLeague | typeof INGEST.topLive
-
-export const WAITING = {
-	liveEnd: 'live_end',
-	history: 'history',
-	seq: 'seq', // leftover; ingest no longer waits on GetMatchHistoryBySequenceNum
-	gc: 'gc',
-	replay: 'replay',
-	parse: 'parse',
-} as const
 
 export const ERROR_KIND = {
 	network: 'network',
@@ -47,13 +39,13 @@ export const KEEP_ON_LIVE_SIGHTING = [
 
 const KEEP_ON_LIVE = new Set<string>(KEEP_ON_LIVE_SIGHTING)
 
-export function isLaterPhase(phase: string | null | undefined): boolean {
-	return phase != null && LATER_PHASES.has(phase)
+export function isLaterStatus(status: string | null | undefined): boolean {
+	return status != null && LATER_PHASES.has(status)
 }
 
 /** Steam can drop a still-running match from a live feed, then list it again. */
-export function canResumeLive(phase: string | null | undefined): boolean {
-	return phase != null && !KEEP_ON_LIVE.has(phase)
+export function canResumeLive(status: string | null | undefined): boolean {
+	return status != null && !KEEP_ON_LIVE.has(status)
 }
 
 export function liveFeedsDone(
@@ -73,7 +65,7 @@ export function liveFeedsDone(
 export type HistoryPollState = {
 	fastCount: number
 	slowCount: number
-	phase: 'awaiting_history' | 'failed'
+	status: 'awaiting_history' | 'failed'
 	nextPollMs: number
 	errorKind: typeof ERROR_KIND.historyTimeout | null
 }
@@ -93,7 +85,7 @@ export function advanceHistoryMiss(input: {
 		return {
 			fastCount: fast,
 			slowCount: slow,
-			phase: 'awaiting_history',
+			status: 'awaiting_history',
 			nextPollMs: input.fastMs,
 			errorKind: null,
 		}
@@ -103,7 +95,7 @@ export function advanceHistoryMiss(input: {
 		return {
 			fastCount: fast,
 			slowCount: slow,
-			phase: 'awaiting_history',
+			status: 'awaiting_history',
 			nextPollMs: input.slowMs,
 			errorKind: null,
 		}
@@ -111,7 +103,7 @@ export function advanceHistoryMiss(input: {
 	return {
 		fastCount: fast,
 		slowCount: slow,
-		phase: 'failed',
+		status: 'failed',
 		nextPollMs: 0,
 		errorKind: ERROR_KIND.historyTimeout,
 	}

@@ -4,7 +4,7 @@ import {
 	canResumeLive,
 	ERROR_KIND,
 	INGEST,
-	isLaterPhase,
+	isLaterStatus,
 	liveFeedsDone,
 } from '#src/store/match-phase'
 
@@ -35,7 +35,7 @@ describe('advanceHistoryMiss', () => {
 		})
 		expect(first.fastCount).toBe(1)
 		expect(first.slowCount).toBe(0)
-		expect(first.phase).toBe('awaiting_history')
+		expect(first.status).toBe('awaiting_history')
 		expect(first.nextPollMs).toBe(5000)
 		expect(first.errorKind).toBeNull()
 	})
@@ -52,7 +52,7 @@ describe('advanceHistoryMiss', () => {
 		expect(next.fastCount).toBe(100)
 		expect(next.slowCount).toBe(1)
 		expect(next.nextPollMs).toBe(60_000)
-		expect(next.phase).toBe('awaiting_history')
+		expect(next.status).toBe('awaiting_history')
 	})
 
 	test('fails after both budgets', () => {
@@ -64,18 +64,18 @@ describe('advanceHistoryMiss', () => {
 			fastMs: 5000,
 			slowMs: 60_000,
 		})
-		expect(done.phase).toBe('failed')
+		expect(done.status).toBe('failed')
 		expect(done.errorKind).toBe(ERROR_KIND.historyTimeout)
 	})
 })
 
-describe('isLaterPhase', () => {
+describe('isLaterStatus', () => {
 	test('protects terminal and replay phases from being rewritten', () => {
-		expect(isLaterPhase('live')).toBe(false)
-		expect(isLaterPhase('awaiting_history')).toBe(false)
-		expect(isLaterPhase('not_started')).toBe(false)
-		expect(isLaterPhase('parsed')).toBe(true)
-		expect(isLaterPhase('failed')).toBe(true)
+		expect(isLaterStatus('live')).toBe(false)
+		expect(isLaterStatus('awaiting_history')).toBe(false)
+		expect(isLaterStatus('not_started')).toBe(false)
+		expect(isLaterStatus('parsed')).toBe(true)
+		expect(isLaterStatus('failed')).toBe(true)
 	})
 })
 

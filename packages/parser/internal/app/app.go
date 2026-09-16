@@ -159,6 +159,11 @@ func (a *App) handle(ctx context.Context, job *store.Claimed) {
 		return
 	}
 	defer body.Close()
+	// Empty ALTER DELETE still enqueues a mutation. Skip until a prior
+	// publish exists — that queue is what filled the disk at high width.
+	if job.ParserVersion != nil {
+		_ = a.ch.DeleteMatch(ctx, job.MatchID)
+	}
 	flush := sink.NewFlusher(ctx, a.ch)
 	res, err := parse.ParseReaderWithSink(ctx, parse.Job{
 		MatchID:   job.MatchID,
@@ -166,7 +171,7 @@ func (a *App) handle(ctx context.Context, job *store.Claimed) {
 	}, body, flush)
 	if err != nil {
 		if res != nil {
-			_ = a.ch.Abort(ctx, res.ParseRunID)
+			_ = a.ch.DeleteMatch(ctx, res.MatchID)
 		}
 		log.Error("parse", "err", err)
 		_ = a.pg.Fail(ctx, job.MatchID, err)
@@ -174,27 +179,21 @@ func (a *App) handle(ctx context.Context, job *store.Claimed) {
 		return
 	}
 	if err := flush.Finish(res); err != nil {
-		_ = a.ch.Abort(ctx, res.ParseRunID)
+		_ = a.ch.DeleteMatch(ctx, res.MatchID)
 		log.Error("clickhouse", "err", err)
 		_ = a.pg.Fail(ctx, job.MatchID, err)
 		metrics.ObserveJob("clickhouse", time.Since(start).Seconds())
 		return
 	}
 	if err := a.pg.Publish(ctx, res); err != nil {
-		_ = a.ch.Abort(ctx, res.ParseRunID)
+		_ = a.ch.DeleteMatch(ctx, res.MatchID)
 		log.Error("publish", "err", err)
 		_ = a.pg.Fail(ctx, job.MatchID, err)
 		metrics.ObserveJob("publish", time.Since(start).Seconds())
 		return
 	}
-	// Empty ALTER DELETE still enqueues a mutation. Skip until a prior
-	// publish exists — that queue is what filled the disk at high width.
-	if job.ParserVersion != nil {
-		_ = a.ch.DropPrevious(ctx, res.MatchID, res.ParseRunID)
-	}
 	metrics.ObserveJob("success", time.Since(start).Seconds())
 	log.Info("parsed",
-		"run", res.ParseRunID,
 		"elapsed_ms", time.Since(start).Milliseconds(),
 		"counts", res.Counts(),
 	)

@@ -13,6 +13,7 @@ import {
 	SCHEDULED_JOB,
 	scheduledJobKey,
 	scheduleQueuedJobRetry,
+	seqQueue,
 } from '#src/components/jobs'
 import { db, sql } from '#src/utils/db'
 
@@ -27,6 +28,15 @@ describe('detailsQueue', () => {
 			[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((id) => detailsQueue(id)),
 		)
 		expect(shards.size).toBe(DETAILS_PARALLELISM)
+	})
+})
+
+describe('seqQueue', () => {
+	test('shards match ids across DETAILS_PARALLELISM seq queues', () => {
+		expect(seqQueue(0)).toBe(`${QUEUE.seq}:0`)
+		expect(seqQueue(5)).toBe(`${QUEUE.seq}:0`)
+		expect(seqQueue(5184)).toBe(`${QUEUE.seq}:4`)
+		expect(seqQueue(1)).not.toBe(detailsQueue(1))
 	})
 })
 

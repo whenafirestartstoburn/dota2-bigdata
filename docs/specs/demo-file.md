@@ -35,9 +35,13 @@ The files that define a `.dem`:
 | [`dota_match_metadata.proto`](https://github.com/SteamDatabase/GameTracking-Dota2/blob/master/Protobufs/dota_match_metadata.proto) | `CDOTAMatchMetadataFile` (graphs Valve already computed) |
 | [`gameevents.proto`](https://github.com/SteamDatabase/GameTracking-Dota2/blob/master/Protobufs/gameevents.proto) | Named Source 1-style game events (`dota_player_kill`, …) |
 
-Our copy of those protos is `packages/parser/internal/valve/*.proto`.
-Regenerate from GameTracking when Valve adds fields; do not invent
-message layouts.
+The live dump (extracted from each Dota 2 update, not hand-written) is:
+
+- [SteamDatabase/GameTracking-Dota2 `Protobufs/`](https://github.com/SteamDatabase/GameTracking-Dota2/tree/master/Protobufs)
+
+Manta regenerates its `dota` package from those files (`make update` in
+[dotabuff/manta](https://github.com/dotabuff/manta)). We do not keep a
+second copy of the `.proto` tree.
 
 The only **encoding** spec that is officially documented is protobuf
 itself: [varints and wire types](https://protobuf.dev/programming-guides/encoding/).
@@ -93,8 +97,8 @@ every command is self-framed. On match `8973166068` (patch 7.39) they
 were `115305600` and `115305483` — near the end of the ~110 MB
 uncompressed file, where `DEM_FileInfo` lives.
 
-Our decoder (`packages/parser/internal/replay/session.go`) checks the
-8-byte magic and skips the next 8 bytes.
+Manta (`NewStreamParser`) checks the 8-byte magic and skips the next
+8 bytes.
 
 ### Outer command stream
 
@@ -186,8 +190,8 @@ payload   size bytes   (one NET / SVC / UM protobuf)
 ```
 
 Valve pads the last byte. A reader that starts another message from
-leftover bits will invent garbage. Our decoder stops when fewer than 14
-bits remain (`session.go`).
+leftover bits will invent garbage. Manta stops when fewer than 14 bits
+remain (`demo_packet.go`).
 
 Messages in one packet are **reordered** before dispatch. Tick, string
 tables, and spawn-group load must land before `svc_PacketEntities`;
@@ -221,20 +225,19 @@ supply:
    per-class field list (name, type, encoder, bit count, low/high).
    Types are engine strings (`float32`, `CHandle`, `CUtlVector`,
    `QAngle`, `HeroID_t`, …). Nested serializers become tables; leaves
-   get a decoder (`packages/parser/internal/replay/decode.go`).
+   get a decoder (manta `field_decoder.go`).
 2. **`DEM_ClassInfo`**: `class_id` → `network_name` (`CDOTA_PlayerResource`,
    `CDOTA_Unit_Hero_Mirana`, `CDOTA_Item_BlinkDagger`, …).
 3. **`instancebaseline` string table**: default bit-blob per class id.
    A newly created entity is baseline ⊕ first delta.
 
 Field updates are **paths** through that serializer tree, Huffman-coded
-with Valve’s op weights (`path.go`). Those weights are engine constants,
-not in any `.proto`.
+with Valve’s op weights (manta `field_path.go`). Those weights are
+engine constants, not in any `.proto`.
 
 Build-specific encoder quirks exist (early Reborn, quantized floats).
-Our `internal/replay/patch.go` applies the same class of fixes manta
-does. That is why `game_directory` / `svc_ServerInfo.game_dir` matter:
-`dota_v6918` selects the decoder profile.
+Manta’s `field_patch.go` applies those fixes from `game_directory` /
+`svc_ServerInfo.game_dir` (`dota_v6918` selects the decoder profile).
 
 ## String tables
 
@@ -415,15 +418,17 @@ Useful, but they drift. Prefer GameTracking protos when they disagree.
 | [dotabuff/yasha](https://github.com/dotabuff/yasha) | Source 1 only. |
 | `example_projects/dota2-demo-parser/docs/manta-events/` | Callback catalog over manta (what exists in the file, not our schema). |
 
-Our decoder does not import manta. Example projects are for callback
-names and field paths.
+[dotabuff/manta](https://github.com/dotabuff/manta) is the decoder we
+import (`github.com/dotabuff/manta` v1.5.0). A snapshot lives under
+`example_projects/dotabuff-manta-parser` for reading; we do not vendor
+it into `packages/parser`. Clarity remains a Java reference only.
 
 ## Where this lives in our tree
 
 | Path | Role |
 |---|---|
-| `packages/parser/internal/valve/*.proto` | Official Valve schema |
-| `packages/parser/internal/replay/session.go` | PBDEMS2 + outer/inner frames |
-| `packages/parser/internal/replay/{tables,entity,path,decode}.go` | Sendtables, entities, field paths |
+| `github.com/dotabuff/manta` | Source 2 demo decode + Valve proto types |
 | `packages/parser/internal/parse/` | Extract → `replay_*` rows |
+| `packages/parser/internal/sink/` | ClickHouse batches |
+| `packages/parser/internal/store/` | Postgres publish |
 | `packages/parser/testdata/demos/` | Local `.dem.bz2` / zstd fixtures |

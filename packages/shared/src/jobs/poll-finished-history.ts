@@ -1,6 +1,9 @@
 import { pickApiCredential, steamCtx } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
 import { enqueueFetchMatchDetails } from '#src/jobs/fetch-match-details'
+import { enqueueFetchSeqDetails } from '#src/jobs/fetch-seq-details'
+import { historyWaiterPagePlan } from '#src/steam/history-page'
+import type { HistoryMatch } from '#src/steam/schemas'
 import { getMatchHistoryPage } from '#src/steam/web-api'
 import { asNumber } from '#src/store/coerce'
 import { partialPlayerFacts } from '#src/store/match-details'
@@ -21,24 +24,31 @@ export async function runPollFinishedHistory(): Promise<{
 	leagues: number
 	hits: number
 	misses: number
+	pages: number
 }> {
 	const settings = await getAppSettings()
+	// Armed by live finish (`history_next_poll_at`); not gated on match status,
+	// so GC / replay advancing the row still gets a seqnum + seq details.
 	const leagueIds = await listDueHistoryLeagueIds()
-	if (leagueIds.length === 0) return { leagues: 0, hits: 0, misses: 0 }
+	if (leagueIds.length === 0) {
+		return { leagues: 0, hits: 0, misses: 0, pages: 0 }
+	}
 
 	const cred = await pickApiCredential()
 	const ctx = steamCtx(cred, 'live')
 	let hits = 0
 	let misses = 0
+	let pages = 0
 
 	for (const leagueId of leagueIds) {
 		const waiting = await listAwaitingHistoryMatchIds(leagueId)
 		if (waiting.length === 0) continue
-		const waitingSet = new Set(waiting)
-		const page = await getMatchHistoryPage(ctx, { leagueId })
-		const found = page.matches.filter((row) => waitingSet.has(row.match_id))
-		const foundIds = new Set(found.map((row) => row.match_id))
-		const missed = waiting.filter((id) => !foundIds.has(id))
+		const { found, missed, pageCount } = await crawlWaitingHistory(
+			ctx,
+			leagueId,
+			waiting,
+		)
+		pages += pageCount
 
 		await db.transaction(async (tx) => {
 			for (const match of found) {
@@ -83,7 +93,9 @@ export async function runPollFinishedHistory(): Promise<{
 						}),
 					]
 				})
-				await upsertMatchPlayers(tx, match.match_id, players)
+				await upsertMatchPlayers(tx, match.match_id, players, {
+					fillOnly: true,
+				})
 				for (const player of players) {
 					await upsertPlayer(tx, {
 						accountId: player.accountId,
@@ -105,6 +117,7 @@ export async function runPollFinishedHistory(): Promise<{
 		})
 
 		for (const match of found) {
+			await enqueueFetchSeqDetails(match.match_id, 'live')
 			await enqueueFetchMatchDetails(match.match_id, 'live')
 		}
 		hits += found.length
@@ -112,8 +125,56 @@ export async function runPollFinishedHistory(): Promise<{
 	}
 
 	logger.info(
-		{ leagues: leagueIds.length, hits, misses },
+		{ leagues: leagueIds.length, hits, misses, pages },
 		'finished history poll',
 	)
-	return { leagues: leagueIds.length, hits, misses }
+	return { leagues: leagueIds.length, hits, misses, pages }
+}
+
+async function crawlWaitingHistory(
+	ctx: ReturnType<typeof steamCtx>,
+	leagueId: number,
+	waiting: readonly number[],
+): Promise<{
+	found: HistoryMatch[]
+	missed: number[]
+	pageCount: number
+}> {
+	const remaining = new Set(waiting)
+	const listed = new Map<number, HistoryMatch>()
+	const missed = new Set<number>()
+	let startAtMatchId: number | undefined
+	let pageCount = 0
+
+	while (remaining.size > 0) {
+		const page = await getMatchHistoryPage(ctx, { leagueId, startAtMatchId })
+		pageCount += 1
+		for (const match of page.matches) {
+			if (remaining.has(match.match_id)) listed.set(match.match_id, match)
+		}
+		const plan = historyWaiterPagePlan({
+			waiting: remaining,
+			pageMatchIds: page.matches.map((match) => match.match_id),
+			resultsRemaining: page.resultsRemaining,
+		})
+		for (const id of plan.foundIds) remaining.delete(id)
+		for (const id of plan.missedIds) {
+			missed.add(id)
+			remaining.delete(id)
+		}
+		if (
+			plan.continueAtMatchId == null ||
+			plan.continueAtMatchId === startAtMatchId
+		) {
+			break
+		}
+		startAtMatchId = plan.continueAtMatchId
+	}
+
+	for (const id of remaining) missed.add(id)
+	return {
+		found: [...listed.values()],
+		missed: [...missed],
+		pageCount,
+	}
 }

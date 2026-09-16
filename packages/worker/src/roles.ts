@@ -6,17 +6,26 @@ export type WorkerRole = (typeof WORKER_ROLES)[number]
 export type WorkerMode = WorkerRole | 'all'
 
 export const WORKER_TASKS = {
-	live: ['poll_live_games', 'poll_top_live', 'poll_realtime_stats'],
+	live: [
+		'poll_live_games',
+		'poll_top_live',
+		'poll_realtime_stats',
+		'poll_finished_history',
+		'fetch_seq_details',
+	],
 	historical: [
 		'fetch_leagues',
 		'sync_catalogs',
 		'poll_finished_history',
 		'walk_league_history',
+		'fetch_seq_details',
 		'process_league',
 	],
 	'match-processing': [
 		'fetch_match_details',
 		'download_replay',
+		'archive_parsed_replays',
+		'maintain_request_logs',
 		'replenish_accounts',
 		'retest_disabled_resources',
 	],
@@ -55,7 +64,7 @@ export function parseWorkerMode(value: string | undefined): WorkerMode {
 export function taskNamesFor(mode: WorkerMode): readonly string[] {
 	const names =
 		mode === 'all'
-			? WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])
+			? [...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]]))]
 			: [...WORKER_TASKS[mode]]
 	return [...names, SCHEDULED_JOB]
 }
@@ -107,6 +116,18 @@ export function startupJobsFor(mode: WorkerMode): StartupJob[] {
 	})
 	add({ identifier: 'fetch_leagues', jobKey: 'fetch_leagues_startup' })
 	add({ identifier: 'walk_league_history', jobKey: 'walk_league_history' })
+	add({
+		identifier: 'archive_parsed_replays',
+		jobKey: 'archive_parsed_replays',
+		priority: PRIORITY.archive,
+		maxAttempts: 1,
+	})
+	add({
+		identifier: 'maintain_request_logs',
+		jobKey: 'maintain_request_logs',
+		priority: PRIORITY.maintainLogs,
+		maxAttempts: 1,
+	})
 	add({
 		identifier: 'replenish_accounts',
 		jobKey: 'replenish_accounts',

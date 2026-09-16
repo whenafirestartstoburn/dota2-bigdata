@@ -177,16 +177,8 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `DELETE FROM match_objectives WHERE match_id = $1`, res.MatchID); err != nil {
+	if err := publishObjectives(ctx, tx, res); err != nil {
 		return err
-	}
-	for i, o := range res.Objectives {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO match_objectives (match_id, seq, time, kind, team, slot, key, value)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, res.MatchID, i, o.Time, o.Kind, o.Team, o.Slot, nullStr(o.Key), o.Value); err != nil {
-			return fmt.Errorf("match_objectives: %w", err)
-		}
 	}
 
 	if err := publishDraft(ctx, tx, res); err != nil {
@@ -195,8 +187,8 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 	if res.BarracksKnown {
 		if _, err := tx.Exec(ctx, `
 			UPDATE matches
-			SET barracks_status_radiant = $2,
-				barracks_status_dire = $3,
+			SET barracks_status_radiant = COALESCE(barracks_status_radiant, $2),
+				barracks_status_dire = COALESCE(barracks_status_dire, $3),
 				updated_at = now()
 			WHERE match_id = $1
 		`, res.MatchID, int32(res.BarracksRadiant), int32(res.BarracksDire)); err != nil {
@@ -237,33 +229,82 @@ func (s *Store) Publish(ctx context.Context, res *model.Result) error {
 		UPDATE match_replays SET
 			status = 'parsed',
 			parser_version = $2,
-			parse_run_id = $3,
 			parsed_at = now(),
 			last_error = NULL,
 			updated_at = now()
 		WHERE match_id = $1
-	`, res.MatchID, int32(res.ParserVersion), int64(res.ParseRunID)); err != nil {
+	`, res.MatchID, int32(res.ParserVersion)); err != nil {
 		return err
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE matches
-		SET phase = 'parsed',
-			waiting_for = NULL,
+		SET status = 'parsed',
 			updated_at = now()
 		WHERE match_id = $1
-		  AND phase IN ('replay_stored', 'awaiting_replay', 'details_ready')
+		  AND status IN ('replay_stored', 'awaiting_replay', 'details_ready')
 	`, res.MatchID); err != nil {
-		return fmt.Errorf("matches.phase: %w", err)
+		return fmt.Errorf("matches.status: %w", err)
 	}
 
 	return tx.Commit(ctx)
+}
+
+func publishObjectives(ctx context.Context, tx pgx.Tx, res *model.Result) error {
+	for _, o := range res.Objectives {
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM match_objectives
+				WHERE match_id = $1
+				  AND kind = $2
+				  AND time = $3
+				  AND COALESCE(key, '') = COALESCE($4, '')
+			)
+		`, res.MatchID, o.Kind, o.Time, nullStr(o.Key)).Scan(&exists); err != nil {
+			return fmt.Errorf("match_objectives exists: %w", err)
+		}
+		if exists {
+			continue
+		}
+		if o.Kind == "first_blood" {
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM match_objectives
+					WHERE match_id = $1 AND kind = 'first_blood'
+				)
+			`, res.MatchID).Scan(&exists); err != nil {
+				return fmt.Errorf("match_objectives first_blood: %w", err)
+			}
+			if exists {
+				continue
+			}
+		}
+		var next int
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(max(seq), -1) + 1
+			FROM match_objectives
+			WHERE match_id = $1
+		`, res.MatchID).Scan(&next); err != nil {
+			return fmt.Errorf("match_objectives seq: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO match_objectives (match_id, seq, time, kind, team, slot, key, value)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, res.MatchID, next, o.Time, o.Kind, o.Team, o.Slot, nullStr(o.Key), o.Value); err != nil {
+			return fmt.Errorf("match_objectives: %w", err)
+		}
+	}
+	return nil
 }
 
 func publishDraft(ctx context.Context, tx pgx.Tx, res *model.Result) error {
 	seq := res.PickBans
 	if !draftSequenceOK(seq) {
 		seq = compactDraft(res.Draft)
+	} else {
+		stampDraftClocks(seq, res.Draft)
 	}
 	var n, picks int
 	if err := tx.QueryRow(ctx, `
@@ -275,7 +316,7 @@ func publishDraft(ctx context.Context, tx pgx.Tx, res *model.Result) error {
 	}
 	if draftLooksComplete(n, picks) {
 		for _, d := range seq {
-			if d.HeroID <= 0 {
+			if d.HeroID <= 0 || d.Clock == 0 {
 				continue
 			}
 			if _, err := tx.Exec(ctx, `
@@ -344,6 +385,31 @@ func draftSequenceOK(rows []model.Draft) bool {
 		}
 	}
 	return draftLooksComplete(len(rows), picks)
+}
+
+func stampDraftClocks(seq, timeline []model.Draft) {
+	type key struct {
+		hero   int32
+		isPick uint8
+	}
+	first := make(map[key]int32, len(timeline))
+	for _, d := range timeline {
+		if d.HeroID <= 0 {
+			continue
+		}
+		k := key{d.HeroID, d.IsPick}
+		if _, ok := first[k]; ok {
+			continue
+		}
+		first[k] = d.Clock
+	}
+	for i := range seq {
+		if c, ok := first[key{seq[i].HeroID, seq[i].IsPick}]; ok {
+			seq[i].Clock = c
+		} else {
+			seq[i].Clock = 0
+		}
+	}
 }
 
 func compactDraft(rows []model.Draft) []model.Draft {
