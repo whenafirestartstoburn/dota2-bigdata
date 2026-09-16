@@ -217,6 +217,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
 - A thrown job on a named queue does **not** graphile-retry on that shard. The wrapper parks `run_scheduled_job` (30 s, 1 m, 3 m, …) and hops back when due. After the stamped budget the job leaves the queue.
+- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, archive / replenish / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
 - GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.
@@ -244,7 +245,7 @@ Three compose services, same image, `WORKER_ROLE` set:
 | `worker-historical` | `:3004` | GetMatchHistory discovery. Scale is `WORKER_HISTORICAL_REPLICAS` (0 for now) |
 | `worker-match-processing` | `:3005` | GC / replay / archive / request-log partitions / replenish |
 
-Cron (`fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC) is registered only on `historical` (or `all`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
+Cron (`ensure_loop_jobs` every minute on every role; `fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC on `historical` / `all`) is registered in `cronFor`. Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
 
 API `POST /api/leagues/process-finished` forces `walk_league_history` for an id (reset exhausted); the historical process picks it up.
 

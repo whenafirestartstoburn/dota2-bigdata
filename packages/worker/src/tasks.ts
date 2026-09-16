@@ -31,8 +31,15 @@ import { asString, errorMessage } from '@app/shared/src/store/coerce'
 import { logger } from '@app/shared/src/utils/logger'
 import { runWithTrace } from '@app/shared/src/utils/trace'
 import type { JobHelpers, Task, TaskList } from 'graphile-worker'
+import { runEnsureLoopJobs } from '#src/ensure-loop-jobs'
 import { runDownloadReplay } from '#src/jobs/download-replay'
 import { runFetchMatchDetails } from '#src/jobs/fetch-match-details'
+import {
+	ENSURE_LOOP_JOBS,
+	LOOP_JOB_MAX_ATTEMPTS,
+	loopJobsFor,
+} from '#src/roles'
+import env from '#src/utils/env'
 
 function traced(name: string, fn: Task, opts?: { skipNoKey?: boolean }): Task {
 	return async (payload, helpers) => {
@@ -107,7 +114,7 @@ async function rescheduleLive(
 			runAt: new Date(Date.now() + settings.livePollIntervalMs),
 			jobKey: identifier,
 			jobKeyMode: 'replace',
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -121,7 +128,7 @@ async function rescheduleFinishedHistory(helpers: JobHelpers): Promise<void> {
 			runAt: new Date(Date.now() + settings.historyFastPollMs),
 			jobKey: 'poll_finished_history',
 			jobKeyMode: 'replace',
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -136,7 +143,7 @@ async function rescheduleReplenish(helpers: JobHelpers): Promise<void> {
 			jobKey: 'replenish_accounts',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.replenish,
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -155,7 +162,7 @@ async function rescheduleArchive(
 			jobKey: 'archive_parsed_replays',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.archive,
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -170,7 +177,7 @@ async function rescheduleRetest(helpers: JobHelpers): Promise<void> {
 			jobKey: 'retest_disabled_resources',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.retest,
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -186,7 +193,7 @@ async function rescheduleMaintainRequestLogs(
 			jobKey: 'maintain_request_logs',
 			jobKeyMode: 'replace',
 			priority: PRIORITY.maintainLogs,
-			maxAttempts: 1,
+			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
 }
@@ -365,6 +372,9 @@ export const allTasks = {
 	),
 	[SCHEDULED_JOB]: traced(SCHEDULED_JOB, async (payload) => {
 		await runScheduledJob(payload)
+	}),
+	[ENSURE_LOOP_JOBS]: traced(ENSURE_LOOP_JOBS, async (_payload, helpers) => {
+		await runEnsureLoopJobs(helpers.addJob, loopJobsFor(env.WORKER_ROLE))
 	}),
 } satisfies TaskList
 

@@ -15,9 +15,11 @@ import { logger } from '@app/shared/src/utils/logger'
 import env from '#src/utils/env'
 import { closeGcSession } from '#src/gc/session'
 import { graphileLogger } from '#src/graphile-logger'
+import { attachLoopJobRecovery, runEnsureLoopJobs } from '#src/ensure-loop-jobs'
 import {
 	concurrencyFor,
 	cronFor,
+	loopJobsFor,
 	scrapesInventory,
 	startupJobsFor,
 	syncsCatalogsOnBoot,
@@ -64,6 +66,10 @@ for (const job of startupJobsFor(role)) {
 		},
 	)
 }
+
+attachLoopJobRecovery(runner.events, () =>
+	runEnsureLoopJobs(runner.addJob, loopJobsFor(role)),
+)
 
 const health = Bun.serve({
 	port: env.WORKER_PORT,

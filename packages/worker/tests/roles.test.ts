@@ -3,6 +3,9 @@ import { PRIORITY, SCHEDULED_JOB } from '@app/shared/src/components/jobs'
 import {
 	concurrencyFor,
 	cronFor,
+	ENSURE_LOOP_JOBS,
+	LOOP_JOB_MAX_ATTEMPTS,
+	loopJobsFor,
 	parseWorkerMode,
 	scrapesInventory,
 	startupJobsFor,
@@ -33,7 +36,7 @@ describe('task ownership', () => {
 		const owned = [
 			...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])),
 		]
-		expect([...owned, SCHEDULED_JOB].sort()).toEqual(
+		expect([...owned, SCHEDULED_JOB, ENSURE_LOOP_JOBS].sort()).toEqual(
 			Object.keys(allTasks).sort(),
 		)
 		expect(WORKER_TASKS.live).toContain('poll_finished_history')
@@ -44,13 +47,14 @@ describe('task ownership', () => {
 
 	test('taskListFor keeps only the requested identifiers', () => {
 		const withHop = (names: readonly string[]) =>
-			[...names, SCHEDULED_JOB].sort()
+			[...names, SCHEDULED_JOB, ENSURE_LOOP_JOBS].sort()
 		const live = taskListFor(taskNamesFor('live'))
 		expect(Object.keys(live).sort()).toEqual(withHop(WORKER_TASKS.live))
 		expect(live.poll_live_games).toBeDefined()
 		expect(live.poll_finished_history).toBeDefined()
 		expect(live.fetch_seq_details).toBeDefined()
 		expect(live[SCHEDULED_JOB]).toBeDefined()
+		expect(live[ENSURE_LOOP_JOBS]).toBeDefined()
 		expect(live.fetch_match_details).toBeUndefined()
 		expect(live.walk_league_history).toBeUndefined()
 
@@ -76,6 +80,7 @@ describe('task ownership', () => {
 		expect(taskNamesFor('all')).toEqual([
 			...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]])),
 			SCHEDULED_JOB,
+			ENSURE_LOOP_JOBS,
 		])
 		expect(concurrencyFor('live')).toBe(4)
 		expect(concurrencyFor('historical')).toBe(4)
@@ -86,8 +91,10 @@ describe('task ownership', () => {
 
 describe('boot per role', () => {
 	test('only historical (and all) install cron and catalog sync', () => {
-		expect(cronFor('live')).toBe('')
-		expect(cronFor('match-processing')).toBe('')
+		expect(cronFor('live')).toContain(ENSURE_LOOP_JOBS)
+		expect(cronFor('live')).not.toContain('fetch_leagues')
+		expect(cronFor('match-processing')).toContain(ENSURE_LOOP_JOBS)
+		expect(cronFor('historical')).toContain(ENSURE_LOOP_JOBS)
 		expect(cronFor('historical')).toContain('fetch_leagues')
 		expect(cronFor('historical')).toContain('walk_league_history')
 		expect(cronFor('historical')).toContain('sync_catalogs')
@@ -142,5 +149,31 @@ describe('boot per role', () => {
 			(job) => job.identifier === 'replenish_accounts',
 		)
 		expect(replenish?.priority).toBe(PRIORITY.replenish)
+		expect(startupJobsFor('live').map((job) => job.maxAttempts)).toEqual([
+			LOOP_JOB_MAX_ATTEMPTS,
+			LOOP_JOB_MAX_ATTEMPTS,
+			LOOP_JOB_MAX_ATTEMPTS,
+			LOOP_JOB_MAX_ATTEMPTS,
+		])
+		expect(
+			loopJobsFor('live')
+				.map((job) => job.identifier)
+				.sort(),
+		).toEqual([
+			'poll_finished_history',
+			'poll_live_games',
+			'poll_realtime_stats',
+			'poll_top_live',
+		])
+		expect(
+			loopJobsFor('historical')
+				.map((job) => job.identifier)
+				.sort(),
+		).toEqual(['poll_finished_history', 'walk_league_history'])
+		expect(
+			loopJobsFor('historical').some(
+				(job) => job.identifier === 'fetch_leagues',
+			),
+		).toBe(false)
 	})
 })

@@ -2,6 +2,12 @@ import { PRIORITY, SCHEDULED_JOB } from '@app/shared/src/components/jobs'
 
 export const WORKER_ROLES = ['live', 'historical', 'match-processing'] as const
 
+/** Revives missing / permafailed self-reschedule `jobKey`s. Not a Valve job. */
+export const ENSURE_LOOP_JOBS = 'ensure_loop_jobs'
+
+/** Graphile default. Loop jobs must exceed 1 so a PG crash is retried. */
+export const LOOP_JOB_MAX_ATTEMPTS = 25
+
 export type WorkerRole = (typeof WORKER_ROLES)[number]
 export type WorkerMode = WorkerRole | 'all'
 
@@ -42,11 +48,15 @@ const HISTORICAL_CRON =
 	'*/5 * * * * walk_league_history ?jobKey=walk_league_history&jobKeyMode=preserve_run_at&max=3\n' +
 	'0 5 * * * sync_catalogs ?max=3'
 
+const ENSURE_CRON = `* * * * * ${ENSURE_LOOP_JOBS} ?jobKey=${ENSURE_LOOP_JOBS}&jobKeyMode=preserve_run_at&max=3`
+
 export type StartupJob = {
 	identifier: string
 	jobKey?: string
 	priority?: number
 	maxAttempts?: number
+	/** Self-reschedules; revive if the row is missing or permafailed. */
+	loop?: boolean
 }
 
 export function isWorkerRole(value: string): value is WorkerRole {
@@ -66,7 +76,7 @@ export function taskNamesFor(mode: WorkerMode): readonly string[] {
 		mode === 'all'
 			? [...new Set(WORKER_ROLES.flatMap((role) => [...WORKER_TASKS[role]]))]
 			: [...WORKER_TASKS[mode]]
-	return [...names, SCHEDULED_JOB]
+	return [...names, SCHEDULED_JOB, ENSURE_LOOP_JOBS]
 }
 
 export function concurrencyFor(mode: WorkerMode): number {
@@ -75,8 +85,10 @@ export function concurrencyFor(mode: WorkerMode): number {
 }
 
 export function cronFor(mode: WorkerMode): string {
-	if (mode === 'historical' || mode === 'all') return HISTORICAL_CRON
-	return ''
+	if (mode === 'historical' || mode === 'all') {
+		return `${ENSURE_CRON}\n${HISTORICAL_CRON}`
+	}
+	return ENSURE_CRON
 }
 
 export function syncsCatalogsOnBoot(mode: WorkerMode): boolean {
@@ -97,48 +109,65 @@ export function startupJobsFor(mode: WorkerMode): StartupJob[] {
 	add({
 		identifier: 'poll_live_games',
 		jobKey: 'poll_live_games',
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'poll_top_live',
 		jobKey: 'poll_top_live',
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'poll_realtime_stats',
 		jobKey: 'poll_realtime_stats',
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'poll_finished_history',
 		jobKey: 'poll_finished_history',
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({ identifier: 'fetch_leagues', jobKey: 'fetch_leagues_startup' })
-	add({ identifier: 'walk_league_history', jobKey: 'walk_league_history' })
+	add({
+		identifier: 'walk_league_history',
+		jobKey: 'walk_league_history',
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
+	})
 	add({
 		identifier: 'archive_parsed_replays',
 		jobKey: 'archive_parsed_replays',
 		priority: PRIORITY.archive,
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'maintain_request_logs',
 		jobKey: 'maintain_request_logs',
 		priority: PRIORITY.maintainLogs,
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'replenish_accounts',
 		jobKey: 'replenish_accounts',
 		priority: PRIORITY.replenish,
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	add({
 		identifier: 'retest_disabled_resources',
 		jobKey: 'retest_disabled_resources',
 		priority: PRIORITY.retest,
-		maxAttempts: 1,
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
 	})
 	return jobs
+}
+
+export function loopJobsFor(mode: WorkerMode): StartupJob[] {
+	return startupJobsFor(mode).filter((job) => job.loop === true)
 }

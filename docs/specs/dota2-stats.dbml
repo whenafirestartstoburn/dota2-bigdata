@@ -1,0 +1,1553 @@
+// Paste into https://dbdiagram.io
+// Postgres: entities, match facts, collector. ClickHouse: replay events.
+// match_id on replay_* is a logical join (no FK in ClickHouse).
+// id / created_at / updated_at omitted (every public PG table except schema_migrations).
+// Daily log partitions and graphile_worker internals omitted.
+
+Project dota2_stats {
+  database_type: 'PostgreSQL'
+  Note: 'Dota2. Sources: Steam Web API, Game Coordinator, replay (.dem).'
+}
+
+Enum league_lifecycle {
+  UPCOMING
+  LIVE
+  FINISHED
+}
+
+Enum ability_kind {
+  spell
+  talent
+  innate
+  item
+  other
+}
+
+Enum damage_direction {
+  received
+  dealt
+}
+
+Enum live_source {
+  GetLiveLeagueGames
+  GetRealtimeStats
+}
+
+Enum replay_ward_kind {
+  obs
+  sen
+}
+
+Enum replay_chat_kind {
+  chat
+  chatwheel
+}
+
+Enum replay_neutral_kind {
+  purchase
+  neutral_item
+  found
+}
+
+Enum replay_kill_type {
+  player
+  tower
+  barracks
+  roshan
+  miniboss
+}
+
+Enum match_status {
+  discovered
+  live
+  awaiting_history
+  awaiting_details
+  details_ready
+  awaiting_replay
+  replay_stored
+  parsed
+  replay_unavailable
+  failed
+  not_started
+}
+
+Enum match_source {
+  live
+  historical
+}
+
+Enum match_error_kind {
+  network
+  rate_limit
+  auth
+  not_ready
+  unavailable
+  history_timeout
+  not_started
+  other
+}
+
+Enum replay_status {
+  pending
+  downloading
+  stored
+  parsing
+  parsed
+  unavailable
+  failed
+}
+
+Enum replay_priority {
+  live
+  historical
+}
+
+Enum resource_status {
+  ready
+  active
+  rate_limited
+  disabled
+}
+
+Enum proxy_kind {
+  http
+  socks5
+}
+
+Enum proxy_purpose {
+  api
+  gc
+  both
+}
+
+Enum ingest_run_status {
+  queued
+  running
+  succeeded
+  failed
+}
+
+Enum marketplace_store {
+  dark_shopping
+}
+
+Enum account_purchase_kind {
+  api_key
+  gc
+}
+
+Enum marketplace_order_status {
+  pending
+  success
+  failed
+}
+
+Enum resource_kind {
+  proxy
+  gc_account
+  api_key
+}
+
+// ---------------------------------------------------------------------------
+// Postgres
+// ---------------------------------------------------------------------------
+
+Table leagues {
+  league_id int [pk]
+  name text [not null]
+  tier int [not null, note: '1 amateur … 4 international']
+  region int [not null]
+  total_prize_pool bigint [not null]
+  start_timestamp bigint [not null, note: 'Unix seconds']
+  end_timestamp bigint [not null]
+  most_recent_activity bigint [not null]
+  valve_status int [not null, note: '5 ≈ concluded']
+  status league_lifecycle [not null]
+  fetched_at timestamptz [not null]
+  last_match_seq_num bigint
+  history_head_match_id bigint
+  history_tail_match_id bigint
+  history_exhausted boolean [not null]
+  history_checked_at timestamptz
+
+  Note: 'Лиги Valve'
+}
+
+Table series {
+  series_id bigint [pk, note: 'Valve id, or synthetic when Valve sent 0']
+  league_id int
+  radiant_team_id int [note: 'First-game Radiant']
+  dire_team_id int [note: 'First-game Dire']
+  series_type int [not null, note: '0 none, 1 Bo3, 2 Bo5']
+  radiant_wins int [not null]
+  dire_wins int [not null]
+  first_match_id bigint
+  last_match_id bigint
+  started_at timestamptz
+  ended_at timestamptz
+
+  Note: 'Серии Bo1 / Bo3 / Bo5'
+}
+
+Table matches {
+  match_id bigint [pk]
+  league_id int
+  series_id bigint
+  series_type int
+  radiant_series_wins int
+  dire_series_wins int
+  league_node_id int
+  match_seq_num bigint
+  start_time bigint [note: 'Unix seconds']
+  duration int
+  pre_game_duration int
+  lobby_type int
+  game_mode int
+  engine int
+  radiant_win boolean
+  radiant_score int
+  dire_score int
+  tower_status_radiant int
+  tower_status_dire int
+  barracks_status_radiant int
+  barracks_status_dire int
+  first_blood_time int
+  lobby_id bigint
+  server_steam_id bigint
+  match_flags int
+  match_outcome int [note: 'EMatchOutcome']
+  game_balance float
+  radiant_team_id int
+  dire_team_id int
+  radiant_team_name text
+  dire_team_name text
+  radiant_team_tag text
+  dire_team_tag text
+  radiant_team_logo bigint
+  dire_team_logo bigint
+  radiant_team_logo_url text
+  dire_team_logo_url text
+  radiant_team_complete smallint
+  dire_team_complete smallint
+  radiant_captain bigint
+  dire_captain bigint
+  radiant_guild_id int
+  dire_guild_id int
+  tournament_id int
+  tournament_round int
+  league_series_id int
+  league_game_id int
+  game_number int
+  stage_name text
+  league_tier int
+  human_players int
+  cluster int
+  replay_salt bigint
+  patch text
+  stream_delay_s int
+  finished_at timestamptz
+  status match_status [not null]
+  source match_source [not null]
+  ingest_sources text[] [not null]
+  live_seen_at timestamptz
+  live_disappeared_at timestamptz
+  live_disappeared_count int [not null]
+  live_league_missed_polls int [not null]
+  top_live_missed_polls int [not null]
+  live_duration_max float [not null]
+  history_poll_fast_count int [not null]
+  history_poll_slow_count int [not null]
+  history_last_polled_at timestamptz
+  history_next_poll_at timestamptz
+  seq_fetched_at timestamptz
+  details_fetched_at timestamptz
+  attempts int [not null]
+  next_attempt_at timestamptz
+  last_realtime_at timestamptz
+  replay_available_at timestamptz
+  last_error text
+  last_error_kind match_error_kind
+  last_error_at timestamptz
+
+  Note: 'Один матч. Имена команд — снимок на момент игры.'
+}
+
+Table match_players {
+  match_id bigint [not null]
+  account_id bigint [not null]
+  player_slot int [not null, note: '0–4 Radiant, 128–132 Dire']
+  hero_id int [not null, note: '0 before pick']
+  player_name text
+  pro_name text
+  real_name text
+  team_number int
+  team_slot int
+  side text
+  hero_variant int
+  selected_facet int
+  kills int
+  deaths int
+  assists int
+  last_hits int
+  denies int
+  net_worth int
+  gold int
+  gold_spent int
+  gold_per_min int
+  xp_per_min int
+  level int
+  claimed_farm_gold int
+  support_gold int
+  claimed_denies int
+  claimed_misses int
+  misses int
+  bounty_runes int
+  outposts_captured int
+  seconds_dead int
+  gold_lost_to_death int
+  hero_damage int
+  tower_damage int
+  hero_healing int
+  scaled_hero_damage int
+  scaled_tower_damage int
+  scaled_hero_healing int
+  scaled_kills float
+  scaled_deaths float
+  scaled_assists float
+  item_0 int
+  item_1 int
+  item_2 int
+  item_3 int
+  item_4 int
+  item_5 int
+  item_6 int
+  item_7 int
+  item_8 int
+  item_9 int
+  item_10 int
+  item_10_lvl int
+  item_neutral int
+  item_neutral2 int
+  backpack_0 int
+  backpack_1 int
+  backpack_2 int
+  aghanims_scepter int
+  aghanims_shard int
+  moonshard int
+  ability_upgrades int[]
+  leaver_status int
+  party_id bigint
+  hero_pick_order int
+  hero_was_randomed boolean
+  lane_selection_flags int
+  support_ability_value int
+  disable_duration int
+  lane int
+  lane_role int
+  is_roaming boolean
+  stuns float
+  teamfight_participation float
+  towers_killed int
+  roshans_killed int
+  observers_placed int
+  sentries_placed int
+  camps_stacked int
+  creeps_stacked int
+  rune_pickups int
+  firstblood_claimed int
+
+  indexes {
+    (match_id, player_slot) [pk]
+  }
+
+  Note: '0 on hero / item / account = empty. Valve -1 item stored as 0.'
+}
+
+Table match_player_buffs {
+  match_id bigint [not null]
+  player_slot int [not null]
+  buff_id int [not null]
+  stacks int [not null]
+  grant_time int
+
+  indexes {
+    (match_id, player_slot, buff_id) [pk]
+  }
+}
+
+Table match_player_ability_upgrades {
+  match_id bigint [not null]
+  player_slot int [not null]
+  seq int [not null]
+  ability_id int [not null]
+  "time" int
+  level int
+
+  indexes {
+    (match_id, player_slot, seq) [pk]
+  }
+}
+
+Table match_player_damage_breakdown {
+  match_id bigint [not null]
+  player_slot int [not null]
+  direction damage_direction [not null]
+  damage_type int [not null]
+  pre_reduction int
+  post_reduction int
+
+  indexes {
+    (match_id, player_slot, direction, damage_type) [pk]
+  }
+}
+
+Table match_player_units {
+  match_id bigint [not null]
+  player_slot int [not null]
+  unit_name text [not null]
+  item_0 int
+  item_1 int
+  item_2 int
+  item_3 int
+  item_4 int
+  item_5 int
+
+  indexes {
+    (match_id, player_slot, unit_name) [pk]
+  }
+
+  Note: 'Spirit Bear and other extra units'
+}
+
+Table match_coaches {
+  match_id bigint [not null]
+  account_id bigint [not null]
+  coach_name text
+  coach_rating int
+  coach_team int
+  coach_party_id bigint
+  is_private_coach boolean
+
+  indexes {
+    (match_id, account_id) [pk]
+  }
+}
+
+Table match_broadcasters {
+  match_id bigint [not null]
+  seq int [not null]
+  country_code text
+  description text
+  language_code text
+  account_id bigint
+  name text
+
+  indexes {
+    (match_id, seq) [pk]
+  }
+}
+
+Table match_draft {
+  match_id bigint [not null]
+  ord int [not null]
+  is_pick boolean [not null, note: 'false = ban']
+  hero_id int [not null, note: '0 before pick']
+  team smallint [not null, note: '0 Radiant, 1 Dire']
+  player_slot int
+  clock int [note: 'Seconds into draft']
+
+  indexes {
+    (match_id, ord) [pk]
+  }
+}
+
+Table match_objectives {
+  match_id bigint [not null]
+  seq int [not null]
+  "time" int [not null]
+  kind text [not null, note: 'first_blood, tower, barracks, roshan, aegis, buyback, …']
+  team smallint
+  slot int
+  key text
+  value int
+
+  indexes {
+    (match_id, seq) [pk]
+  }
+}
+
+Table match_replays {
+  match_id bigint [pk]
+  priority replay_priority [not null]
+  status replay_status [not null]
+  cluster int
+  replay_salt bigint
+  replay_state int
+  source_url text
+  s3_bucket text
+  s3_key text
+  bytes bigint
+  stored_at timestamptz
+  parser_version int
+  parsed_at timestamptz
+  archived_at timestamptz
+  attempts int [not null]
+  last_error text
+  last_error_at timestamptz
+  next_attempt_at timestamptz
+  steam_account_id bigint
+  proxy_id bigint
+
+  Note: 'Скачивание и парсинг replay. Одна строка на матч.'
+}
+
+Table players {
+  account_id bigint [pk, note: 'Steam32']
+  steam_id text [note: 'Steam64 = 76561197960265728 + account_id']
+  persona_name text
+  is_pro boolean [not null]
+  current_team_id int
+  last_match_id bigint
+  last_match_at timestamptz
+}
+
+Table teams {
+  team_id int [pk]
+  name text [not null]
+  tag text
+  logo_url text
+
+  Note: 'Current name / tag / logo. Game-time names are on matches.'
+}
+
+Table heroes {
+  hero_id int [pk]
+  name text [not null, note: 'npc_dota_hero_*']
+  localized_name text [not null]
+  primary_attr text
+  attack_type text
+  roles text[] [not null]
+}
+
+Table items {
+  item_id int [pk]
+  name text [not null]
+  localized_name text [not null]
+  cost int
+}
+
+Table patches {
+  patch text [pk]
+  released_at timestamptz [not null]
+}
+
+Table abilities {
+  ability_id int [pk]
+  name text [not null]
+  localized_name text [not null]
+  kind ability_kind [not null]
+}
+
+Table hero_abilities {
+  hero_id int [not null]
+  ability_id int [not null]
+  slot int [not null]
+  is_talent boolean [not null]
+  talent_level int
+
+  indexes {
+    (hero_id, slot, is_talent) [pk]
+  }
+}
+
+Table hero_facets {
+  hero_id int [not null]
+  facet_id int [not null]
+  name text [not null]
+  localized_name text [not null]
+  icon text
+  color text
+  deprecated boolean [not null]
+
+  indexes {
+    (hero_id, facet_id) [pk]
+  }
+}
+
+Table permanent_buffs {
+  buff_id int [pk]
+  name text [not null]
+}
+
+Table game_modes {
+  game_mode int [pk]
+  name text [not null]
+  balanced boolean
+}
+
+Table lobby_types {
+  lobby_type int [pk]
+  name text [not null]
+  balanced boolean
+}
+
+Table regions {
+  region int [pk]
+  name text [not null]
+}
+
+Table clusters {
+  cluster int [pk]
+  region int
+}
+
+Table xp_levels {
+  level int [pk]
+  xp int [not null]
+}
+
+Table live_match_ticks {
+  match_id bigint [not null]
+  captured_at timestamptz [not null]
+  source live_source [not null]
+  league_id int [not null]
+  duration float [not null]
+  radiant_score int [not null]
+  dire_score int [not null]
+  spectators int [not null]
+  tower_state_radiant int [not null]
+  tower_state_dire int [not null]
+  barracks_state_radiant int [not null]
+  barracks_state_dire int [not null]
+  roshan_respawn_timer int [not null]
+  series_type smallint [not null]
+  radiant_series_wins smallint [not null]
+  dire_series_wins smallint [not null]
+  stream_delay_s int [not null]
+  lobby_id bigint [not null]
+  game_number smallint [not null]
+  league_series_id int [not null]
+  league_game_id int [not null]
+  league_tier smallint [not null]
+  game_state smallint [not null]
+  server_steam_id bigint [not null]
+
+  indexes {
+    (match_id, captured_at, source) [pk]
+  }
+}
+
+Table live_player_ticks {
+  match_id bigint [not null]
+  captured_at timestamptz [not null]
+  player_slot smallint [not null]
+  source live_source [not null]
+  account_id bigint [not null]
+  hero_id int [not null]
+  kills int [not null]
+  deaths int [not null]
+  assists int [not null]
+  last_hits int [not null]
+  denies int [not null]
+  gold int [not null]
+  net_worth int [not null]
+  level smallint [not null]
+  gold_per_min int [not null]
+  xp_per_min int [not null]
+  x float [not null]
+  y float [not null]
+  item0 int [not null]
+  item1 int [not null]
+  item2 int [not null]
+  item3 int [not null]
+  item4 int [not null]
+  item5 int [not null]
+  item6 int [not null]
+  item7 int [not null]
+  item8 int [not null]
+  ultimate_state smallint [not null]
+  ultimate_cooldown int [not null]
+  respawn_timer int [not null]
+
+  indexes {
+    (match_id, captured_at, player_slot, source) [pk]
+  }
+}
+
+Table ingest_cursors {
+  key text [pk]
+  value text [not null]
+
+  Note: 'Курсоры инжеста. Курсоры листинга по лигам — в leagues.'
+}
+
+Table league_ingest_runs {
+  run_id uuid [pk]
+  league_id int [not null]
+  matches_limit int
+  status ingest_run_status [not null]
+  matches_listed int [not null]
+  matches_detailed int [not null]
+  replays_enqueued int [not null]
+  error text
+  started_at timestamptz
+  finished_at timestamptz
+}
+
+Table settings {
+  key text [pk]
+  value text [not null]
+  description text [not null]
+
+  Note: 'Настройки коллектора. Секреты — в .env.'
+}
+
+Table steam_accounts {
+  id bigint [pk]
+  login text [unique, not null]
+  password text [not null]
+  shared_secret text
+  identity_secret text
+  steam_id text
+  proxy_id bigint
+  status resource_status [not null]
+  rate_limited_until timestamptz
+  last_login_at timestamptz
+  last_error text
+  shared_secret_broken boolean [not null]
+  email text
+  email_password text
+  email_imap_host text
+  refresh_token text
+  refresh_token_expires_at timestamptz
+  machine_auth_token text
+  retest_count int [not null]
+}
+
+Table steam_api_keys {
+  id bigint [pk]
+  account_id bigint [not null]
+  api_key text [unique, not null]
+  proxy_id bigint
+  status resource_status [not null]
+  rate_limited_until timestamptz
+  last_used_at timestamptz
+  last_called_at timestamptz
+  last_error text
+  retest_count int [not null]
+}
+
+Table proxies {
+  id bigint [pk]
+  name text [not null]
+  url text [unique, not null]
+  kind proxy_kind [not null]
+  purpose proxy_purpose [not null]
+  region text
+  supports_udp boolean [not null]
+  status resource_status [not null]
+  rate_limited_until timestamptz
+  last_error text
+  retest_count int [not null]
+}
+
+Table marketplace_products {
+  id bigint [pk]
+  store marketplace_store [not null]
+  kind account_purchase_kind [not null]
+  product_id int [not null]
+
+  indexes {
+    (store, kind) [unique]
+    (store, product_id) [unique]
+  }
+}
+
+Table marketplace_orders {
+  order_id uuid [pk]
+  store marketplace_store [not null]
+  kind account_purchase_kind [not null]
+  product_id int [not null]
+  status marketplace_order_status [not null]
+  idempotence_id text [unique, not null]
+  external_order_id text
+  steam_account_id bigint
+  test_on_match_id bigint
+  error_message text
+  test_result jsonb
+  completed_at timestamptz
+}
+
+Table resource_attempts {
+  id bigint [pk]
+  kind resource_kind [not null]
+  resource_id bigint [not null]
+  ok boolean [not null]
+  error text
+}
+
+Table steam_api_requests {
+  id bigint [pk]
+  match_id bigint
+  method_name text [not null]
+  response_time float
+  response_status text
+  response_size_kb float
+  error_response text
+  steam_api_key_id bigint
+  steam_account_id bigint
+
+  Note: 'Лог Steam Web API. Партиции по суткам UTC, 4 дня.'
+}
+
+Table steam_gc_requests {
+  id bigint [pk]
+  match_id bigint
+  method_name text [not null]
+  response_time float
+  response_status text
+  response_size_kb float
+  error_response text
+  steam_api_key_id bigint
+  steam_account_id bigint
+
+  Note: 'Лог Game Coordinator. Партиции по суткам UTC, 4 дня.'
+}
+
+Table replay_requests {
+  id bigint [pk]
+  match_id bigint
+  method_name text [not null]
+  response_time float
+  response_status text
+  response_size_kb float
+  error_response text
+
+  Note: 'Лог CDN replay. Партиции по суткам UTC, 4 дня.'
+}
+
+Table schema_migrations {
+  version varchar [pk]
+
+  Note: 'dbmate (Postgres)'
+}
+
+// ---------------------------------------------------------------------------
+// ClickHouse  slot 0–9 (−1 unknown). Join PG: slot 0–4 stay, 5–9 → slot+123
+// ---------------------------------------------------------------------------
+
+Table replay_ability_levels {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  ability_id text [not null]
+  ability_level uint [not null]
+  target text [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_actions {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  order_type uint [not null, note: 'dotaunitorder_t']
+  unit_index int [not null, note: '-1 if none']
+  target_index int [not null, note: '-1 if none']
+  ability_id int [not null, note: '-1 if none']
+  pos_x float [not null]
+  pos_y float [not null]
+  pos_z float [not null]
+  queued uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_alerts {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  kind text [not null]
+  player2 int [not null, note: '-1 if none']
+  value int [not null]
+  value2 int [not null]
+  x float [not null]
+  y float [not null]
+  key text [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_announcements {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  kind text [not null, note: 'CHAT_MESSAGE_*']
+  player1 int [not null]
+  player2 int [not null]
+  player3 int [not null]
+  value int [not null]
+  value2 uint [not null]
+  value3 uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_chat {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  kind replay_chat_kind [not null]
+  key text [not null]
+  unit text [not null]
+  channel uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_combat_log {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  type text [not null, note: 'DOTA_COMBATLOG_ prefix stripped']
+  attacker text [not null]
+  target text [not null]
+  inflictor text [not null]
+  sourcename text [not null]
+  targetsourcename text [not null]
+  attacker_slot int [not null]
+  target_slot int [not null]
+  attacker_account_id uint [not null]
+  target_account_id uint [not null]
+  value int [not null]
+  value_name text [not null]
+  gold_reason uint [not null]
+  xp_reason uint [not null]
+  attacker_hero uint [not null]
+  target_hero uint [not null]
+  attacker_illusion uint [not null]
+  target_illusion uint [not null]
+  last_hits uint [not null]
+  stun_duration float [not null]
+  slow_duration float [not null]
+  health int [not null]
+  ability_level uint [not null]
+  location_x float [not null]
+  location_y float [not null]
+  modifier_duration float [not null]
+  timestamp_raw float [not null]
+  attacker_team uint [not null]
+  target_team uint [not null]
+  stack_count uint [not null]
+  is_target_building uint [not null]
+  rune_type uint [not null]
+  networth uint [not null]
+  visible_radiant uint [not null]
+  visible_dire uint [not null]
+  is_ability_toggle_on uint [not null]
+  is_ability_toggle_off uint [not null]
+  obs_wards_placed uint [not null]
+  assist_player0 uint [not null]
+  assist_player1 uint [not null]
+  assist_player2 uint [not null]
+  assist_player3 uint [not null]
+  assist_players int[] [not null]
+  hidden_modifier uint [not null]
+  neutral_camp_type uint [not null]
+  is_heal_save uint [not null]
+  is_ultimate_ability uint [not null]
+  attacker_hero_level uint [not null]
+  target_hero_level uint [not null]
+  xpm uint [not null]
+  gpm uint [not null]
+  event_location uint [not null]
+  target_is_self uint [not null]
+  damage_type uint [not null]
+  invisibility_modifier uint [not null]
+  damage_category uint [not null]
+  building_type uint [not null]
+  modifier_elapsed_duration float [not null]
+  silence_modifier uint [not null]
+  heal_from_lifesteal uint [not null]
+  modifier_purged uint [not null]
+  spell_evaded uint [not null]
+  motion_controller_modifier uint [not null]
+  long_range_kill uint [not null]
+  modifier_purge_ability uint [not null]
+  modifier_purge_npc uint [not null]
+  root_modifier uint [not null]
+  total_unit_death_count uint [not null]
+  aura_modifier uint [not null]
+  armor_debuff_modifier uint [not null]
+  no_physical_damage_modifier uint [not null]
+  modifier_ability uint [not null]
+  modifier_hidden uint [not null]
+  inflictor_is_stolen_ability uint [not null]
+  kill_eater_event uint [not null]
+  unit_status_label uint [not null]
+  spell_generated_attack uint [not null]
+  at_night_time uint [not null]
+  attacker_has_scepter uint [not null]
+  neutral_camp_team uint [not null]
+  regenerated_health float [not null]
+  will_reincarnate uint [not null]
+  uses_charges uint [not null]
+  tracked_stat_id uint [not null]
+  modifier_purged_duration float [not null]
+  heal_from_regen uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+
+  Note: '~50–200k rows/match. CMsgDOTACombatLogEntry.'
+}
+
+Table replay_cosmetics {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  item_id uint [not null]
+
+  indexes {
+    (match_id, slot, item_id) [pk]
+  }
+}
+
+Table replay_draft {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  is_pick uint [not null, note: '0 ban, 1 pick']
+  hero_id int [not null]
+  team uint [not null, note: '0 Radiant, 1 Dire']
+  ord uint [not null]
+  clock int [not null]
+  extra_time_radiant int [not null]
+  extra_time_dire int [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_intervals {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  hero_id int [not null]
+  variant int [not null]
+  facet_hero_id int [not null]
+  unit text [not null]
+  x float [not null]
+  y float [not null]
+  gold uint [not null]
+  lh uint [not null]
+  xp uint [not null]
+  networth uint [not null]
+  denies uint [not null]
+  level uint [not null]
+  kills uint [not null]
+  deaths uint [not null]
+  assists uint [not null]
+  life_state uint [not null]
+  stuns float [not null]
+  obs_placed uint [not null]
+  sen_placed uint [not null]
+  creeps_stacked uint [not null]
+  camps_stacked uint [not null]
+  rune_pickups uint [not null]
+  towers_killed uint [not null]
+  roshans_killed uint [not null]
+  teamfight_participation float [not null]
+  firstblood_claimed uint [not null]
+  draft_stage uint [not null]
+  repicked uint [not null]
+  randomed uint [not null]
+  pred_vict uint [not null]
+  hp uint [not null]
+  max_hp uint [not null]
+  mana uint [not null]
+  max_mana uint [not null]
+  respawn uint [not null]
+
+  indexes {
+    (match_id, "time", tick, slot) [pk]
+  }
+
+  Note: '~1 Hz player snapshot'
+}
+
+Table replay_inventory {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  item_id text [not null]
+  item_slot int [not null, note: '-1 starting buy; 0–20 inventory']
+  charges uint [not null]
+  secondary_charges uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_meta {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null, note: '-1']
+  account_id uint [not null, note: '0']
+  parser_version uint [not null]
+  playback_time float [not null]
+  playback_ticks uint [not null]
+  playback_frames uint [not null]
+  game_winner uint [not null]
+  radiant_team_id uint [not null]
+  dire_team_id uint [not null]
+  metadata_version int [not null]
+  lobby_id bigint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+
+  Note: 'One row per match. CDemoFileInfo + CDOTAMatchMetadata.'
+}
+
+Table replay_meta_inventory {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  item_ids int[] [not null]
+  backpack_item_ids int[] [not null]
+  neutral_item_id int [not null]
+  neutral_enhancement_id int [not null]
+  kills uint [not null]
+  deaths uint [not null]
+  assists uint [not null]
+  level uint [not null]
+  last_hits uint [not null]
+  denies uint [not null]
+  flags uint [not null]
+
+  indexes {
+    (match_id, "time", slot) [pk]
+  }
+}
+
+Table replay_meta_kills {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  team uint [not null]
+  kill_type replay_kill_type [not null]
+  victim_slot uint [not null]
+  killer_slots int[] [not null]
+  bounty int [not null]
+
+  indexes {
+    (match_id, "time", slot) [pk]
+  }
+}
+
+Table replay_meta_player_kills {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  victim_slot uint [not null]
+  count uint [not null]
+
+  indexes {
+    (match_id, slot, victim_slot) [pk]
+  }
+
+  Note: 'slot killed victim_slot count times'
+}
+
+Table replay_meta_players {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  valve_slot uint [not null]
+  team_number uint [not null]
+  team_slot uint [not null]
+  camps_stacked uint [not null]
+  lane_selection_flags uint [not null]
+  rampages uint [not null]
+  triple_kills uint [not null]
+  aegis_snatched uint [not null]
+  rapiers_purchased uint [not null]
+  couriers_killed uint [not null]
+  net_worth_rank uint [not null]
+  support_gold_spent uint [not null]
+  observer_wards_placed uint [not null]
+  sentry_wards_placed uint [not null]
+  wards_dewarded uint [not null]
+  stun_duration float [not null]
+  fight_score float [not null]
+  farm_score float [not null]
+  support_score float [not null]
+  push_score float [not null]
+  hero_xp uint [not null]
+  ability_upgrades int[] [not null]
+  level_up_times uint[] [not null]
+  graph_net_worth float[] [not null]
+  graph_hero_damage float[] [not null]
+
+  indexes {
+    (match_id, slot) [pk]
+  }
+}
+
+Table replay_meta_purchases {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  item_id int [not null]
+
+  indexes {
+    (match_id, "time", slot) [pk]
+  }
+}
+
+Table replay_meta_teams {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null, note: '-1']
+  account_id uint [not null, note: '0']
+  parser_version uint [not null]
+  dota_team uint [not null, note: '2 Radiant, 3 Dire']
+  cm_first_pick uint [not null]
+  cm_captain_player_id int [not null]
+  cm_penalty uint [not null]
+  graph_experience float[] [not null]
+  graph_gold_earned float[] [not null]
+  graph_net_worth float[] [not null]
+
+  indexes {
+    (match_id, dota_team) [pk]
+  }
+}
+
+Table replay_meta_tips {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  source_slot uint [not null]
+  target_slot uint [not null]
+  tip_amount uint [not null]
+  event_id uint [not null]
+
+  indexes {
+    (match_id, slot) [pk]
+  }
+}
+
+Table replay_neutrals {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  kind replay_neutral_kind [not null]
+  key text [not null]
+  value int [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_pings {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  x float [not null]
+  y float [not null]
+  ping_type uint [not null]
+  target int [not null, note: '-1 if none']
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table replay_wards {
+  match_id bigint [not null]
+  start_time timestamptz [not null]
+  "time" int [not null]
+  tick uint [not null]
+  slot int [not null]
+  account_id uint [not null]
+  parser_version uint [not null]
+  kind replay_ward_kind [not null]
+  is_left uint [not null, note: '0 place, 1 expire/destroy']
+  x float [not null]
+  y float [not null]
+  z float [not null]
+  ehandle uint [not null]
+
+  indexes {
+    (match_id, "time", tick) [pk]
+  }
+}
+
+Table clickhouse_schema_migrations {
+  version text [pk]
+  ts timestamptz [not null]
+  applied uint [not null]
+
+  Note: 'dbmate (ClickHouse). Table name: schema_migrations'
+}
+
+// ---------------------------------------------------------------------------
+// FKs (Postgres) and logical joins
+// ---------------------------------------------------------------------------
+
+Ref: series.league_id > leagues.league_id
+Ref: series.radiant_team_id > teams.team_id
+Ref: series.dire_team_id > teams.team_id
+
+Ref: matches.league_id > leagues.league_id
+Ref: matches.series_id > series.series_id
+Ref: matches.radiant_team_id > teams.team_id
+Ref: matches.dire_team_id > teams.team_id
+Ref: matches.patch > patches.patch
+Ref: matches.game_mode > game_modes.game_mode
+Ref: matches.lobby_type > lobby_types.lobby_type
+Ref: matches.cluster > clusters.cluster
+
+Ref: leagues.region > regions.region
+Ref: clusters.region > regions.region
+
+Ref: match_players.match_id > matches.match_id [delete: cascade]
+Ref: match_players.account_id > players.account_id
+Ref: match_players.hero_id > heroes.hero_id
+
+Ref: match_player_buffs.match_id > matches.match_id [delete: cascade]
+Ref: match_player_buffs.buff_id > permanent_buffs.buff_id
+
+Ref: match_player_ability_upgrades.match_id > matches.match_id [delete: cascade]
+Ref: match_player_ability_upgrades.ability_id > abilities.ability_id
+
+Ref: match_player_damage_breakdown.match_id > matches.match_id [delete: cascade]
+Ref: match_player_units.match_id > matches.match_id [delete: cascade]
+Ref: match_coaches.match_id > matches.match_id [delete: cascade]
+Ref: match_broadcasters.match_id > matches.match_id [delete: cascade]
+Ref: match_draft.match_id > matches.match_id [delete: cascade]
+Ref: match_draft.hero_id > heroes.hero_id
+Ref: match_objectives.match_id > matches.match_id [delete: cascade]
+
+Ref: match_replays.match_id > matches.match_id [delete: cascade]
+Ref: match_replays.steam_account_id > steam_accounts.id [delete: set null]
+Ref: match_replays.proxy_id > proxies.id [delete: set null]
+
+Ref: players.current_team_id > teams.team_id
+
+Ref: hero_abilities.hero_id > heroes.hero_id [delete: cascade]
+Ref: hero_abilities.ability_id > abilities.ability_id [delete: cascade]
+Ref: hero_facets.hero_id > heroes.hero_id [delete: cascade]
+
+Ref: live_match_ticks.match_id > matches.match_id
+Ref: live_player_ticks.match_id > matches.match_id
+
+Ref: league_ingest_runs.league_id > leagues.league_id
+Ref: steam_accounts.proxy_id > proxies.id [delete: set null]
+Ref: steam_api_keys.account_id > steam_accounts.id [delete: cascade]
+Ref: steam_api_keys.proxy_id > proxies.id [delete: set null]
+Ref: marketplace_orders.steam_account_id > steam_accounts.id [delete: set null]
+Ref: marketplace_orders.test_on_match_id > matches.match_id
+Ref: steam_api_requests.match_id > matches.match_id
+Ref: steam_api_requests.steam_api_key_id > steam_api_keys.id
+Ref: steam_api_requests.steam_account_id > steam_accounts.id
+Ref: steam_gc_requests.match_id > matches.match_id
+Ref: steam_gc_requests.steam_account_id > steam_accounts.id
+Ref: replay_requests.match_id > matches.match_id
+
+Ref: replay_ability_levels.match_id > matches.match_id
+Ref: replay_actions.match_id > matches.match_id
+Ref: replay_alerts.match_id > matches.match_id
+Ref: replay_announcements.match_id > matches.match_id
+Ref: replay_chat.match_id > matches.match_id
+Ref: replay_combat_log.match_id > matches.match_id
+Ref: replay_cosmetics.match_id > matches.match_id
+Ref: replay_draft.match_id > matches.match_id
+Ref: replay_intervals.match_id > matches.match_id
+Ref: replay_inventory.match_id > matches.match_id
+Ref: replay_meta.match_id > matches.match_id
+Ref: replay_meta_inventory.match_id > matches.match_id
+Ref: replay_meta_kills.match_id > matches.match_id
+Ref: replay_meta_player_kills.match_id > matches.match_id
+Ref: replay_meta_players.match_id > matches.match_id
+Ref: replay_meta_purchases.match_id > matches.match_id
+Ref: replay_meta_teams.match_id > matches.match_id
+Ref: replay_meta_tips.match_id > matches.match_id
+Ref: replay_neutrals.match_id > matches.match_id
+Ref: replay_pings.match_id > matches.match_id
+Ref: replay_wards.match_id > matches.match_id
+
+TableGroup postgres_entities {
+  leagues
+  series
+  matches
+  match_players
+  match_player_buffs
+  match_player_ability_upgrades
+  match_player_damage_breakdown
+  match_player_units
+  match_coaches
+  match_broadcasters
+  match_draft
+  match_objectives
+  match_replays
+  players
+  teams
+}
+
+TableGroup postgres_catalogs {
+  heroes
+  items
+  patches
+  abilities
+  hero_abilities
+  hero_facets
+  permanent_buffs
+  game_modes
+  lobby_types
+  regions
+  clusters
+  xp_levels
+}
+
+TableGroup postgres_live {
+  live_match_ticks
+  live_player_ticks
+}
+
+TableGroup postgres_ops {
+  ingest_cursors
+  league_ingest_runs
+  settings
+  steam_accounts
+  steam_api_keys
+  proxies
+  marketplace_products
+  marketplace_orders
+  resource_attempts
+  steam_api_requests
+  steam_gc_requests
+  replay_requests
+  schema_migrations
+}
+
+TableGroup clickhouse_replay {
+  replay_ability_levels
+  replay_actions
+  replay_alerts
+  replay_announcements
+  replay_chat
+  replay_combat_log
+  replay_cosmetics
+  replay_draft
+  replay_intervals
+  replay_inventory
+  replay_neutrals
+  replay_pings
+  replay_wards
+}
+
+TableGroup clickhouse_meta {
+  replay_meta
+  replay_meta_inventory
+  replay_meta_kills
+  replay_meta_player_kills
+  replay_meta_players
+  replay_meta_purchases
+  replay_meta_teams
+  replay_meta_tips
+  clickhouse_schema_migrations
+}

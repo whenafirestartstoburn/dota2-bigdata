@@ -1,5 +1,8 @@
 # Job graph
 
+Русский обзор (две таблицы: пайплайн матча и прочие джобы):
+[`job-graph-ru.md`](./job-graph-ru.md).
+
 Companions: [`worker-architecture.md`](./worker-architecture.md)
 (roles, queues, retries), [`data-schema.md`](./data-schema.md)
 (columns), [`request-logs.md`](./request-logs.md) (Valve attempt
@@ -179,6 +182,7 @@ object.
 | Trigger | Job |
 |---|---|
 | worker boot (`startupJobsFor`) | live polls + `poll_finished_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `retest_disabled_resources` |
+| cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
 | cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` 05:00 UTC |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
 | self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk (`steam_api_min_interval_ms`), archive / replenish / retest / request-log maintain |
@@ -204,7 +208,10 @@ archive 30, request-log maintain 40.
 ### `poll_live_games`
 
 **Cadence.** Boot + every `settings.live_poll_interval_ms` (seed 2 s),
-`jobKey = poll_live_games`.
+`jobKey = poll_live_games`. `maxAttempts = 25` (not 1): a Postgres crash
+that kills both the poll and the `finally` reschedule is retried after
+graphile reconnects. `ensure_loop_jobs` (LISTEN recovery + 1 min cron)
+re-enqueues the key if the row is missing or permafailed.
 
 **Calls.** `IDOTA2Match_570/GetLiveLeagueGames/v1` via `getLiveLeagueGames`.
 Writes `steam_api_requests` (`method_name = GetLiveLeagueGames`).
@@ -247,7 +254,8 @@ Sets cursor `next_live_poll_at`. Does **not** enqueue details or download.
 
 ### `poll_top_live`
 
-**Cadence.** Same interval, `jobKey = poll_top_live`.
+**Cadence.** Same interval, `jobKey = poll_top_live`. Same retry /
+`ensure_loop_jobs` recovery as `poll_live_games`.
 
 **Calls.** `IDOTA2Match_570/GetTopLiveGame/v1` (`partner=0`) via
 `getTopLiveGames`. Log method `GetTopLiveGame`. Cursor
@@ -270,7 +278,8 @@ Sets cursor `next_live_poll_at`. Does **not** enqueue details or download.
 
 ### `poll_realtime_stats`
 
-**Cadence.** Same interval. Does not enqueue other jobs.
+**Cadence.** Same interval. Does not enqueue other jobs. Same retry /
+`ensure_loop_jobs` recovery as `poll_live_games`.
 
 **Calls.** `IDOTA2MatchStats_570/GetRealtimeStats/v1` for
 `status = live AND server_steam_id IS NOT NULL`, oldest
@@ -323,8 +332,8 @@ Does not touch matches.
 
 **Cadence.** Boot + self-requeue every `steam_api_min_interval_ms` on
 `jobKey = walk_league_history`. 5-minute cron is a watchdog
-(`preserve_run_at`). Payload may pin `league_id` while older pages
-remain.
+(`preserve_run_at`); `ensure_loop_jobs` also revives a permafailed key.
+Payload may pin `league_id` while older pages remain.
 
 **Calls.** One `IDOTA2Match_570/GetMatchHistory/v1` page
 (`league_id`, `matches_requested = history_page_size`, optional
@@ -357,7 +366,8 @@ remain.
 
 ### `poll_finished_history`
 
-**Cadence.** Boot + every `history_fast_poll_ms` (seed 5 s).
+**Cadence.** Boot + every `history_fast_poll_ms` (seed 5 s). Same retry /
+`ensure_loop_jobs` recovery as `poll_live_games`.
 
 **Calls.** Page `GetMatchHistory` per due `league_id` that has an armed
 waiter (`history_next_poll_at IS NOT NULL`, `match_seq_num IS NULL`,
@@ -587,6 +597,21 @@ fails `*_error_threshold`.
 **Calls.** `SELECT public.maintain_request_logs()` — create UTC daily
 partitions for `[today-4d, today+2d)` and drop days older than 4.
 The worker does not issue `CREATE`/`DROP` itself. No match updates.
+
+---
+
+### `ensure_loop_jobs`
+
+**Cadence.** Every minute on every role (`jobKey = ensure_loop_jobs`).
+Also runs from the worker process when graphile LISTEN drops and
+reconnects (`pool:listen:error` then `pool:listen:success`).
+
+**Calls.** None to Valve. For each self-reschedule `jobKey` owned by
+this role (`loopJobsFor`), if `graphile_worker.jobs` has no row with
+that key that is in-flight (`locked_at IS NOT NULL`) or still retryable
+(`attempts < max_attempts`), `addJob` replace re-enqueues it. A
+permafailed `maxAttempts = 1` corpse from a Postgres crash is that
+case. Does not pull forward a healthy future `run_at`.
 
 ---
 
