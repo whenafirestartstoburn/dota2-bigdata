@@ -131,6 +131,7 @@ describe('findSchemaDrift', () => {
 										hero_id: 8,
 										hero_variant: 1,
 									},
+									{ player_slot: 1, hero_id: 2 },
 								],
 							},
 						],

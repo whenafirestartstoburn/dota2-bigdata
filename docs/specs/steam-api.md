@@ -24,7 +24,8 @@ and side `abilities`; `GetTopLiveGame` query-echo envelope
 (`search_key`, `league_id`, `hero_id`, `start_game`, `num_games`,
 `game_list_index`, `specific_games`, `bot_game`) plus
 `is_player_draft` / `is_watch_eligible` on each game;
-`GetMatchHistory` player `hero_variant`; `GetRealtimeStats`
+`GetMatchHistory` player `hero_variant`. Anonymous history players
+omit `account_id` — that is not missing. `GetRealtimeStats`
 `match.lobby_type` / `start_timestamp` / `is_player_draft`, team
 `team_tag` / `team_logo_url`, and envelope `delta_frame`. Also
 `leagueid`, `accountid`/`heroid`, scoreboard `death` vs `deaths`.

@@ -125,7 +125,7 @@ export const liveLeagueGamesResponseSchema = z.object({
 })
 
 export const historyPlayerSchema = z.object({
-	account_id: z.number(),
+	account_id: z.number().optional(),
 	player_slot: z.number(),
 	hero_id: z.number().default(0),
 	team_number: z.number().optional(),

@@ -185,8 +185,14 @@ const liveLeagueGameSpec: DriftSpec = {
 }
 
 const historyPlayerSpec: DriftSpec = {
-	required: ['account_id', 'player_slot'],
-	optional: ['hero_id', 'team_number', 'team_slot', 'hero_variant'],
+	required: ['player_slot'],
+	optional: [
+		'account_id',
+		'hero_id',
+		'team_number',
+		'team_slot',
+		'hero_variant',
+	],
 }
 
 const historyMatchSpec: DriftSpec = {
