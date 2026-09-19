@@ -44,7 +44,10 @@ export const baseEnv = z.object({
 		(value) => (value === '' ? undefined : value),
 		z.string().url().optional(),
 	),
-	TELEGRAM_NOTIFICATIONS_CHAT_TYPE: z.string().default('dev_dataluna'),
+	TELEGRAM_NOTIFICATIONS_CHAT_TYPE: z.preprocess(
+		(value) => (value === '' ? undefined : value),
+		z.string().optional(),
+	),
 	TELEGRAM_NOTIFICATIONS_CHAT_ID: z.preprocess(
 		(value) => (value === '' ? undefined : value),
 		z.string().optional(),

@@ -127,6 +127,8 @@ Marketplace / GC:
 
 Pending `marketplace_orders` count toward the desired pool so two workers do not over-buy. Credential deaths (`InvalidPassword`, Web API 403) disable immediately and skip retest.
 
+A `failed` order (buy-account or `settle_marketplace_orders`) does not Telegram immediately. The last four failed rows of that `store`+`kind` since the latest success, within one hour, must share the same error signature (ids and long numbers stripped) — first fail plus three retries. Then at most one notify per signature per 10 minutes (`steam_api_schema_alerts` key `marketplace:{store}:{kind}:{signature}`). Same fire-and-forget Telegram as schema drift: 2 s timeout, errors logged, buy/settle continues. Empty `TELEGRAM_NOTIFICATIONS_URL` or destination skips HTTP and logs.
+
 ## After delivery
 
 Delivery text is parsed for Steam credentials. Two layouts are accepted: `LOGIN:PASSWORD:EMAIL:EMAILPASSWORD` after `Ваш заказ:` (api_key goods), and labeled `Login Steam` / `Password Steam` / `Email Login` / `Email Password` (some GC goods; the banner is optional). Logs redact both password fields.

@@ -124,8 +124,8 @@ historical replay / walk 20.
 |---|---|---|
 | `fetch_leagues` | historical | Раз в час GetLeagueInfoList (плюс live-фиды, чтобы не пропустить живые `league_id`). Upsert в Postgres `leagues` (`LIVE` / `UPCOMING` / `FINISHED`). Матчи не трогает. |
 | `sync_catalogs` | historical | На старте и раз в сутки в 05:00 UTC обновляет Postgres `heroes`, `items`, `abilities`, `patches` и остальные справочники. Если `heroes` пуст — ingest не стартует. |
-| `replenish_accounts` | match-processing | Если готовых API-ключей или GC-аккаунтов меньше порога — покупка на dark.shopping. Пишет `marketplace_orders`, новые строки в `steam_api_keys` / `steam_accounts`. |
-| `settle_marketplace_orders` | match-processing | Раз в минуту опрашивает `marketplace_orders` в `pending`. Dark Shopping `completed`/`ok` — та же выдача, что buy-account; `in_process` держит `pending` до часа от `created_at`, потом `failed`. |
+| `replenish_accounts` | match-processing | Если готовых API-ключей или GC-аккаунтов меньше порога — покупка на dark.shopping. Пишет `marketplace_orders`, новые строки в `steam_api_keys` / `steam_accounts`. Стабильный `failed` (та же ошибка после трёх ретраев) — Telegram, не чаще раза в 10 минут. |
+| `settle_marketplace_orders` | match-processing | Раз в минуту опрашивает `marketplace_orders` в `pending`. Dark Shopping `completed`/`ok` — та же выдача, что buy-account; `in_process` держит `pending` до часа от `created_at`, потом `failed`. Тот же Telegram при стабильном `failed`. |
 | `retest_disabled_resources` | match-processing | Проверяет `disabled` прокси, GC-аккаунты и ключи. Успех — статус `ready`. Пишет `proxies`, `steam_accounts`, `steam_api_keys`. |
 | `maintain_request_logs` | match-processing | Создаёт суточные партиции логов Valve на два дня вперёд, дропает старше 3 дней (`steam_api_requests`, `steam_gc_requests`, `replay_requests`). |
 | `run_scheduled_job` | все роли | Именованная очередь не держит отложенный `runAt`. Когда срок наступил — возвращает работу на `details:*` / `seq:*` / `replay-*`. |

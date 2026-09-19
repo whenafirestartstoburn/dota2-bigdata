@@ -85,8 +85,8 @@ transitions, and ClickHouse / catalog inserts:
 | `download_replay` | after URL is stored | GET that URL → stream `.dem.bz2` to S3 |
 | `archive_parsed_replays` | every `settings.replay_archive_interval_ms` + startup | copy parsed `.dem.bz2` to cold storage, then delete the hot object |
 | `maintain_request_logs` | hourly + startup | create UTC daily partitions for `steam_api_requests` / `steam_gc_requests` / `replay_requests` two days ahead; drop partitions older than 3 days |
-| `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit |
-| `settle_marketplace_orders` | every `settings.marketplace_settle_interval_ms` + startup | poll pending `marketplace_orders`; fulfill when Dark Shopping is `completed`/`ok`; fail after `marketplace_pending_ttl_ms` (seed 1 h) if still `in_process` |
+| `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit; Telegram after a stable failed error (3 retries, 10 min cooldown) |
+| `settle_marketplace_orders` | every `settings.marketplace_settle_interval_ms` + startup | poll pending `marketplace_orders`; fulfill when Dark Shopping is `completed`/`ok`; fail after `marketplace_pending_ttl_ms` (seed 1 h) if still `in_process`; same Telegram on a stable fail |
 | `retest_disabled_resources` | every `settings.retest_interval_ms` + startup | probe disabled proxies / GC accounts / API keys with `retest_count` below the matching `*_retest_max`; restore on success; give up after max |
 | `sync_catalogs` | worker boot (sync, before ingest jobs) + daily 05:00 UTC | rebuild `heroes` / `items` / `patches` / `abilities` / facets / modes / regions from d2vpkr VPK + odota `json/` |
 

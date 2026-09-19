@@ -4,6 +4,7 @@ import {
 	fulfillBoughtDelivery,
 } from '#src/marketplace/buy-account'
 import { parseDarkOrderIdFromMessage } from '#src/marketplace/dark-shopping'
+import { scheduleMarketplaceFailNotify } from '#src/marketplace/fail-alert'
 import {
 	finishMarketplaceOrder,
 	listPendingMarketplaceOrders,
@@ -46,6 +47,13 @@ async function failPendingOrder(
 		errorMessage,
 	})
 	observeMarketplaceOrder(order.store, order.kind, 'failed')
+	scheduleMarketplaceFailNotify({
+		store: order.store,
+		kind: order.kind,
+		productId: order.productId,
+		orderId: order.id,
+		errorMessage,
+	})
 	logger.warn(
 		{
 			orderId: order.id,

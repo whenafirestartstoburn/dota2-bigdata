@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { findSchemaDrift, STEAM_API_DRIFT } from '#src/steam/api/drift'
 import {
+	claimAlert,
 	claimSchemaAlert,
 	formatSchemaDriftMessage,
 	notifySchemaDrift,
@@ -11,12 +12,13 @@ import { db, sql } from '#src/utils/db'
 
 const METHOD = `test_drift_${crypto.randomUUID()}`
 const NOTIFY_METHOD = `test_drift_notify_${crypto.randomUUID()}`
+const COOLDOWN_KEY = `test_alert_cd_${crypto.randomUUID()}`
 
 afterAll(async () => {
 	try {
 		await db.execute(sql`
 			DELETE FROM steam_api_schema_alerts
-			WHERE method_name IN (${METHOD}, ${NOTIFY_METHOD})
+			WHERE method_name IN (${METHOD}, ${NOTIFY_METHOD}, ${COOLDOWN_KEY})
 		`)
 	} catch {
 		// table exists only after the response_body migration
@@ -46,6 +48,17 @@ describe('claimSchemaAlert', () => {
 		`)
 		expect(await claimSchemaAlert(METHOD)).toBe(true)
 	})
+
+	test('claimAlert uses a custom cooldown window', async () => {
+		expect(await claimAlert(COOLDOWN_KEY, 10 * 60 * 1000)).toBe(true)
+		expect(await claimAlert(COOLDOWN_KEY, 10 * 60 * 1000)).toBe(false)
+		await db.execute(sql`
+			UPDATE steam_api_schema_alerts
+			SET last_notified_at = now() - interval '11 minutes'
+			WHERE method_name = ${COOLDOWN_KEY}
+		`)
+		expect(await claimAlert(COOLDOWN_KEY, 10 * 60 * 1000)).toBe(true)
+	})
 })
 
 describe('postTelegramNotification', () => {
@@ -66,6 +79,20 @@ describe('postTelegramNotification', () => {
 			text: 'hello',
 			parseMode: 'HTML',
 		})
+	})
+
+	test('skips the HTTP call when chat dest is empty', async () => {
+		let called = 0
+		await postTelegramNotification('hello', {
+			url: 'http://telegram-notifications:8090',
+			chatType: '',
+			chatId: '',
+			fetchImpl: (async () => {
+				called += 1
+				return new Response('no', { status: 500 })
+			}) as typeof fetch,
+		})
+		expect(called).toBe(0)
 	})
 
 	test('skips the HTTP call when url is empty', async () => {
@@ -117,6 +144,7 @@ describe('notifySchemaDrift', () => {
 			drift ?? { extra: [], missing: [] },
 			{
 				url: 'http://telegram-notifications:8090',
+				chatType: 'dev_dataluna',
 				fetchImpl: (async () => {
 					throw new Error('boom')
 				}) as typeof fetch,

@@ -124,6 +124,35 @@ export async function finishMarketplaceOrder(input: {
 	`)
 }
 
+export async function listRecentFailedErrorMessages(input: {
+	store: MarketplaceStore
+	kind: AccountPurchaseKind
+	limit: number
+	windowMs: number
+}): Promise<string[]> {
+	const rows = await db.execute(sql`
+		SELECT error_message
+		FROM marketplace_orders
+		WHERE store = ${input.store}::marketplace_store
+			AND kind = ${input.kind}::account_purchase_kind
+			AND status = 'failed'::marketplace_order_status
+			AND updated_at > now() - (${input.windowMs} * interval '1 millisecond')
+			AND updated_at > COALESCE(
+				(
+					SELECT MAX(updated_at)
+					FROM marketplace_orders AS ok
+					WHERE ok.store = ${input.store}::marketplace_store
+						AND ok.kind = ${input.kind}::account_purchase_kind
+						AND ok.status = 'success'::marketplace_order_status
+				),
+				'-infinity'::timestamptz
+			)
+		ORDER BY updated_at DESC, id DESC
+		LIMIT ${input.limit}
+	`)
+	return rows.map((row) => asText(row.error_message) ?? '')
+}
+
 export async function listPendingMarketplaceOrders(): Promise<
 	MarketplaceOrder[]
 > {

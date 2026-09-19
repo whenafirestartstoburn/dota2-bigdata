@@ -633,7 +633,9 @@ whitelisted `dark.shopping` product (`marketplaceBuyMax` per tick).
 on success, new `steam_api_keys` / `steam_accounts` (`status = ready`)
 after IMAP + Steam probe. Does not touch matches. A Dark Shopping wait
 that exceeds `marketplace_wait_ms` leaves the row `pending`;
-`settle_marketplace_orders` resumes it.
+`settle_marketplace_orders` resumes it. A stable `failed` streak
+(same error signature on the first fail plus three retries) sends a
+Telegram alert, at most once per 10 minutes.
 
 ---
 
@@ -649,7 +651,9 @@ in_process after 120000ms`). `completed`/`ok` → same provision as
 buy-account. `error`/`canceled`/`refund` → `failed`. `in_process` (and
 other pending statuses) stay `pending` until
 `marketplace_pending_ttl_ms` after `created_at` (seed 1 h), then
-`failed`. Does not touch matches.
+`failed`. A stable `failed` streak (same error signature after three
+retries) sends the same Telegram alert as replenish. Does not touch
+matches.
 
 ---
 

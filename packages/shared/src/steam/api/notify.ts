@@ -16,13 +16,13 @@ export type TelegramNotifyDeps = {
 	timeoutMs?: number
 }
 
-export async function claimSchemaAlert(
-	method: string,
-	cooldownMs = SCHEMA_DRIFT_COOLDOWN_MS,
+export async function claimAlert(
+	key: string,
+	cooldownMs: number,
 ): Promise<boolean> {
 	const rows = await db.execute(sql`
 		INSERT INTO steam_api_schema_alerts (method_name, last_notified_at)
-		VALUES (${method}, now())
+		VALUES (${key}, now())
 		ON CONFLICT (method_name) DO UPDATE
 		SET last_notified_at = now()
 		WHERE steam_api_schema_alerts.last_notified_at
@@ -32,7 +32,14 @@ export async function claimSchemaAlert(
 	return rows.length > 0
 }
 
-function escapeHtml(value: string): string {
+export async function claimSchemaAlert(
+	method: string,
+	cooldownMs = SCHEMA_DRIFT_COOLDOWN_MS,
+): Promise<boolean> {
+	return claimAlert(method, cooldownMs)
+}
+
+export function escapeHtml(value: string): string {
 	return value
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')
@@ -67,6 +74,12 @@ export async function postTelegramNotification(
 	if (url == null || url === '') return
 	const chatId = deps.chatId ?? env.TELEGRAM_NOTIFICATIONS_CHAT_ID
 	const chatType = deps.chatType ?? env.TELEGRAM_NOTIFICATIONS_CHAT_TYPE
+	if (
+		(chatId == null || chatId === '') &&
+		(chatType == null || chatType === '')
+	) {
+		return
+	}
 	const body =
 		chatId != null && chatId !== ''
 			? { chatId, text, parseMode: 'HTML' as const }
@@ -90,7 +103,16 @@ export async function notifySchemaDrift(
 	deps: TelegramNotifyDeps = {},
 ): Promise<void> {
 	const url = deps.url ?? env.TELEGRAM_NOTIFICATIONS_URL
+	const chatId = deps.chatId ?? env.TELEGRAM_NOTIFICATIONS_CHAT_ID
+	const chatType = deps.chatType ?? env.TELEGRAM_NOTIFICATIONS_CHAT_TYPE
 	if (url == null || url === '') {
+		logger.warn({ method, ...drift }, 'steam api schema drift')
+		return
+	}
+	if (
+		(chatId == null || chatId === '') &&
+		(chatType == null || chatType === '')
+	) {
 		logger.warn({ method, ...drift }, 'steam api schema drift')
 		return
 	}

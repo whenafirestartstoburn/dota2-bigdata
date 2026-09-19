@@ -44,8 +44,15 @@ After JSON parse, walk the raw body against the method’s field spec.
 | missing | required DTO key absent on a present object | optional/default keys omitted; **empty arrays** (no child objects to check) |
 
 Notify at most once per method per hour
-(`steam_api_schema_alerts.last_notified_at`). The HTTP call is
-fire-and-forget: 2 s timeout, errors logged, ingest continues.
+(`steam_api_schema_alerts.last_notified_at`). The same table also
+holds marketplace fail cooldown keys (`marketplace:{store}:{kind}:{signature}`,
+10 minutes; see [`marketplace-buy-account.md`](./marketplace-buy-account.md)).
+The HTTP call is fire-and-forget: 2 s timeout, errors logged, ingest
+continues.
 
-`POST {TELEGRAM_NOTIFICATIONS_URL}/send` with `chatType` (or
-`chatId`) and HTML `text`. Empty URL skips the HTTP call.
+`POST {TELEGRAM_NOTIFICATIONS_URL}/send` with HTML `text` and a
+destination from env: `TELEGRAM_NOTIFICATIONS_CHAT_ID` (any Telegram
+chat id / `@username`) or `TELEGRAM_NOTIFICATIONS_CHAT_TYPE` (a name
+registered in telegram-notifications, e.g. `dev_dataluna`). `chatId`
+wins when both are set. Empty URL or empty destination skips the HTTP
+call.

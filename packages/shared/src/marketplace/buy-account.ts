@@ -10,6 +10,7 @@ import {
 	upsertSteamAccount,
 } from '#src/components/resources'
 import { getAppSettings } from '#src/components/settings'
+import { scheduleMarketplaceFailNotify } from '#src/marketplace/fail-alert'
 import {
 	isOutlookMailer,
 	OutlookImapError,
@@ -356,6 +357,13 @@ async function buyOne(
 			errorMessage: classified.errorMessage,
 		})
 		observeMarketplaceOrder(input.store, input.type, 'failed')
+		scheduleMarketplaceFailNotify({
+			store: input.store,
+			kind: input.type,
+			productId: input.productId,
+			orderId: order.id,
+			errorMessage: classified.errorMessage,
+		})
 		return {
 			id: order.id,
 			status: 'failed',
