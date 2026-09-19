@@ -50,6 +50,8 @@ bun run api       # another terminal
 | `fetch_leagues` | historical | hourly + startup | `GetLeagueInfoList`, upsert `leagues` |
 | `walk_league_history` | historical | continuous | `GetMatchHistory` pages (discovery only) |
 | `poll_finished_history` | live + historical | every 5s | paginated `GetMatchHistory` waiter after a live match leaves the feed; independent of GC / replay |
+| `walk_seq_history` | live + historical | continuous | claim `GetMatchHistoryBySequenceNum` windows (`seq_walk_cursor`, parallelism 2) |
+| `fetch_seq_window` | live + historical | on demand | one seq window (100 matches); upsert `league_id > 0`, enqueue GC |
 | `fetch_seq_details` | live + historical | on demand | `GetMatchHistoryBySequenceNum` for one match (parallel with GC) |
 | `process_league` | historical | via HTTP | reset + walk one league |
 | `fetch_match_details` | match-processing | on demand | GC `CMsgDOTAMatch` → replay URL |

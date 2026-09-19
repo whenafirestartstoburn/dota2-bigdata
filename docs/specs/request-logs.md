@@ -41,6 +41,7 @@ row must not fail the insert.
 | `response_status` | HTTP status (`200`, `429`), GC `EResult` (`1`, `15`), or `timeout` / `error` when there was no status |
 | `response_size_kb` | response bytes / 1024; replay success uses the stored object size |
 | `error_response` | non-success only, `char_length <= 1000` (app truncates) |
+| `response_body` | jsonb, `steam_api_requests` only: parsed JSON of a 200 response. Null on errors and on GC / replay rows |
 | `steam_api_key_id` | `steam_api_keys.id` that supplied the Web API key. Set on `steam_api_requests`. Null on GC (no key) and on rows written before this column |
 | `steam_account_id` | `steam_accounts.id` that owns the API key, or the GC session account. Set on `steam_api_requests` and `steam_gc_requests`. Not on `replay_requests` |
 
@@ -66,9 +67,10 @@ not fail ingest (warn and continue).
 
 `maintain_request_logs` (match-processing, startup + hourly,
 priority 40) calls `public.maintain_request_logs()`. It creates UTC
-partitions for `[today-4d, today+2d)` and `DROP`s partitions whose
-day is older than 4 days. The worker does not issue `CREATE TABLE` /
-`DROP TABLE` itself.
+partitions for `[today-3d, today+2d)` and `DROP`s partitions whose
+day is older than 3 days. The worker does not issue `CREATE TABLE` /
+`DROP TABLE` itself. Typed Steam DTOs and schema-drift alerts:
+[`steam-api.md`](./steam-api.md).
 
 ## Grafana
 

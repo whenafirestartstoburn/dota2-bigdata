@@ -165,7 +165,6 @@ Table leagues {
   status league_lifecycle [not null]
   fetched_at timestamptz [not null]
   last_match_seq_num bigint
-  history_head_match_id bigint
   history_tail_match_id bigint
   history_exhausted boolean [not null]
   history_checked_at timestamptz
@@ -182,7 +181,6 @@ Table series {
   radiant_wins int [not null]
   dire_wins int [not null]
   first_match_id bigint
-  last_match_id bigint
   started_at timestamptz
   ended_at timestamptz
 

@@ -32,7 +32,9 @@ import { taskListFor } from '#src/tasks'
 
 const role = env.WORKER_ROLE
 if (role === 'all' || role === 'match-processing') seedIdleGcSeries()
-if (role === 'all' || role === 'historical') seedIdleHistorySeries()
+if (role === 'all' || role === 'historical' || role === 'live') {
+	seedIdleHistorySeries()
+}
 seedIdleWebApiSeries()
 seedIdleReplaySeries()
 const taskNames = taskNamesFor(role)

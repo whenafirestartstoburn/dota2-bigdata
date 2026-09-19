@@ -15,8 +15,8 @@ waiter history/seq: они идут **параллельно**. Walk лиги т
 ```
 live                      history / seqnum              historical
 poll_live_games           poll_finished_history         walk_league_history
-poll_top_live                       │                   process_league
-poll_realtime_stats                 ▼                            │
+poll_top_live             walk_seq_history              process_league
+poll_realtime_stats       fetch_seq_window                       │
         │                 fetch_seq_details                      │
         │                           │                            │
         └───────────────────────────┼────────────────────────────┘
@@ -101,6 +101,8 @@ parsed
 | Historical | `walk_league_history` | historical | По одной странице GetMatchHistory обходит лиги. Upsert в Postgres `matches`, `match_players`, `teams`, `series`; курсоры — в `leagues`. Новые и ранние статусы → `awaiting_details`. Сразу ставит в очередь `fetch_seq_details` и `fetch_match_details`. |
 | Historical | `process_league` | historical | Тот же GetMatchHistory, но для одной лиги со сбросом курсоров. HTTP `POST /api/leagues/process-finished` сейчас ставит `walk_league_history`, не этот identifier. |
 | History / seqnum | `poll_finished_history` | live + historical | Раз в пять секунд для матчей без seqnum вызывается GetMatchHistory по лиге. Нашёл — пишет `match_seq_num` в `matches`, ранние статусы → `awaiting_details`, в очередь seq и GC. Не нашёл за весь бюджет и статус ещё `awaiting_history` — `failed`. Если GC уже продвинул матч, статус не меняет. |
+| History / seqnum | `walk_seq_history` | live + historical | Диспетчер курсора `settings.seq_walk_cursor`. Занимает окно, ставит `fetch_seq_window` (до `seq_walk_parallelism`, по умолчанию 2). Valve не вызывает. |
+| History / seqnum | `fetch_seq_window` | live + historical | GetMatchHistoryBySequenceNum на 100 матчей с занятого seqnum. Про-матчи (`league_id > 0`) пишет как seq-блоб и ставит GC. Пустой ответ — курсор −2000 и пауза 1 мин. |
 | History / seqnum | `fetch_seq_details` | live + historical | По `match_seq_num` вызывается GetMatchHistoryBySequenceNum. Дописывает в Postgres `matches`, `match_players`, `match_draft`. Скачивание не ставит — соли нет. Параллельно с GC. |
 | GC | `fetch_match_details` | match-processing | Запрос в Game Coordinator (`CMsgGCMatchDetailsRequest`). Пишет в Postgres `matches`, `match_players`, `match_draft`, `match_replays` (соль, URL). Статус `details_ready`, в очередь `download_replay`. AccessDenied или нет файла на CDN — `replay_unavailable`. |
 | Скачивание | `download_replay` | match-processing | Качает `.dem.bz2` с CDN Valve в горячий S3. Пишет `match_replays`, статус матча `replay_stored`. Если объект уже есть — без GET. 404 с бюджетом — повтор, иначе `replay_unavailable`. |
@@ -125,7 +127,7 @@ historical replay / walk 20.
 | `replenish_accounts` | match-processing | Если готовых API-ключей или GC-аккаунтов меньше порога — покупка на dark.shopping. Пишет `marketplace_orders`, новые строки в `steam_api_keys` / `steam_accounts`. |
 | `settle_marketplace_orders` | match-processing | Раз в минуту опрашивает `marketplace_orders` в `pending`. Dark Shopping `completed`/`ok` — та же выдача, что buy-account; `in_process` держит `pending` до часа от `created_at`, потом `failed`. |
 | `retest_disabled_resources` | match-processing | Проверяет `disabled` прокси, GC-аккаунты и ключи. Успех — статус `ready`. Пишет `proxies`, `steam_accounts`, `steam_api_keys`. |
-| `maintain_request_logs` | match-processing | Создаёт суточные партиции логов Valve на два дня вперёд, дропает старше 4 дней (`steam_api_requests`, `steam_gc_requests`, `replay_requests`). |
+| `maintain_request_logs` | match-processing | Создаёт суточные партиции логов Valve на два дня вперёд, дропает старше 3 дней (`steam_api_requests`, `steam_gc_requests`, `replay_requests`). |
 | `run_scheduled_job` | все роли | Именованная очередь не держит отложенный `runAt`. Когда срок наступил — возвращает работу на `details:*` / `seq:*` / `replay-*`. |
 | `ensure_loop_jobs` | все роли | Раз в минуту и после reconnect graphile LISTEN. Если self-reschedule джоба (`poll_live_games` и т.п.) пропала или `attempts >= max_attempts` — ставит её снова. Живую или запланированную не трогает. |
 

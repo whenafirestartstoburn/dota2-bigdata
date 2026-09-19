@@ -31,6 +31,7 @@ export type RequestLogFinish = {
 	responseStatus: string
 	responseSizeKb?: number | null
 	errorResponse?: string | null
+	responseBody?: unknown
 }
 
 let settingsCache: { enabled: boolean; at: number } | null = null
@@ -128,6 +129,23 @@ export async function finishRequest(
 ): Promise<void> {
 	if (row == null) return
 	try {
+		if (row.table === 'steam_api_requests') {
+			await db.execute(sql`
+				UPDATE steam_api_requests
+				SET
+					response_time = ${finish.responseTimeMs},
+					response_status = ${finish.responseStatus},
+					response_size_kb = ${finish.responseSizeKb ?? null},
+					error_response = ${truncateErrorResponse(finish.errorResponse)},
+					response_body = ${
+						finish.responseBody !== undefined
+							? JSON.stringify(finish.responseBody)
+							: null
+					}::jsonb
+				WHERE id = ${row.id}
+			`)
+			return
+		}
 		await db.execute(sql`
 			UPDATE ${sql.identifier(row.table)}
 			SET
@@ -163,6 +181,7 @@ export async function withRequestLog<T>(
 			responseStatus: result.responseStatus,
 			responseSizeKb: result.responseSizeKb,
 			errorResponse: result.errorResponse,
+			responseBody: result.responseBody,
 		})
 		return result.value
 	} catch (error) {

@@ -246,10 +246,7 @@ export async function upsertSeriesForMatch(
 					OR (radiant_team_id = ${dire} AND dire_team_id = ${radiant})
 				)
 				AND ended_at IS NULL
-				AND (
-					last_match_id IS NULL
-					OR updated_at > now() - interval '8 hours'
-				)
+				AND updated_at > now() - interval '8 hours'
 			ORDER BY updated_at DESC
 			LIMIT 1
 		`)
@@ -275,7 +272,7 @@ export async function upsertSeriesForMatch(
 	await tx.execute(sql`
 		INSERT INTO series (
 			series_id, league_id, radiant_team_id, dire_team_id, series_type,
-			radiant_wins, dire_wins, first_match_id, last_match_id,
+			radiant_wins, dire_wins, first_match_id,
 			started_at, ended_at, updated_at
 		) VALUES (
 			${seriesId},
@@ -285,7 +282,6 @@ export async function upsertSeriesForMatch(
 			${input.seriesType ?? 0},
 			${input.radiantWins ?? 0},
 			${input.direWins ?? 0},
-			${input.matchId},
 			${input.matchId},
 			${startedAt},
 			CASE
@@ -306,7 +302,6 @@ export async function upsertSeriesForMatch(
 			league_id = COALESCE(excluded.league_id, series.league_id),
 			radiant_wins = GREATEST(series.radiant_wins, excluded.radiant_wins),
 			dire_wins = GREATEST(series.dire_wins, excluded.dire_wins),
-			last_match_id = excluded.last_match_id,
 			ended_at = CASE
 				WHEN GREATEST(
 					GREATEST(series.radiant_wins, excluded.radiant_wins),

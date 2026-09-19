@@ -115,6 +115,8 @@ counters; only the worker serves them.
 | `dota_marketplace_orders_total` | counter | `store`, `kind`, `status` | local order finish (`success` / `failed` / `pending`) |
 | `dota_history_walk_matches_total` | counter | | matches listed on GetMatchHistory walk pages |
 | `dota_history_walk_pages_total` | counter | `result` | walk ticks: `hits` / `empty` / `skipped` |
+| `dota_seq_walk_matches_total` | counter | | professional matches persisted from a seq window |
+| `dota_seq_walk_pages_total` | counter | `result` | seq window ticks: `hits` / `empty` |
 
 Inventory gauges are **reset and rewritten** from Postgres (and
 `settings`) only on `worker-match-processing` (or `WORKER_ROLE=all`).

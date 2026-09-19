@@ -117,6 +117,7 @@ services:
       WORKER_PORT: "8080"
       WORKER_ROLE: live
       SERVICE_NAME: worker-live
+      TELEGRAM_NOTIFICATIONS_URL: http://telegram-notifications:8090
     ports:
       - "3001:8080"
     deploy:
@@ -139,6 +140,7 @@ services:
       WORKER_PORT: "8080"
       WORKER_ROLE: historical
       SERVICE_NAME: worker-historical
+      TELEGRAM_NOTIFICATIONS_URL: http://telegram-notifications:8090
     ports:
       - "3004:8080"
     deploy:
@@ -162,6 +164,7 @@ services:
       WORKER_PORT: "8080"
       WORKER_ROLE: match-processing
       SERVICE_NAME: worker-match-processing
+      TELEGRAM_NOTIFICATIONS_URL: http://telegram-notifications:8090
     ports:
       - "3005:8080"
     deploy:
@@ -226,6 +229,7 @@ services:
       SERVER_PORT: "8080"
       CORS_ORIGINS: http://localhost:5173
       SERVICE_NAME: api
+      TELEGRAM_NOTIFICATIONS_URL: http://telegram-notifications:8090
     ports:
       - "3000:8080"
     depends_on:
@@ -245,6 +249,28 @@ services:
           memory: 384M
         reservations:
           memory: 128M
+
+  telegram-notifications:
+    image: ghcr.io/whenafirestartstoburn/dota2-bigdata/telegram-notifications:0.1.0
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "8090"
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8090/healthz').then(r => process.exit(r.ok ? 0 : 1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: 128M
+        reservations:
+          memory: 64M
 
   prometheus:
     image: prom/prometheus:v2.55.1

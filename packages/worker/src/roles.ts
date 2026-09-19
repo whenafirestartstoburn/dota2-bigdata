@@ -18,12 +18,16 @@ export const WORKER_TASKS = {
 		'poll_realtime_stats',
 		'poll_finished_history',
 		'fetch_seq_details',
+		'walk_seq_history',
+		'fetch_seq_window',
 	],
 	historical: [
 		'fetch_leagues',
 		'sync_catalogs',
 		'poll_finished_history',
 		'walk_league_history',
+		'walk_seq_history',
+		'fetch_seq_window',
 		'fetch_seq_details',
 		'process_league',
 	],
@@ -128,6 +132,13 @@ export function startupJobsFor(mode: WorkerMode): StartupJob[] {
 	add({
 		identifier: 'poll_finished_history',
 		jobKey: 'poll_finished_history',
+		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
+		loop: true,
+	})
+	add({
+		identifier: 'walk_seq_history',
+		jobKey: 'walk_seq_history',
+		priority: PRIORITY.walkHistory,
 		maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		loop: true,
 	})

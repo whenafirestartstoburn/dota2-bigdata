@@ -94,7 +94,6 @@ export async function pickNextHistoryLeague(exhaustedRefreshMs: number) {
 export async function updateLeagueHistoryCursor(
 	leagueId: number,
 	patch: {
-		headMatchId?: number | null
 		tailMatchId?: number | null
 		exhausted?: boolean
 		lastMatchSeqNum?: number | null
@@ -102,10 +101,6 @@ export async function updateLeagueHistoryCursor(
 ): Promise<void> {
 	await db.execute(sql`
 		UPDATE leagues SET
-			history_head_match_id = COALESCE(
-				${patch.headMatchId ?? null}::bigint,
-				history_head_match_id
-			),
 			history_tail_match_id = COALESCE(
 				${patch.tailMatchId ?? null}::bigint,
 				history_tail_match_id

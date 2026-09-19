@@ -280,3 +280,18 @@ export async function countJobs(
 		return 0
 	}
 }
+
+export async function jobKeyIsAlive(jobKey: string): Promise<boolean> {
+	try {
+		const rows = await db.execute(sql`
+			SELECT 1 AS ok
+			FROM graphile_worker.jobs
+			WHERE key = ${jobKey}
+				AND (locked_at IS NOT NULL OR attempts < max_attempts)
+			LIMIT 1
+		`)
+		return rows[0] != null
+	} catch {
+		return false
+	}
+}

@@ -140,6 +140,15 @@ export const historyWalkPages = new Counter(
 	'walk_league_history ticks',
 	['result'],
 )
+export const seqWalkMatches = new Counter(
+	'dota_seq_walk_matches_total',
+	'Professional matches persisted from a seq window',
+)
+export const seqWalkPages = new Counter(
+	'dota_seq_walk_pages_total',
+	'fetch_seq_window ticks',
+	['result'],
+)
 export const leagues = new Gauge('dota_leagues', 'leagues rows by walk state', [
 	'state',
 ])
@@ -231,6 +240,14 @@ export function observeHistoryWalk(input: {
 	if (input.listed > 0) historyWalkMatches.inc({}, input.listed)
 }
 
+export function observeSeqWalk(input: {
+	saved: number
+	result: 'hits' | 'empty'
+}): void {
+	seqWalkPages.inc({ result: input.result })
+	if (input.saved > 0) seqWalkMatches.inc({}, input.saved)
+}
+
 export function classifyHttpStatus(status: number): string {
 	if (status === 403) return 'http_403'
 	if (status === 429) return 'http_429'
@@ -287,6 +304,7 @@ function steamStatus(error: unknown): number | undefined {
 }
 
 const HISTORY_WALK_RESULTS = ['hits', 'empty', 'skipped'] as const
+const SEQ_WALK_RESULTS = ['hits', 'empty'] as const
 const GC_REQUEST_RESULTS = ['success', 'timeout', 'no_account', 'error']
 const GC_LOGON_RESULTS = [
 	'success',
@@ -316,6 +334,12 @@ export function seedIdleHistorySeries(): void {
 	for (const result of HISTORY_WALK_RESULTS) {
 		if (historyWalkPages.get({ result }) === 0) {
 			historyWalkPages.inc({ result }, 0)
+		}
+	}
+	if (seqWalkMatches.get() === 0) seqWalkMatches.inc({}, 0)
+	for (const result of SEQ_WALK_RESULTS) {
+		if (seqWalkPages.get({ result }) === 0) {
+			seqWalkPages.inc({ result }, 0)
 		}
 	}
 }

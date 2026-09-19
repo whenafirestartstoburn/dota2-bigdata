@@ -99,6 +99,10 @@ Collector cadence (was env):
 | `history_details_enqueue_limit` | 5 | runnable historical details jobs plus parked `run_scheduled_job` hops (locked-queue waiters and exhausted retries do not count; run cap is 5 `details:*` queues) |
 | `history_replay_enqueue_limit` | 50 | queued historical download_replay jobs plus parked hops (run cap is 10 `replay-historical:*` queues) |
 | `seq_batch_size` | 100 | GetMatchHistoryBySequenceNum window |
+| `seq_walk_cursor` | 7561931158 | next `start_at_match_seq_num` to claim |
+| `seq_walk_parallelism` | 2 | in-flight `fetch_seq_window` jobs |
+| `seq_walk_latest_start_time` | (empty) | write-only highest `start_time` seen, `YYYY-MM-DD HH:MM:SS UTC` |
+| `seq_walk_cooldown_until` | (empty) | ISO timestamp; dispatcher sleeps after an empty window |
 | `steam_api_min_interval_ms` | 1000 | 1 rps mutex per Web API key |
 | `history_newest_refresh_ms` | 3600000 | re-fetch newest history page |
 | `history_exhausted_refresh_ms` | 86400000 | retry exhausted leagues |

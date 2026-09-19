@@ -41,8 +41,12 @@ describe('task ownership', () => {
 		)
 		expect(WORKER_TASKS.live).toContain('poll_finished_history')
 		expect(WORKER_TASKS.live).toContain('fetch_seq_details')
+		expect(WORKER_TASKS.live).toContain('walk_seq_history')
+		expect(WORKER_TASKS.live).toContain('fetch_seq_window')
 		expect(WORKER_TASKS.historical).toContain('poll_finished_history')
 		expect(WORKER_TASKS.historical).toContain('fetch_seq_details')
+		expect(WORKER_TASKS.historical).toContain('walk_seq_history')
+		expect(WORKER_TASKS.historical).toContain('fetch_seq_window')
 	})
 
 	test('taskListFor keeps only the requested identifiers', () => {
@@ -53,6 +57,8 @@ describe('task ownership', () => {
 		expect(live.poll_live_games).toBeDefined()
 		expect(live.poll_finished_history).toBeDefined()
 		expect(live.fetch_seq_details).toBeDefined()
+		expect(live.walk_seq_history).toBeDefined()
+		expect(live.fetch_seq_window).toBeDefined()
 		expect(live[SCHEDULED_JOB]).toBeDefined()
 		expect(live[ENSURE_LOOP_JOBS]).toBeDefined()
 		expect(live.fetch_match_details).toBeUndefined()
@@ -64,6 +70,8 @@ describe('task ownership', () => {
 		)
 		expect(historical.walk_league_history).toBeDefined()
 		expect(historical.poll_finished_history).toBeDefined()
+		expect(historical.walk_seq_history).toBeDefined()
+		expect(historical.fetch_seq_window).toBeDefined()
 		expect(historical.poll_live_games).toBeUndefined()
 
 		const processing = taskListFor(taskNamesFor('match-processing'))
@@ -128,6 +136,7 @@ describe('boot per role', () => {
 			'poll_live_games',
 			'poll_realtime_stats',
 			'poll_top_live',
+			'walk_seq_history',
 		])
 		expect(
 			startupJobsFor('match-processing').map((job) => job.identifier),
@@ -154,7 +163,12 @@ describe('boot per role', () => {
 			(job) => job.identifier === 'settle_marketplace_orders',
 		)
 		expect(settle?.priority).toBe(PRIORITY.settleOrders)
+		const walkSeq = startupJobsFor('live').find(
+			(job) => job.identifier === 'walk_seq_history',
+		)
+		expect(walkSeq?.priority).toBe(PRIORITY.walkHistory)
 		expect(startupJobsFor('live').map((job) => job.maxAttempts)).toEqual([
+			LOOP_JOB_MAX_ATTEMPTS,
 			LOOP_JOB_MAX_ATTEMPTS,
 			LOOP_JOB_MAX_ATTEMPTS,
 			LOOP_JOB_MAX_ATTEMPTS,
@@ -169,12 +183,17 @@ describe('boot per role', () => {
 			'poll_live_games',
 			'poll_realtime_stats',
 			'poll_top_live',
+			'walk_seq_history',
 		])
 		expect(
 			loopJobsFor('historical')
 				.map((job) => job.identifier)
 				.sort(),
-		).toEqual(['poll_finished_history', 'walk_league_history'])
+		).toEqual([
+			'poll_finished_history',
+			'walk_league_history',
+			'walk_seq_history',
+		])
 		expect(
 			loopJobsFor('historical').some(
 				(job) => job.identifier === 'fetch_leagues',

@@ -35,6 +35,8 @@ flowchart TD
     walkHist[walk_league_history]
     pollFin[poll_finished_history]
     fetchSeq[fetch_seq_details]
+    walkSeq[walk_seq_history]
+    fetchWin[fetch_seq_window]
     processLeague[process_league]
     syncCat[sync_catalogs]
   end
@@ -61,6 +63,8 @@ flowchart TD
   SteamHist[GetMatchHistory] --> walkHist
   SteamHist --> pollFin
   SteamSeq[GetMatchHistoryBySequenceNum] --> fetchSeq
+  SteamSeq --> fetchWin
+  walkSeq --> fetchWin
   GC[CMsgGCMatchDetailsRequest] --> fetchDet
   CDN[Valve CDN GET .dem.bz2] --> dlReplay
   S3hot[S3 hot] --> parse
@@ -84,6 +88,8 @@ flowchart TD
   pollFin --> fetchDet
   pollFin --> fetchSeq
   fetchSeq -->|"seq_fetched_at + captains"| PG
+  fetchWin -->|"seq persist + league_id > 0"| PG
+  fetchWin --> fetchDet
   fetchDet -->|"details_ready + source_url"| PG
   fetchDet --> dlReplay
   dlReplay -->|"replay_stored"| S3hot
@@ -111,7 +117,7 @@ not `process_league`.
 ```mermaid
 stateDiagram-v2
   [*] --> live: poll_live_games / poll_top_live
-  [*] --> awaiting_details: walk_league_history listing
+  [*] --> awaiting_details: walk_league_history listing / fetch_seq_window
 
   live --> awaiting_history: live_duration_max > 0 and both feeds missed
   live --> not_started: clock never left 0
@@ -138,7 +144,7 @@ stateDiagram-v2
 | `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats` (`touchMatchLive`) |
 | `awaiting_history` | live finish detection (`live_duration_max > 0`) |
 | `not_started` | live finish detection (clock stayed 0); `last_error_kind = not_started` |
-| `awaiting_details` | `walk_league_history` listing, `poll_finished_history` hit |
+| `awaiting_details` | `walk_league_history` listing, `poll_finished_history` hit, `fetch_seq_window` persist |
 | `details_ready` | `fetch_match_details` GC persist |
 | `replay_stored` | `download_replay` S3 write |
 | `parsed` | parser `Publish` |
@@ -183,15 +189,17 @@ object.
 
 | Trigger | Job |
 |---|---|
-| worker boot (`startupJobsFor`) | live polls + `poll_finished_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` |
+| worker boot (`startupJobsFor`) | live polls + `poll_finished_history` + `walk_seq_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` |
 | cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
 | cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` 05:00 UTC |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
-| self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk (`steam_api_min_interval_ms`), archive / replenish / settle / retest / request-log maintain |
+| self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk / seq-walk (`steam_api_min_interval_ms`; seq-walk sleeps 1 min after an empty window), archive / replenish / settle / retest / request-log maintain |
 | live finish (`live_duration_max > 0`) | `fetch_match_details` origin `live` (GC starts in parallel with history; waiter stays armed until a seqnum or timeout) |
 | `poll_finished_history` hit | `fetch_seq_details` + `fetch_match_details` origin `live`, priority 0. Status already past `awaiting_details` is kept |
 | `walk_league_history` listed rows | `fetch_seq_details` when `seq_fetched_at` is null |
 | `walk_league_history` pending rows | `fetch_match_details` (live first, then `leagues.tier` desc, `start_time` desc), cap `history_details_enqueue_limit` |
+| `walk_seq_history` | `fetch_seq_window` for the claimed `start_at`, up to `seq_walk_parallelism` |
+| `fetch_seq_window` pro matches | persist seq blob; `fetch_match_details` when `details_fetched_at` is null |
 | `fetch_match_details` success | `download_replay` unless already on hot/cold S3 (live delayed to `replay_available_at`) |
 | `download_replay` 404 with budget left | `download_replay` again at `replayBackoffMs` |
 | `POST /api/leagues/process-finished` | `walk_league_history` with `reset: true` |
@@ -345,7 +353,7 @@ Payload may pin `league_id` while older pages remain.
 
 **Postgres.**
 
-- `leagues`: `history_head_match_id` / `history_tail_match_id` /
+- `leagues`: `history_tail_match_id` /
   `last_match_seq_num` / `history_exhausted` / `history_checked_at`.
   Empty newest page sets `history_exhausted`. Empty/exhausted league
   is not self-requeued as the same id; next tick
@@ -391,6 +399,59 @@ league is exhausted (Valve page size 100). Not gated on `matches.status`
   `history_slow_poll_limit` seed 180 / 3 h at 60 s). After both:
   clear `history_next_poll_at`. Only if status is still
   `awaiting_history`: `status = failed`, `last_error_kind = history_timeout`.
+
+**ClickHouse.** None.
+
+---
+
+### `walk_seq_history`
+
+**Cadence.** Boot + self-requeue every `steam_api_min_interval_ms` on
+`jobKey = walk_seq_history` (live and historical). After an empty
+seq window the dispatcher waits until `seq_walk_cooldown_until`
+(now + 60 s). `ensure_loop_jobs` revives a permafailed key.
+Priority 20.
+
+**Calls.** None. Claims `settings.seq_walk_cursor` and enqueues
+`fetch_seq_window`.
+
+**Postgres.**
+
+- Skip while `seq_walk_cooldown_until` is in the future.
+- In-flight cap: `countJobs('fetch_seq_window')` vs
+  `seq_walk_parallelism` (seed 2).
+- For each free slot: if `jobKey = seq_window:{cursor}` is alive,
+  CAS-advance the cursor by `seq_batch_size` and try the next start.
+  Otherwise enqueue that start (`unsafe_dedupe`) and CAS-advance.
+- Does not touch matches.
+
+**ClickHouse.** None.
+
+---
+
+### `fetch_seq_window`
+
+**Cadence.** On demand. `jobKey = seq_window:{start_at}`,
+`maxAttempts = 25`. No named queue — a throw graphile-retries this
+exact seqnum. Priority 20.
+
+**Calls.** One `IDOTA2Match_570/GetMatchHistoryBySequenceNum/v1`
+(`start_at_match_seq_num`, `matches_requested = seq_batch_size`).
+Log method `GetMatchHistoryBySequenceNum`.
+
+**Postgres.**
+
+- Success with matches: `persistMatchRecord(..., fetched: 'seq')` for
+  `league_id > 0` only; `seq_fetched_at`; enqueue
+  `fetch_match_details` when `details_fetched_at` is null (origin
+  from `matches.source`). Cursor
+  `GREATEST(cursor, highest match_seq_num)`. Write-only
+  `seq_walk_latest_start_time` = highest `start_time` in the
+  **whole** response (`YYYY-MM-DD HH:MM:SS UTC`, `GREATEST` vs the
+  stored text). Then fill the next free window slot.
+- Success empty: cursor `max(1, start_at - 2000)`,
+  `seq_walk_cooldown_until = now() + 60s`. Do not enqueue more.
+- Failure: throw (retry this `start_at`).
 
 **ClickHouse.** None.
 
@@ -616,7 +677,7 @@ fails `*_error_threshold`.
 **Cadence.** Boot + hourly. Priority 40.
 
 **Calls.** `SELECT public.maintain_request_logs()` — create UTC daily
-partitions for `[today-4d, today+2d)` and drop days older than 4.
+partitions for `[today-3d, today+2d)` and drop days older than 3.
 The worker does not issue `CREATE`/`DROP` itself. No match updates.
 
 ---
@@ -689,7 +750,7 @@ to `stored`.
 
 | Table | Jobs | `method_name` |
 |---|---|---|
-| `steam_api_requests` | live polls, realtime, fetch_leagues, walk, finished-history, seq details, API-key retest | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory`, `GetMatchHistoryBySequenceNum`, `GetLeagueInfoList` |
+| `steam_api_requests` | live polls, realtime, fetch_leagues, walk, finished-history, seq details, seq window, API-key retest | `GetLiveLeagueGames`, `GetTopLiveGame`, `GetRealtimeStats`, `GetMatchHistory`, `GetMatchHistoryBySequenceNum`, `GetLeagueInfoList` |
 | `steam_gc_requests` | `fetch_match_details` | `CMsgGCMatchDetailsRequest` |
 | `replay_requests` | `download_replay` | `GetReplay` |
 
@@ -702,7 +763,8 @@ One row per attempt. Insert before the network call, update
 ## Not jobs
 
 - `persistSeqMatches` — CLI batch backfill of the same seq API
-  (`seq_batch_size`). Ingest uses `fetch_seq_details` per match.
+  (`seq_batch_size`). Ingest uses `fetch_seq_details` per known match
+  and `fetch_seq_window` for the global cursor.
 - `POST /api/buy-account` — HTTP/CLI purchase; replenish uses the
   same `buyAccounts` helper.
 - Parser health `/metrics` — Prometheus, not a graphile identifier.

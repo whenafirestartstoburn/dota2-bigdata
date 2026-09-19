@@ -39,8 +39,8 @@ Collection must work if the API is down.
 
 | Role | Jobs | graphile concurrency |
 |---|---|---|
-| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `fetch_seq_details` (+ `run_scheduled_job`) | 4 |
-| `historical` | `walk_league_history`, `poll_finished_history`, `fetch_seq_details`, `fetch_leagues`, `process_league`, `sync_catalogs` (+ `run_scheduled_job`) | 4 |
+| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `fetch_seq_details`, `walk_seq_history`, `fetch_seq_window` (+ `run_scheduled_job`) | 4 |
+| `historical` | `walk_league_history`, `poll_finished_history`, `fetch_seq_details`, `walk_seq_history`, `fetch_seq_window`, `fetch_leagues`, `process_league`, `sync_catalogs` (+ `run_scheduled_job`) | 4 |
 | `match-processing` | `fetch_match_details`, `download_replay`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` (+ `run_scheduled_job`) | 35 |
 
 graphile `priority`: lower number runs first. Live poll / live details / live seq / live replay = 0, historical details / seq = 10, history walk / historical replay = 20. `fetch_match_details` uses five named queues (`details:0`…`details:4`, `match_id % 5`) so at most five GC jobs run at once. `fetch_seq_details` uses five `seq:0`…`seq:4` shards so seq and GC for the same match run in parallel. `download_replay` uses ten live and ten historical queues (`replay-live:0`…`replay-live:9`, `replay-historical:0`…`replay-historical:9`, `match_id % 10`). On a free shard, live (priority 0) is picked before historical (priority 10 / 20).
@@ -76,13 +76,15 @@ transitions, and ClickHouse / catalog inserts:
 | `poll_top_live` | same interval | GetTopLiveGame (`league_id > 0`) → `server_steam_id` + finish detection |
 | `poll_realtime_stats` | same interval | GetRealtimeStats for live rows with `server_steam_id`, paced by the key limiter |
 | `poll_finished_history` | every `settings.history_fast_poll_ms` (seed 5 s) | page GetMatchHistory until waiting ids are found or the league is exhausted (max 100 / call) |
+| `walk_seq_history` | every `settings.steam_api_min_interval_ms` (1 min after catching the tip) | claim `settings.seq_walk_cursor` windows up to `seq_walk_parallelism` (seed 2) |
+| `fetch_seq_window` | on demand per claimed seqnum | `GetMatchHistoryBySequenceNum` (`matches_requested = seq_batch_size`) for that exact start; upsert `league_id > 0` |
 | `fetch_leagues` | hourly + startup | GetLeagueInfoList |
 | `walk_league_history` | continuous self-requeue (`steam_api_min_interval_ms`) | one GetMatchHistory page (discovery); enqueue seq + GC |
 | `fetch_seq_details` | on demand after a seqnum | `GetMatchHistoryBySequenceNum` for that match; persist box score / captains |
 | `fetch_match_details` | on demand | GC `CMsgGCMatchDetailsRequest` → persist `CMsgDOTAMatch` + replay URL |
 | `download_replay` | after URL is stored | GET that URL → stream `.dem.bz2` to S3 |
 | `archive_parsed_replays` | every `settings.replay_archive_interval_ms` + startup | copy parsed `.dem.bz2` to cold storage, then delete the hot object |
-| `maintain_request_logs` | hourly + startup | create UTC daily partitions for `steam_api_requests` / `steam_gc_requests` / `replay_requests` two days ahead; drop partitions older than 4 days |
+| `maintain_request_logs` | hourly + startup | create UTC daily partitions for `steam_api_requests` / `steam_gc_requests` / `replay_requests` two days ahead; drop partitions older than 3 days |
 | `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit |
 | `settle_marketplace_orders` | every `settings.marketplace_settle_interval_ms` + startup | poll pending `marketplace_orders`; fulfill when Dark Shopping is `completed`/`ok`; fail after `marketplace_pending_ttl_ms` (seed 1 h) if still `in_process` |
 | `retest_disabled_resources` | every `settings.retest_interval_ms` + startup | probe disabled proxies / GC accounts / API keys with `retest_count` below the matching `*_retest_max`; restore on success; give up after max |
@@ -110,6 +112,48 @@ Live finish also enqueues `fetch_match_details` immediately so GC runs in parall
 
 - Hit: persist listing fields, `ingest_sources += GetMatchHistory`, `match_seq_num`, clear `history_next_poll_at`. Promote only early statuses to `awaiting_details`. Enqueue `fetch_seq_details` and `fetch_match_details` (live priority). Replay delay is **not** applied here.
 - Miss: bump `history_poll_fast_count` (limit `settings.history_fast_poll_limit` seed 720, interval `history_fast_poll_ms` — 60 min) then `history_poll_slow_count` (limit `history_slow_poll_limit` seed 180, interval `history_slow_poll_ms` — 3 h). After both limits: clear `history_next_poll_at`. `status = failed` / `last_error_kind = history_timeout` only while the row is still `awaiting_history`.
+
+### Seq-num catch-up (`walk_seq_history` / `fetch_seq_window`)
+
+Safety net for professional matches that never appeared in a live feed.
+Does **not** replace the live-disappear waiter. Live + historical both
+register the pair (`WORKER_HISTORICAL_REPLICAS` is 0 today). Shared
+`jobKey = walk_seq_history`. Priority 20 so live polls win the
+graphile slots.
+
+`walk_seq_history` fills in-flight `fetch_seq_window` jobs up to
+`settings.seq_walk_parallelism` (seed 2):
+
+1. Read `settings.seq_walk_cursor` (seed `7561931158`).
+2. Idempotency: `jobKey = seq_window:{start_at}`. If that key is
+   already queued or locked, do not enqueue it again.
+3. Claim: enqueue the window, then CAS-advance the cursor by
+   `settings.seq_batch_size` (Valve max 100). Updating the cursor
+   **only after a successful fetch** would serialize the two workers
+   on the same start.
+4. Respect `seq_walk_cooldown_until` (set when a window hits the tip).
+
+`fetch_seq_window` retries that exact `start_at`. One
+`GetMatchHistoryBySequenceNum` (`matches_requested = seq_batch_size`).
+
+- Success with matches: persist `league_id > 0` via `persistMatchRecord`
+  (`fetched: 'seq'`) — same seq blob as `fetch_seq_details`, so do
+  **not** enqueue another seq job. Enqueue `fetch_match_details` when
+  `details_fetched_at` is still null (origin from `matches.source`).
+  Cursor `GREATEST(cursor, highest match_seq_num)` so a late sibling
+  cannot rewind a claimed window. Write-only
+  `seq_walk_latest_start_time` = highest `start_time` in the response,
+  `YYYY-MM-DD HH:MM:SS UTC` (lexicographic `GREATEST` so parallel
+  windows keep the later clock). Then try to enqueue the next window
+  so parallelism stays full.
+- Success with no matches (caught the tip): cursor =
+  `max(1, start_at - 2000)`, set `seq_walk_cooldown_until` to now +
+  1 minute, do not enqueue more windows.
+- Failure: throw; graphile retries the same `seq_window:{start_at}`.
+
+Pubs (`league_id <= 0`) still move the cursor and the write-only
+clock — they are the global stream. Real parallelism needs two ready
+API keys; one key stays 1 rps.
 
 ### Historical discovery (`walk_league_history`)
 
@@ -218,7 +262,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
 - A thrown job on a named queue does **not** graphile-retry on that shard. The wrapper parks `run_scheduled_job` (30 s, 1 m, 3 m, …) and hops back when due. After the stamped budget the job leaves the queue.
-- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, archive / replenish / settle / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
+- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, `walk_seq_history`, archive / replenish / settle / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
 - GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.
@@ -246,7 +290,7 @@ Three compose services, same image, `WORKER_ROLE` set:
 | `worker-historical` | `:3004` | GetMatchHistory discovery. Scale is `WORKER_HISTORICAL_REPLICAS` (0 for now) |
 | `worker-match-processing` | `:3005` | GC / replay / archive / request-log partitions / replenish |
 
-Cron (`ensure_loop_jobs` every minute on every role; `fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC on `historical` / `all`) is registered in `cronFor`. Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
+Cron (`ensure_loop_jobs` every minute on every role; `fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC on `historical` / `all`) is registered in `cronFor`. `walk_seq_history` is a boot loop on live and historical (`jobKey`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
 
 API `POST /api/leagues/process-finished` forces `walk_league_history` for an id (reset exhausted); the historical process picks it up.
 

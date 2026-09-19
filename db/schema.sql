@@ -1042,7 +1042,6 @@ CREATE TABLE public.leagues (
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     last_match_seq_num bigint,
-    history_head_match_id bigint,
     history_tail_match_id bigint,
     history_exhausted boolean DEFAULT false NOT NULL,
     history_checked_at timestamp with time zone,
@@ -2228,7 +2227,6 @@ CREATE TABLE public.series (
     radiant_wins integer DEFAULT 0 NOT NULL,
     dire_wins integer DEFAULT 0 NOT NULL,
     first_match_id bigint,
-    last_match_id bigint,
     started_at timestamp with time zone,
     ended_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -5884,4 +5882,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260916020000'),
     ('20260916023000'),
     ('20260916023100'),
-    ('20260916025000');
+    ('20260916025000'),
+    ('20260919150000'),
+    ('20260919160000');

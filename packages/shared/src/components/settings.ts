@@ -22,6 +22,7 @@ export type AppSettings = {
 	historyDetailsEnqueueLimit: number
 	historyReplayEnqueueLimit: number
 	seqBatchSize: number
+	seqWalkParallelism: number
 	steamApiMinIntervalMs: number
 	historyNewestRefreshMs: number
 	historyExhaustedRefreshMs: number
@@ -64,6 +65,7 @@ const KEYS = {
 	historyDetailsEnqueueLimit: 'history_details_enqueue_limit',
 	historyReplayEnqueueLimit: 'history_replay_enqueue_limit',
 	seqBatchSize: 'seq_batch_size',
+	seqWalkParallelism: 'seq_walk_parallelism',
 	steamApiMinIntervalMs: 'steam_api_min_interval_ms',
 	historyNewestRefreshMs: 'history_newest_refresh_ms',
 	historyExhaustedRefreshMs: 'history_exhausted_refresh_ms',
@@ -160,6 +162,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 			KEYS.historyReplayEnqueueLimit,
 		),
 		seqBatchSize: Math.min(seqBatch, VALVE_HISTORY_MAX),
+		seqWalkParallelism: optionalPositiveInt(map, KEYS.seqWalkParallelism, 2),
 		steamApiMinIntervalMs: requiredPositiveInt(map, KEYS.steamApiMinIntervalMs),
 		historyNewestRefreshMs: requiredPositiveInt(
 			map,

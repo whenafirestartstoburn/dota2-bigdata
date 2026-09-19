@@ -16,7 +16,7 @@ Removed: ClickHouse `dota.match_details_raw`, `dota.source_payloads`; Postgres `
 
 Operational tables (`steam_accounts`, `steam_api_keys`, `proxies`, `settings`, `marketplace_products`, `marketplace_orders`, `resource_attempts`, `steam_api_requests`, `steam_gc_requests`, `replay_requests`, graphile-worker) are not listed here.
 
-Valve attempt logs (`steam_api_requests`, `steam_gc_requests`, `replay_requests`): daily partitions, `match_id` nullable, retained 4 days. Web API / GC rows also store `steam_api_key_id` / `steam_account_id`. [`request-logs.md`](./request-logs.md).
+Valve attempt logs (`steam_api_requests`, `steam_gc_requests`, `replay_requests`): daily partitions, `match_id` nullable, retained 3 days. `steam_api_requests` also stores the 200 JSON body (`response_body` jsonb). Web API / GC rows also store `steam_api_key_id` / `steam_account_id`. [`request-logs.md`](./request-logs.md), [`steam-api.md`](./steam-api.md).
 
 Every public Postgres table except dbmate `schema_migrations` has `id bigserial` PK and `created_at` / `updated_at` (`set_updated_at` trigger; `created_at` is immutable). Those three columns are omitted below. Natural identifiers (`match_id`, `league_id`, `account_id`, …) are UNIQUE. FKs point at the natural keys.
 
@@ -57,7 +57,6 @@ Valve `GetLeagueInfoList` plus collector lifecycle. `status` derivation is in th
 | `valve_status` | Valve publication flag (5 ≈ concluded). Comes from GetLeagueInfoList |
 | `status` | `UPCOMING` / `LIVE` / `FINISHED`. Derived, workers spec |
 | `last_match_seq_num` | Highest `match_seq_num` seen for this league. Comes from GetMatchHistory (and backfill `max(matches.match_seq_num)`) |
-| `history_head_match_id` | Newest listed `match_id`. Comes from GetMatchHistory |
 | `history_tail_match_id` | `start_at_match_id` for older pages. Comes from GetMatchHistory |
 | `history_exhausted` | Older pagination returned nothing. Comes from GetMatchHistory |
 | `history_checked_at` | Last GetMatchHistory call |
@@ -79,7 +78,6 @@ When Valve `series_id` is 0, `series_id` is a hash of `(league_id, least(t1,t2),
 | `radiant_wins` | Last observed radiant series wins. Comes from GetLiveLeagueGames |
 | `dire_wins` | Last observed dire series wins. Comes from GetLiveLeagueGames |
 | `first_match_id` | First match in the series |
-| `last_match_id` | Last match in the series |
 | `started_at` | First match `start_time` |
 | `ended_at` | Set when a Bo3/Bo5 side reaches 2/3 wins. Null while `series_type` is 0 |
 

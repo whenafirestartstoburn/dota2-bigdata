@@ -17,6 +17,7 @@ import {
 	enqueueFetchSeqDetails,
 	runFetchSeqDetails,
 } from '@app/shared/src/jobs/fetch-seq-details'
+import { runFetchSeqWindow } from '@app/shared/src/jobs/fetch-seq-window'
 import { runMaintainRequestLogsJob } from '@app/shared/src/jobs/maintain-request-logs'
 import { runPollFinishedHistory } from '@app/shared/src/jobs/poll-finished-history'
 import { runPollLiveGames } from '@app/shared/src/jobs/poll-live'
@@ -27,6 +28,11 @@ import { runRetestDisabledResources } from '@app/shared/src/jobs/retest-resource
 import { runSettleMarketplaceOrders } from '@app/shared/src/jobs/settle-marketplace-orders'
 import { runSyncCatalogs } from '@app/shared/src/jobs/sync-catalogs'
 import { runWalkLeagueHistory } from '@app/shared/src/jobs/walk-league-history'
+import {
+	enqueueFetchSeqWindow,
+	runWalkSeqHistory,
+	scheduleWalkSeqHistory,
+} from '@app/shared/src/jobs/walk-seq-history'
 import { jobsInProgress, observeJob } from '@app/shared/src/metrics/observe'
 import { asString, errorMessage } from '@app/shared/src/store/coerce'
 import { logger } from '@app/shared/src/utils/logger'
@@ -289,6 +295,28 @@ export const allTasks = {
 		},
 		{ skipNoKey: true },
 	),
+	walk_seq_history: traced('walk_seq_history', async () => {
+		let delayMs = 1000
+		try {
+			delayMs = (await runWalkSeqHistory()).delayMs
+		} finally {
+			await scheduleWalkSeqHistory(delayMs)
+		}
+	}),
+	fetch_seq_window: traced('fetch_seq_window', async (payload) => {
+		const startAt = jobNumber(payload, 'start_at')
+		if (startAt === undefined) {
+			throw new Error('fetch_seq_window payload requires start_at')
+		}
+		try {
+			await runFetchSeqWindow({ startAt })
+		} catch (error) {
+			if (!/no ready Steam API key/i.test(errorMessage(error))) {
+				throw error
+			}
+			await enqueueFetchSeqWindow(startAt, new Date(Date.now() + 30_000))
+		}
+	}),
 	fetch_seq_details: traced('fetch_seq_details', async (payload) => {
 		const matchId = jobNumber(payload, 'match_id')
 		if (matchId === undefined) {

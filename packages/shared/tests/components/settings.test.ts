@@ -30,6 +30,7 @@ describe('getAppSettings', () => {
 		expect(settings.historyDetailsEnqueueLimit).toBe(5)
 		expect(settings.historyReplayEnqueueLimit).toBe(50)
 		expect(settings.seqBatchSize).toBe(100)
+		expect(settings.seqWalkParallelism).toBe(2)
 		expect(settings.steamApiMinIntervalMs).toBe(1000)
 		expect(settings.historyNewestRefreshMs).toBe(3_600_000)
 		expect(settings.historyExhaustedRefreshMs).toBe(86_400_000)

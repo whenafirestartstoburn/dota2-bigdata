@@ -7,7 +7,9 @@ import {
 	historyWalkMatches,
 	observeHistoryWalk,
 	observeMarketplaceOrder,
+	observeSeqWalk,
 	observeWebApi,
+	seqWalkMatches,
 	webapiRequests,
 } from '#src/metrics/observe'
 import {
@@ -101,6 +103,8 @@ describe('prometheus text', () => {
 		)
 		expect(text).toContain('dota_history_walk_matches_total 0')
 		expect(text).toContain('dota_history_walk_pages_total{result="hits"} 0')
+		expect(text).toContain('dota_seq_walk_matches_total 0')
+		expect(text).toContain('dota_seq_walk_pages_total{result="hits"} 0')
 	})
 
 	test('observeWebApi increments the catalog counter', () => {
@@ -120,6 +124,11 @@ describe('prometheus text', () => {
 		expect(historyWalkMatches.get()).toBe(32)
 		expect(renderMetrics()).toContain(
 			'dota_history_walk_pages_total{result="hits"} 1',
+		)
+		observeSeqWalk({ saved: 4, result: 'hits' })
+		expect(seqWalkMatches.get()).toBe(4)
+		expect(renderMetrics()).toContain(
+			'dota_seq_walk_pages_total{result="hits"} 1',
 		)
 	})
 })

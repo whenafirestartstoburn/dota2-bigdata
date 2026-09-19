@@ -86,7 +86,6 @@ export async function runWalkLeagueHistory(
 	await ensureLeagueStub(leagueId)
 
 	const exhausted = league.history_exhausted === true
-	const head = asNumber(league.history_head_match_id)
 	const tail = asNumber(league.history_tail_match_id)
 	const refreshNewest = newestRefreshDue(
 		league.history_checked_at,
@@ -98,17 +97,15 @@ export async function runWalkLeagueHistory(
 	const cred = await pickApiCredential()
 	const ctx = steamCtx(cred, 'historical')
 
-	const fetchNewest = refreshNewest || head == null
 	const page = await getMatchHistoryPage(ctx, {
 		leagueId,
-		startAtMatchId: fetchNewest ? undefined : (tail ?? undefined),
+		startAtMatchId: refreshNewest ? undefined : (tail ?? undefined),
 	})
 
 	const listed = page.matches
 	await persistListed(leagueId, listed)
 	await enqueueSeqForListed(listed)
 
-	const newest = listed[0]?.match_id ?? head
 	const oldest = listed.at(-1)?.match_id ?? tail
 	const empty = listed.length === 0
 	const noMore = page.resultsRemaining <= 0 || empty || oldest === tail
@@ -118,14 +115,13 @@ export async function runWalkLeagueHistory(
 		return max == null || seq > max ? seq : max
 	}, null)
 
-	if (fetchNewest) {
+	if (refreshNewest) {
 		await updateLeagueHistoryCursor(leagueId, {
-			headMatchId: newest ?? null,
 			tailMatchId: oldest ?? tail,
 			lastMatchSeqNum,
 			// Empty newest page: Valve has nothing for this league (or hides it).
-			// Leave exhausted=false and we spin forever — head stays null, so
-			// every visit is fetchNewest again and self-requeues the same id.
+			// Leave exhausted=false and pickNextHistoryLeague keeps returning
+			// the same id every tick.
 			exhausted: empty,
 		})
 	} else {
@@ -180,11 +176,11 @@ export async function runWalkLeagueHistory(
 		{
 			leagueId,
 			listed: listed.length,
-			fetchNewest,
+			refreshNewest,
 			detailsQueued,
 			inflightDetails,
 			detailsLimit,
-			exhausted: fetchNewest ? false : noMore,
+			exhausted: refreshNewest ? false : noMore,
 		},
 		'walked league history page',
 	)

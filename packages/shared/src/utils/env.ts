@@ -40,6 +40,15 @@ export const baseEnv = z.object({
 	STEAM_SEED_IDENTITY_SECRET: z.string().default(''),
 	DARK_SHOPPING_BASE_URL: z.string().default('https://dark.shopping'),
 	DARK_SHOPPING_API_KEY: z.string().default(''),
+	TELEGRAM_NOTIFICATIONS_URL: z.preprocess(
+		(value) => (value === '' ? undefined : value),
+		z.string().url().optional(),
+	),
+	TELEGRAM_NOTIFICATIONS_CHAT_TYPE: z.string().default('dev_dataluna'),
+	TELEGRAM_NOTIFICATIONS_CHAT_ID: z.preprocess(
+		(value) => (value === '' ? undefined : value),
+		z.string().optional(),
+	),
 })
 
 export default baseEnv.parse(process.env)

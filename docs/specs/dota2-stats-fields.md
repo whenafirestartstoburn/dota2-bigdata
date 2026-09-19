@@ -29,7 +29,6 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
     - FINISHED
 - fetched_at — время последнего GetLeagueInfoList
 - last_match_seq_num — максимальный `match_seq_num` по лиге
-- history_head_match_id — самый новый `match_id` из GetMatchHistory
 - history_tail_match_id — курсор на более старые страницы GetMatchHistory
 - history_exhausted — более старые страницы GetMatchHistory пустые
 - history_checked_at — время последнего GetMatchHistory
@@ -49,7 +48,6 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
 - radiant_wins — число побед Radiant в серии
 - dire_wins — число побед Dire в серии
 - first_match_id — первый матч серии
-- last_match_id — последний матч серии
 - started_at — старт первого матча
 - ended_at — конец серии (когда сторона набрала 2 или 3 победы). Пусто, пока `series_type = 0`
 
@@ -647,6 +645,10 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
     - history_details_enqueue_limit
     - history_replay_enqueue_limit
     - seq_batch_size
+    - seq_walk_cursor
+    - seq_walk_parallelism
+    - seq_walk_latest_start_time
+    - seq_walk_cooldown_until
     - steam_api_min_interval_ms
     - history_newest_refresh_ms
     - history_exhausted_refresh_ms
