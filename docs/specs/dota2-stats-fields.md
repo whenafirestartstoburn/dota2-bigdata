@@ -530,7 +530,7 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
 
 ## live_match_ticks
 
-Таблица live-снимков матча. Одна строка на опрос. Источники: Steam Web API `GetLiveLeagueGames` и `GetRealtimeStats`.
+Таблица live-снимков матча (ClickHouse MergeTree). Одна строка на опрос. Источники: Steam Web API `GetLiveLeagueGames` и `GetRealtimeStats`.
 
 - match_id — матч
 - captured_at — время опроса
@@ -563,7 +563,7 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
 
 ## live_player_ticks
 
-Таблица live-снимков игрока. Одна строка на опрос на игрока.
+Таблица live-снимков игрока (ClickHouse MergeTree). Одна строка на опрос на игрока.
 
 - match_id — матч
 - captured_at — время опроса

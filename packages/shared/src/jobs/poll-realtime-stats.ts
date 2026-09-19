@@ -153,7 +153,7 @@ export async function runPollRealtimeStats(): Promise<{
 		}
 	}
 
-	await insertLiveTicks(db, tickRows, playerTickRows)
+	await insertLiveTicks(tickRows, playerTickRows)
 	logger.info({ scanned, wrote }, 'realtime stats poll')
 	return { scanned, wrote }
 }

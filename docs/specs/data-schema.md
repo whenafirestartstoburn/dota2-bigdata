@@ -2,14 +2,14 @@
 
 Professional Dota 2 matches. Companions: [`worker-architecture.md`](./worker-architecture.md), [`adr-technology.md`](./adr-technology.md), [`demo-file.md`](./demo-file.md).
 
-Postgres: entities, match-level facts, live scoreboard ticks. ClickHouse: replay events. S3: `.dem.bz2`.
+Postgres: entities, match-level facts. ClickHouse: live scoreboard ticks and replay events. S3: `.dem.bz2`.
 
 ## Split
 
 | Store | Contents |
 |---|---|
-| Postgres | leagues, series, matches, players, teams, heroes, items, draft, box scores, story events, live ticks, replay/parse status |
-| ClickHouse | combat log, 1 s snapshots, chat, wards, orders |
+| Postgres | leagues, series, matches, players, teams, heroes, items, draft, box scores, story events, replay/parse status |
+| ClickHouse | live scoreboard ticks, combat log, 1 s snapshots, chat, wards, orders |
 | S3 | `.dem.bz2` |
 
 Removed: ClickHouse `dota.match_details_raw`, `dota.source_payloads`; Postgres `leagues.payload`, `matches.history_payload` / `details_payload` / `live_payload`, `match_players.payload`.
@@ -31,8 +31,7 @@ leagues 1──* series 1──* matches
                 │            ├── * match_player_buffs
                 │            ├── * match_objectives
                 │            ├── 1 match_replay
-                │            ├── * live_match_ticks / live_player_ticks
-                │            └── * ClickHouse replay_*
+                │            └── * ClickHouse live_*_ticks / replay_*
                 └── 2 teams
 heroes, items, patches, abilities, …   catalogs keyed by Valve id
 ```
@@ -551,75 +550,7 @@ Replay download and parse status. One row per match.
 | `steam_account_id` | Steam account used for the GC session that fetched salt |
 | `proxy_id` | Proxy used for that GC session |
 
-### live_match_ticks
-
-One row per poll per game. Written by `poll_live_games` and `poll_realtime_stats`. Inserted even when the scoreboard hash is unchanged. Unique `(match_id, captured_at, source)`.
-
-GetLiveLeagueGames fills spectators, towers/rax, roshan, series, stream delay, lobby. GetRealtimeStats fills `duration` (`game_time`), scores, `game_state`, `server_steam_id`; other fields on that `source` are `0`.
-
-| Column | Description |
-|---|---|
-| `match_id` | Parent match |
-| `captured_at` | Poll timestamp |
-| `source` | `GetLiveLeagueGames` / `GetRealtimeStats` |
-| `league_id` | League of the listing. Comes from GetLiveLeagueGames |
-| `duration` | Game clock, seconds. Comes from GetLiveLeagueGames / GetRealtimeStats (`game_time`) |
-| `radiant_score` | Radiant kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `dire_score` | Dire kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `spectators` | Spectator count. Comes from GetLiveLeagueGames |
-| `tower_state_radiant` | Radiant tower bitmask. Comes from GetLiveLeagueGames |
-| `tower_state_dire` | Dire tower bitmask. Comes from GetLiveLeagueGames |
-| `barracks_state_radiant` | Radiant barracks bitmask. Comes from GetLiveLeagueGames |
-| `barracks_state_dire` | Dire barracks bitmask. Comes from GetLiveLeagueGames |
-| `roshan_respawn_timer` | Roshan respawn timer, seconds. Comes from GetLiveLeagueGames |
-| `series_type` | Series type. Comes from GetLiveLeagueGames |
-| `radiant_series_wins` | Radiant wins in the series. Comes from GetLiveLeagueGames |
-| `dire_series_wins` | Dire wins in the series. Comes from GetLiveLeagueGames |
-| `stream_delay_s` | Stream delay, seconds. Comes from GetLiveLeagueGames |
-| `lobby_id` | Steam lobby id. Comes from GetLiveLeagueGames |
-| `game_number` | Game number in the series. Comes from GetLiveLeagueGames |
-| `league_series_id` | League series id. Comes from GetLiveLeagueGames |
-| `league_game_id` | League game id. Comes from GetLiveLeagueGames |
-| `league_tier` | League tier on the listing. Comes from GetLiveLeagueGames |
-| `game_state` | Game state id. Comes from GetRealtimeStats |
-| `server_steam_id` | Game server Steam id. Comes from GetRealtimeStats |
-
-### live_player_ticks
-
-One row per poll per player. Unique `(match_id, captured_at, player_slot, source)`. GetLiveLeagueGames fills GPM/XPM/ultimate/respawn. GetRealtimeStats fills backpack `item6`–`item8`; other fields on that `source` are `0`.
-
-| Column | Description |
-|---|---|
-| `match_id` | Parent match |
-| `captured_at` | Poll timestamp |
-| `source` | `GetLiveLeagueGames` / `GetRealtimeStats` |
-| `player_slot` | Valve player slot |
-| `account_id` | Steam 32-bit account. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `hero_id` | Current hero. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `kills` | Kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `deaths` | Deaths at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `assists` | Assists at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `last_hits` | Last hits at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `denies` | Denies at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `gold` | Unspent gold at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `net_worth` | Net worth at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `level` | Hero level at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `gold_per_min` | Gold per minute. Comes from GetLiveLeagueGames |
-| `xp_per_min` | XP per minute. Comes from GetLiveLeagueGames |
-| `x` | Map x. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `y` | Map y. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item0` | Inventory slot 0. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item1` | Inventory slot 1. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item2` | Inventory slot 2. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item3` | Inventory slot 3. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item4` | Inventory slot 4. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item5` | Inventory slot 5. Comes from GetLiveLeagueGames / GetRealtimeStats |
-| `item6` | Backpack slot 0. Comes from GetRealtimeStats |
-| `item7` | Backpack slot 1. Comes from GetRealtimeStats |
-| `item8` | Backpack slot 2. Comes from GetRealtimeStats |
-| `ultimate_state` | Ultimate state. Comes from GetLiveLeagueGames |
-| `ultimate_cooldown` | Ultimate cooldown, seconds. Comes from GetLiveLeagueGames |
-| `respawn_timer` | Respawn timer, seconds. Comes from GetLiveLeagueGames |
+PG `live_match_ticks` / `live_player_ticks` stay in the dump until a later drop. Writers and the drain script target ClickHouse; see [live ticks](#live_match_ticks).
 
 ### ingest_cursors
 
@@ -664,7 +595,6 @@ Besides UNIQUE natural keys:
 | `match_replays` | `(status)` | inventory |
 | `match_replays` | `(priority, stored_at, id)` where `stored` + s3 key | parser claim |
 | `match_replays` | `(parsed_at, id)` where parsed and not archived | archive |
-| `live_*_ticks` | `(match_id, captured_at DESC)`, `(captured_at DESC)` | latest board, timeline, cleanup |
 | `leagues` | `(status)`, `(status, history_exhausted, history_checked_at)` | walk picker |
 | `steam_api_keys` | `(last_used_at)` on pickable statuses; `(account_id)`; `(proxy_id)` | 1 rps pick, occupancy |
 | `steam_accounts` | `(status)`, `(proxy_id)` | Game Coordinator session pick, occupancy |
@@ -695,6 +625,78 @@ Shared prefix on every `replay_*` table:
 - `parser_version` — CH schema version
 
 `PARTITION BY toYYYYMM(start_time) ORDER BY (match_id, time, tick)` unless noted. `index_granularity = 8192`.
+
+### live_match_ticks
+
+One row per poll per game. Written by `poll_live_games` and `poll_realtime_stats` after the Postgres transaction. Inserted even when the scoreboard hash is unchanged. MergeTree, insert-only, **no `FINAL`**. `PARTITION BY toYYYYMM(captured_at) ORDER BY (match_id, captured_at, source)`. Application uniqueness is `(match_id, captured_at, source)` — not a CH constraint. `id` is the Postgres serial during backfill and `0` on live inserts (drain script only).
+
+GetLiveLeagueGames fills spectators, towers/rax, roshan, series, stream delay, lobby. GetRealtimeStats fills `duration` (`game_time`), scores, `game_state`, `server_steam_id`; other fields on that `source` are `0`.
+
+| Column | Description |
+|---|---|
+| `match_id` | Parent match |
+| `captured_at` | Poll timestamp |
+| `source` | `GetLiveLeagueGames` / `GetRealtimeStats` |
+| `league_id` | League of the listing. Comes from GetLiveLeagueGames |
+| `duration` | Game clock, seconds. Comes from GetLiveLeagueGames / GetRealtimeStats (`game_time`) |
+| `radiant_score` | Radiant kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `dire_score` | Dire kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `spectators` | Spectator count. Comes from GetLiveLeagueGames |
+| `tower_state_radiant` | Radiant tower bitmask. Comes from GetLiveLeagueGames |
+| `tower_state_dire` | Dire tower bitmask. Comes from GetLiveLeagueGames |
+| `barracks_state_radiant` | Radiant barracks bitmask. Comes from GetLiveLeagueGames |
+| `barracks_state_dire` | Dire barracks bitmask. Comes from GetLiveLeagueGames |
+| `roshan_respawn_timer` | Roshan respawn timer, seconds. Comes from GetLiveLeagueGames |
+| `series_type` | Series type. Comes from GetLiveLeagueGames |
+| `radiant_series_wins` | Radiant wins in the series. Comes from GetLiveLeagueGames |
+| `dire_series_wins` | Dire wins in the series. Comes from GetLiveLeagueGames |
+| `stream_delay_s` | Stream delay, seconds. Comes from GetLiveLeagueGames |
+| `lobby_id` | Steam lobby id. Comes from GetLiveLeagueGames |
+| `game_number` | Game number in the series. Comes from GetLiveLeagueGames |
+| `league_series_id` | League series id. Comes from GetLiveLeagueGames |
+| `league_game_id` | League game id. Comes from GetLiveLeagueGames |
+| `league_tier` | League tier on the listing. Comes from GetLiveLeagueGames |
+| `game_state` | Game state id. Comes from GetRealtimeStats |
+| `server_steam_id` | Game server Steam id. Comes from GetRealtimeStats |
+| `id` | PG serial on backfill; `0` on live inserts |
+
+### live_player_ticks
+
+One row per poll per player. `ORDER BY (match_id, captured_at, player_slot, source)`. GetLiveLeagueGames fills GPM/XPM/ultimate/respawn. GetRealtimeStats fills backpack `item6`–`item8`; other fields on that `source` are `0`. Same `id` rule as `live_match_ticks`. Future aggregations: `GROUP BY` the order key, no `FINAL`.
+
+| Column | Description |
+|---|---|
+| `match_id` | Parent match |
+| `captured_at` | Poll timestamp |
+| `source` | `GetLiveLeagueGames` / `GetRealtimeStats` |
+| `player_slot` | Valve player slot |
+| `account_id` | Steam 32-bit account. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `hero_id` | Current hero. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `kills` | Kills at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `deaths` | Deaths at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `assists` | Assists at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `last_hits` | Last hits at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `denies` | Denies at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `gold` | Unspent gold at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `net_worth` | Net worth at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `level` | Hero level at poll time. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `gold_per_min` | Gold per minute. Comes from GetLiveLeagueGames |
+| `xp_per_min` | XP per minute. Comes from GetLiveLeagueGames |
+| `x` | Map x. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `y` | Map y. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item0` | Inventory slot 0. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item1` | Inventory slot 1. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item2` | Inventory slot 2. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item3` | Inventory slot 3. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item4` | Inventory slot 4. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item5` | Inventory slot 5. Comes from GetLiveLeagueGames / GetRealtimeStats |
+| `item6` | Backpack slot 0. Comes from GetRealtimeStats |
+| `item7` | Backpack slot 1. Comes from GetRealtimeStats |
+| `item8` | Backpack slot 2. Comes from GetRealtimeStats |
+| `ultimate_state` | Ultimate state. Comes from GetLiveLeagueGames |
+| `ultimate_cooldown` | Ultimate cooldown, seconds. Comes from GetLiveLeagueGames |
+| `respawn_timer` | Respawn timer, seconds. Comes from GetLiveLeagueGames |
+| `id` | PG serial on backfill; `0` on live inserts |
 
 ### Codecs
 
@@ -1280,9 +1282,9 @@ Order of magnitude for ~2×10⁵ professional matches: combat log ~10¹⁰ rows,
 | Source | Writes |
 |---|---|
 | `GetLeagueInfoList` | `leagues` |
-| `GetLiveLeagueGames` | `matches` (live, including `lobby_id` / logos / series ids), `ingest_sources`, `match_players` (roster/scoreboard items), `match_draft` (provisional), PG `live_*` ticks |
+| `GetLiveLeagueGames` | `matches` (live, including `lobby_id` / logos / series ids), `ingest_sources`, `match_players` (roster/scoreboard items), `match_draft` (provisional), CH `live_*` ticks |
 | `GetTopLiveGame` | `matches.server_steam_id`, `ingest_sources`, live status |
-| `GetRealtimeStats` | live PG scoreboard/draft plus PG `live_*` ticks (`source = GetRealtimeStats`, `game_state`, `server_steam_id`, backpack `item6`–`item8`). Those ticks do not get GPM/XPM/ultimate/respawn |
+| `GetRealtimeStats` | live PG scoreboard/draft plus CH `live_*` ticks (`source = GetRealtimeStats`, `game_state`, `server_steam_id`, backpack `item6`–`item8`). Those ticks do not get GPM/XPM/ultimate/respawn |
 | `GetMatchHistory` (`league_id`) | `match_id` / `match_seq_num` / series / teams; live-finished waiter (paginated until found or league exhausted) |
 | `GetMatchHistoryBySequenceNum` | box score, draft, backpack, ability upgrades, captains, `seq_fetched_at`. Worker `fetch_seq_details` (`matches_requested = 1`); CLI `persistSeqMatches` batch |
 | GC `CMsgGCMatchDetailsResponse` → `CMsgDOTAMatch` | `cluster` / `replay_salt`, box score, draft, team columns. `item_6..8` map to backpack. `match_replays.steam_account_id` / `proxy_id` |

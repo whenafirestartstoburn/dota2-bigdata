@@ -245,7 +245,8 @@ Sets cursor `next_live_poll_at`. Does **not** enqueue details or download.
     history is still looking for the seqnum.
   - else → `status = not_started`, `last_error_kind = not_started`.
 
-**Postgres ticks.** Every listed game, even if the hash was unchanged:
+**ClickHouse ticks.** After the Postgres transaction, every listed game,
+even if the hash was unchanged:
 
 - `live_match_ticks` (`source = GetLiveLeagueGames`) — duration, scores,
   towers, barracks, roshan timer, series, spectators, lobby ids.
@@ -298,7 +299,7 @@ key limiter. Log method `GetRealtimeStats`, `match_id` set.
 - `league_id <= 0` or `PublicMatchError` → `clearServerSteamId`, stop
   scanning that id.
 
-**Postgres ticks.**
+**ClickHouse ticks.** After the per-match Postgres writes.
 
 - `live_match_ticks` (`source = GetRealtimeStats`) — `game_time`,
   scores, `game_state`, `server_steam_id`.

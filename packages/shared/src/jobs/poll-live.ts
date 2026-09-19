@@ -215,8 +215,8 @@ export async function runPollLiveGames(): Promise<{
 			)
 			for (const matchId of finished) hashes.delete(matchId)
 		}
-		await insertLiveTicks(tx, tickRows, playerTickRows)
 	})
+	await insertLiveTicks(tickRows, playerTickRows)
 
 	await enqueueLiveFinishedDetails(finished)
 
