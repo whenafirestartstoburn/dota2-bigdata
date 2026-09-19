@@ -19,8 +19,10 @@ dbmate — отдельный Go-бинарь, а не npm-пакет: чере�
 ставится и в `package.json` его нет. Из `packages/*/src` его не
 импортируют: сервисы миграции не применяют. Образ `api`/`worker` каталог
 `db/` не копирует (`.dockerignore`). Накатка — `bun run db:up` / `ch:up`
-или one-shot в compose (`migrate`, `clickhouse-migrate`), до старта
-реплик, не из процесса приложения.
+или one-shot в compose (`migrate`, `clickhouse-migrate`, `--no-dump-schema`,
+том `db/` read-only), до старта реплик, не из процесса приложения. Compose
+не переписывает дамп: на сервере в нём каждый день другие суточные
+партиции `steam_api_requests_*` / `steam_gc_requests_*` / `replay_requests_*`.
 
 ```bash
 brew install dbmate   # или см. github.com/amacneil/dbmate
@@ -82,7 +84,8 @@ ClickHouse задаётся флагами в скриптах `ch:*` (`db/click
 Это дамп схемы: единственное место, где она видна целиком, не собираясь в
 голове из цепочки миграций. Руками он не пишется — его перезаписывает каждый
 `db:up` / `db:down` (Postgres) и `ch:up` / `ch:down` (ClickHouse,
-`db/clickhouse/schema.sql`). Дамп входит в коммит вместе с миграцией.
+`db/clickhouse/schema.sql`) **локально**. Compose `migrate` дамп не трогает
+(`--no-dump-schema`). Дамп входит в коммит вместе с миграцией.
 
 **Ловушка версии `pg_dump`.** Если локальный `pg_dump` старше сервера
 Postgres, `db:up` МОЛЧА не перезаписывает дамп: команда завершается нулевым

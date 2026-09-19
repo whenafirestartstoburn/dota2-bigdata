@@ -74,7 +74,7 @@ The monorepo started from an internal Bun template (`api`, `shared`, `cli`, `wor
 
 ## Migrations: dbmate, not the app
 
-**Decision:** [dbmate](https://github.com/amacneil/dbmate) applies SQL in `db/migrations` (Postgres) and `db/clickhouse/migrations` (ClickHouse). Dumps: `db/schema.sql`, `db/clickhouse/schema.sql`. Compose one-shots `migrate` / `clickhouse-migrate` run **before** workers. Application images do not copy `db/`, do not depend on dbmate, and do not `CREATE TABLE`.
+**Decision:** [dbmate](https://github.com/amacneil/dbmate) applies SQL in `db/migrations` (Postgres) and `db/clickhouse/migrations` (ClickHouse). Dumps: `db/schema.sql`, `db/clickhouse/schema.sql` — written only by local `bun run db:up` / `ch:up`, never by compose `migrate` / `clickhouse-migrate` (`--no-dump-schema`, `db/` mounted read-only). Those one-shots run **before** workers. Application images do not copy `db/`, do not depend on dbmate, and do not `CREATE TABLE`.
 
 **Why.** Several worker replicas must not all migrate on boot. SQL files are the reviewable DDL. The same tool covers Postgres and ClickHouse (ClickHouse: one statement per `-- migrate:up`, `transaction:false`).
 

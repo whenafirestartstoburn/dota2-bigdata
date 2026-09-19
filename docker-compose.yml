@@ -80,8 +80,13 @@ services:
     image: ghcr.io/amacneil/dbmate:2
     working_dir: /app
     volumes:
-      - ./db:/app/db
-    command: ["--wait", "--url", "postgres://dota:dota@postgres:5432/dota?sslmode=disable", "up"]
+      - ./db:/app/db:ro
+    command:
+      - "--wait"
+      - "--no-dump-schema"
+      - "--url"
+      - "postgres://dota:dota@postgres:5432/dota?sslmode=disable"
+      - "up"
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,9 +96,10 @@ services:
     image: ghcr.io/amacneil/dbmate:2
     working_dir: /app
     volumes:
-      - ./db:/app/db
+      - ./db:/app/db:ro
     command:
       - "--wait"
+      - "--no-dump-schema"
       - "--url"
       - "clickhouse://dota:dota@clickhouse:9000/dota"
       - "--migrations-dir"
