@@ -156,6 +156,7 @@ describe('findSchemaDrift', () => {
 							team_logo_url: 'https://example.test/logo.png',
 						},
 					],
+					delta_frame: true,
 				},
 				STEAM_API_DRIFT.GetRealtimeStats ?? { required: [] },
 			),

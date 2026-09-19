@@ -385,7 +385,7 @@ export const STEAM_API_DRIFT: Record<string, DriftSpec> = {
 	},
 	GetRealtimeStats: {
 		required: ['match'],
-		optional: ['buildings', 'graph_data'],
+		optional: ['buildings', 'graph_data', 'delta_frame'],
 		objects: {
 			match: {
 				required: ['match_id', 'league_id'],

@@ -209,6 +209,7 @@ describe('parseRealtimeStats', () => {
 					players: [],
 				},
 			],
+			delta_frame: true,
 		})
 		expect(stats.match.league_id).toBe(7)
 		expect(stats.teams).toHaveLength(1)

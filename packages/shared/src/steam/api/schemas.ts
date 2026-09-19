@@ -312,6 +312,7 @@ export const realtimeStatsResponseSchema = z.object({
 	match: realtimeMatchSchema,
 	teams: z.array(z.unknown()).default([]),
 	buildings: z.array(z.unknown()).optional(),
+	delta_frame: z.union([z.number(), z.boolean()]).optional(),
 	graph_data: z
 		.object({
 			graph_gold: z.array(z.number()).optional(),

@@ -15,7 +15,7 @@ method, one drift check per successful JSON body.
 | `GetMatchHistory` | Steam | `{ result: { status, matches, … } }` |
 | `GetMatchHistoryBySequenceNum` | Steam | `{ result: { status, matches } }` |
 | `GetTopLiveGame` | Steam | `{ game_list: TopLiveGameEntry[] }` |
-| `GetRealtimeStats` | Steam | `{ match, teams, buildings?, graph_data? }` |
+| `GetRealtimeStats` | Steam | `{ match, teams, buildings?, graph_data?, delta_frame? }` |
 
 Sampled 2026-09-19 from live 200 bodies. DTOs include Valve’s current
 keys, not only the subset this repo persists. Live extras that are
@@ -25,9 +25,9 @@ and side `abilities`; `GetTopLiveGame` query-echo envelope
 `game_list_index`, `specific_games`, `bot_game`) plus
 `is_player_draft` / `is_watch_eligible` on each game;
 `GetMatchHistory` player `hero_variant`; `GetRealtimeStats`
-`match.lobby_type` / `start_timestamp` / `is_player_draft` and team
-`team_tag` / `team_logo_url`. Also `leagueid`, `accountid`/`heroid`,
-scoreboard `death` vs `deaths`.
+`match.lobby_type` / `start_timestamp` / `is_player_draft`, team
+`team_tag` / `team_logo_url`, and envelope `delta_frame`. Also
+`leagueid`, `accountid`/`heroid`, scoreboard `death` vs `deaths`.
 
 An empty `games` / `matches` / `infos` / `game_list` / `teams` array is
 a valid response, not a parse error and not schema drift.
