@@ -437,7 +437,8 @@ exact seqnum. Priority 20.
 
 **Calls.** One `IDOTA2Match_570/GetMatchHistoryBySequenceNum/v1`
 (`start_at_match_seq_num`, `matches_requested = seq_batch_size`).
-Log method `GetMatchHistoryBySequenceNum`.
+Log method `GetMatchHistoryBySequenceNum`; `response_body` stays
+null (the page is large).
 
 **Postgres.**
 
@@ -760,7 +761,8 @@ to `stored`.
 
 One row per attempt. Insert before the network call, update
 `response_time` / `response_status` / `response_size_kb` /
-`error_response` after.
+`error_response` after. `steam_api_requests.response_body` is the
+200 JSON except `fetch_seq_window`, which leaves it null.
 
 ---
 

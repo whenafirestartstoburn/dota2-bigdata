@@ -100,6 +100,10 @@ const liveDraftHeroSpec: DriftSpec = {
 	required: ['hero_id'],
 }
 
+const liveAbilitySpec: DriftSpec = {
+	optional: ['ability_id', 'ability_level'],
+}
+
 const liveScoreboardPlayerSpec: DriftSpec = {
 	optional: [
 		'player_slot',
@@ -145,6 +149,7 @@ const liveSideSpec: DriftSpec = {
 		picks: liveDraftHeroSpec,
 		bans: liveDraftHeroSpec,
 		players: liveScoreboardPlayerSpec,
+		abilities: liveAbilitySpec,
 	},
 }
 
@@ -181,7 +186,7 @@ const liveLeagueGameSpec: DriftSpec = {
 
 const historyPlayerSpec: DriftSpec = {
 	required: ['account_id', 'player_slot'],
-	optional: ['hero_id', 'team_number', 'team_slot'],
+	optional: ['hero_id', 'team_number', 'team_slot', 'hero_variant'],
 }
 
 const historyMatchSpec: DriftSpec = {
@@ -271,6 +276,8 @@ const topLiveGameSpec: DriftSpec = {
 		'weekend_tourney_skill_level',
 		'weekend_tourney_bracket_round',
 		'custom_game_difficulty',
+		'is_player_draft',
+		'is_watch_eligible',
 		'players',
 	],
 }
@@ -311,7 +318,15 @@ const realtimeTeamPlayerSpec: DriftSpec = {
 
 const realtimeTeamSpec: DriftSpec = {
 	required: ['team_number'],
-	optional: ['team_id', 'team_name', 'team_logo', 'score', 'net_worth'],
+	optional: [
+		'team_id',
+		'team_name',
+		'team_tag',
+		'team_logo',
+		'team_logo_url',
+		'score',
+		'net_worth',
+	],
 	arrays: { players: realtimeTeamPlayerSpec },
 }
 
@@ -324,7 +339,7 @@ export const STEAM_API_DRIFT: Record<string, DriftSpec> = {
 		required: ['result'],
 		objects: {
 			result: {
-				optional: ['games'],
+				optional: ['status', 'games'],
 				arrays: { games: liveLeagueGameSpec },
 			},
 		},
@@ -355,7 +370,17 @@ export const STEAM_API_DRIFT: Record<string, DriftSpec> = {
 		},
 	},
 	GetTopLiveGame: {
-		optional: ['game_list'],
+		optional: [
+			'game_list',
+			'search_key',
+			'league_id',
+			'hero_id',
+			'start_game',
+			'num_games',
+			'game_list_index',
+			'specific_games',
+			'bot_game',
+		],
 		arrays: { game_list: topLiveGameSpec },
 	},
 	GetRealtimeStats: {
@@ -371,7 +396,10 @@ export const STEAM_API_DRIFT: Record<string, DriftSpec> = {
 					'node_id',
 					'server_steam_id',
 					'timestamp',
+					'start_timestamp',
+					'lobby_type',
 					'game_mode',
+					'is_player_draft',
 				],
 				arrays: {
 					picks: realtimePickBanSpec,

@@ -32,7 +32,10 @@ export async function runFetchSeqWindow(input: { startAt: number }): Promise<{
 }> {
 	const settings = await getAppSettings()
 	const cred = await pickApiCredential()
-	const ctx = steamCtx(cred, 'historical')
+	const ctx = {
+		...steamCtx(cred, 'historical'),
+		logResponseBody: false,
+	}
 	const window = await getMatchHistoryBySequenceNum(ctx, {
 		startAtMatchSeqNum: input.startAt,
 		matchesRequested: settings.seqBatchSize,

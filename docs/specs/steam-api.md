@@ -17,12 +17,17 @@ method, one drift check per successful JSON body.
 | `GetTopLiveGame` | Steam | `{ game_list: TopLiveGameEntry[] }` |
 | `GetRealtimeStats` | Steam | `{ match, teams, buildings?, graph_data? }` |
 
-Sampled 2026-09-19: `GetLeagueInfoList` items carry exactly
-`league_id`, `name`, `tier`, `region`, `most_recent_activity`,
-`total_prize_pool`, `start_timestamp`, `end_timestamp`, `status`. Other
-DTOs follow Valve’s published fields plus the keys this repo already
-reads (`leagueid`, `accountid`/`heroid`, scoreboard `death` vs
-`deaths`, …).
+Sampled 2026-09-19 from live 200 bodies. DTOs include Valve’s current
+keys, not only the subset this repo persists. Live extras that are
+declared (so they are not drift): `GetLiveLeagueGames` `result.status`
+and side `abilities`; `GetTopLiveGame` query-echo envelope
+(`search_key`, `league_id`, `hero_id`, `start_game`, `num_games`,
+`game_list_index`, `specific_games`, `bot_game`) plus
+`is_player_draft` / `is_watch_eligible` on each game;
+`GetMatchHistory` player `hero_variant`; `GetRealtimeStats`
+`match.lobby_type` / `start_timestamp` / `is_player_draft` and team
+`team_tag` / `team_logo_url`. Also `leagueid`, `accountid`/`heroid`,
+scoreboard `death` vs `deaths`.
 
 An empty `games` / `matches` / `infos` / `game_list` / `teams` array is
 a valid response, not a parse error and not schema drift.
@@ -30,9 +35,10 @@ a valid response, not a parse error and not schema drift.
 ## Request log body
 
 `steam_api_requests.response_body` (jsonb) stores the parsed JSON of a
-**200** attempt. Errors stay in `error_response`. Retention for all
-three Valve log tables is **3** UTC days (`maintain_request_logs`
-default).
+**200** attempt. Errors stay in `error_response`. `fetch_seq_window`
+passes `logResponseBody: false` so walker `GetMatchHistoryBySequenceNum`
+pages stay null (the bodies are large). Retention for all three Valve
+log tables is **3** UTC days (`maintain_request_logs` default).
 
 ## Schema drift
 

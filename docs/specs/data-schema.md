@@ -16,7 +16,7 @@ Removed: ClickHouse `dota.match_details_raw`, `dota.source_payloads`; Postgres `
 
 Operational tables (`steam_accounts`, `steam_api_keys`, `proxies`, `settings`, `marketplace_products`, `marketplace_orders`, `resource_attempts`, `steam_api_requests`, `steam_gc_requests`, `replay_requests`, graphile-worker) are not listed here.
 
-Valve attempt logs (`steam_api_requests`, `steam_gc_requests`, `replay_requests`): daily partitions, `match_id` nullable, retained 3 days. `steam_api_requests` also stores the 200 JSON body (`response_body` jsonb). Web API / GC rows also store `steam_api_key_id` / `steam_account_id`. [`request-logs.md`](./request-logs.md), [`steam-api.md`](./steam-api.md).
+Valve attempt logs (`steam_api_requests`, `steam_gc_requests`, `replay_requests`): daily partitions, `match_id` nullable, retained 3 days. `steam_api_requests` also stores the 200 JSON body (`response_body` jsonb), except `fetch_seq_window` walker pages. Web API / GC rows also store `steam_api_key_id` / `steam_account_id`. [`request-logs.md`](./request-logs.md), [`steam-api.md`](./steam-api.md).
 
 Every public Postgres table except dbmate `schema_migrations` has `id bigserial` PK and `created_at` / `updated_at` (`set_updated_at` trigger; `created_at` is immutable). Those three columns are omitted below. Natural identifiers (`match_id`, `league_id`, `account_id`, …) are UNIQUE. FKs point at the natural keys.
 

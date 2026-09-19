@@ -73,6 +73,11 @@ export const liveScoreboardPlayerSchema = z.object({
 	name: z.string().optional(),
 })
 
+export const liveAbilitySchema = z.object({
+	ability_id: z.number().optional(),
+	ability_level: z.number().optional(),
+})
+
 export const liveSideScoreboardSchema = z.object({
 	score: z.number().optional(),
 	tower_state: z.number().optional(),
@@ -80,6 +85,7 @@ export const liveSideScoreboardSchema = z.object({
 	picks: z.array(liveDraftHeroSchema).optional(),
 	bans: z.array(liveDraftHeroSchema).optional(),
 	players: z.array(z.unknown()).optional(),
+	abilities: z.array(liveAbilitySchema).optional(),
 })
 
 export const liveScoreboardSchema = z.object({
@@ -113,6 +119,7 @@ export const liveLeagueGameSchema = z.object({
 
 export const liveLeagueGamesResponseSchema = z.object({
 	result: z.object({
+		status: z.number().optional(),
 		games: z.array(z.unknown()).optional().default([]),
 	}),
 })
@@ -123,6 +130,7 @@ export const historyPlayerSchema = z.object({
 	hero_id: z.number().default(0),
 	team_number: z.number().optional(),
 	team_slot: z.number().optional(),
+	hero_variant: z.number().optional(),
 })
 
 export const historyMatchSchema = z.object({
@@ -198,6 +206,14 @@ export const seqResponseSchema = z.object({
 })
 
 export const topLiveGamesResponseSchema = z.object({
+	search_key: z.string().optional(),
+	league_id: z.number().optional(),
+	hero_id: z.number().optional(),
+	start_game: z.number().optional(),
+	num_games: z.number().optional(),
+	game_list_index: z.number().optional(),
+	specific_games: z.union([z.number(), z.boolean()]).optional(),
+	bot_game: z.union([z.number(), z.boolean()]).optional(),
 	game_list: z.array(z.unknown()).default([]),
 })
 
@@ -225,6 +241,8 @@ export const topLiveGameEntrySchema = z.object({
 	last_update_time: z.number().optional(),
 	radiant_lead: z.number().optional(),
 	building_state: z.number().optional(),
+	is_player_draft: z.union([z.number(), z.boolean()]).optional(),
+	is_watch_eligible: z.union([z.number(), z.boolean()]).optional(),
 	players: z.array(z.unknown()).optional(),
 })
 
@@ -242,7 +260,10 @@ export const realtimeMatchSchema = z.object({
 	node_id: z.number().optional(),
 	server_steam_id: intOrText.optional(),
 	timestamp: z.number().optional(),
+	start_timestamp: z.number().optional(),
+	lobby_type: z.number().optional(),
 	game_mode: z.number().optional(),
+	is_player_draft: z.union([z.number(), z.boolean()]).optional(),
 	picks: z.array(realtimePickBanSchema).optional(),
 	bans: z.array(realtimePickBanSchema).optional(),
 })
@@ -279,7 +300,9 @@ export const realtimeTeamSchema = z.object({
 	team_number: z.number(),
 	team_id: z.number().optional(),
 	team_name: z.string().optional(),
+	team_tag: z.string().optional(),
 	team_logo: intOrText.optional(),
+	team_logo_url: z.string().optional(),
 	score: z.number().optional(),
 	net_worth: z.number().optional(),
 	players: z.array(z.unknown()).optional(),

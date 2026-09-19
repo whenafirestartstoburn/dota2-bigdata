@@ -55,6 +55,7 @@ describe('parseLiveLeagueGames', () => {
 	test('parses a live game and skips match_id 0', () => {
 		const { games } = parseLiveLeagueGames({
 			result: {
+				status: 200,
 				games: [
 					{
 						match_id: 1,
@@ -96,12 +97,20 @@ describe('parseMatchHistoryPage', () => {
 						match_seq_num: 9,
 						start_time: 1,
 						lobby_type: 1,
-						players: [{ account_id: 1, player_slot: 0, hero_id: 8 }],
+						players: [
+							{
+								account_id: 1,
+								player_slot: 0,
+								hero_id: 8,
+								hero_variant: 1,
+							},
+						],
 					},
 				],
 			},
 		})
 		expect(page.matches[0]?.match_id).toBe(5)
+		expect(page.matches[0]?.players).toHaveLength(1)
 		expect(page.resultsRemaining).toBe(40)
 		expect(page.totalResults).toBe(41)
 	})
@@ -152,8 +161,23 @@ describe('parseMatchHistoryBySequenceNum', () => {
 describe('parseTopLiveGames', () => {
 	test('keeps league_id > 0 and drops pubs', () => {
 		const { games } = parseTopLiveGames({
+			search_key: '',
+			league_id: 0,
+			hero_id: 0,
+			start_game: 0,
+			num_games: 2,
+			game_list_index: 0,
+			specific_games: 0,
+			bot_game: 0,
 			game_list: [
-				{ match_id: '1', server_steam_id: '9', league_id: 10, delay: 30 },
+				{
+					match_id: '1',
+					server_steam_id: '9',
+					league_id: 10,
+					delay: 30,
+					is_player_draft: false,
+					is_watch_eligible: true,
+				},
 				{ match_id: 2, server_steam_id: 8, league_id: 0, delay: 0 },
 			],
 		})
@@ -170,9 +194,21 @@ describe('parseRealtimeStats', () => {
 				match_id: '11',
 				league_id: 7,
 				game_time: 40,
+				lobby_type: 1,
+				start_timestamp: 10,
+				is_player_draft: false,
 				picks: [{ team: 2, hero: 1 }],
 			},
-			teams: [{ team_number: 2, team_id: 36, score: 3, players: [] }],
+			teams: [
+				{
+					team_number: 2,
+					team_id: 36,
+					team_tag: 'T',
+					team_logo_url: 'https://example.test/logo.png',
+					score: 3,
+					players: [],
+				},
+			],
 		})
 		expect(stats.match.league_id).toBe(7)
 		expect(stats.teams).toHaveLength(1)

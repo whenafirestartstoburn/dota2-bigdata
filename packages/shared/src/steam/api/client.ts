@@ -52,6 +52,8 @@ export type SteamRequestContext = {
 	proxyUrl: string
 	purpose: ApiCallPurpose
 	matchId?: number | null
+	/** Seq walker windows are large; leave `response_body` null. */
+	logResponseBody?: boolean
 }
 
 export const STEAM_API = 'https://api.steampowered.com'
@@ -162,7 +164,7 @@ async function getJsonOnce(
 			responseTimeMs: elapsed,
 			responseStatus: String(response.status),
 			responseSizeKb: sizeKb,
-			responseBody: body,
+			...(ctx.logResponseBody === false ? {} : { responseBody: body }),
 		})
 		await recordResourceAttempt({
 			kind: 'proxy',
