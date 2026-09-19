@@ -4,7 +4,8 @@
 - [x] DDL: restore CH tables with codecs + `id` for backfill
 - [x] Live jobs insert ticks to ClickHouse (after the PG transaction)
 - [x] One-time PG → CH drain script (idempotent, parallel)
-- [ ] Deploy, then run `scripts/migrate-live-ticks.sh` on `dota2-bigdata`
+- [x] Deploy, drain `live_player_ticks` (2026-09-19; VACUUM hit 64 MiB shm)
+- [ ] Re-run script for leftover `live_match_ticks`
 - [ ] Later: drop empty PG `live_*_ticks` (separate migration)
 
 ## Why
@@ -25,6 +26,11 @@ delete leftover PG rows. A failed insert leaves PG intact.
 or it parses `min|max|count` as one field and skips the table.
 
 ## Run (after deploy)
+
+Postgres container `/dev/shm` is 64 MiB by default. `VACUUM ANALYZE`
+after the player drain failed there (`No space left on device` on a
+67 MiB DSM resize). Host disk was fine. Compose now sets `shm_size:
+256mb`. The script skips VACUUM unless `VACUUM=1`.
 
 ```bash
 ssh olegr@dota2-bigdata

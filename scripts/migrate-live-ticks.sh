@@ -179,7 +179,11 @@ migrate_table() {
 		lo=${hi}
 	done
 	wait
-	pg_query "VACUUM ANALYZE ${table}"
+	# VACUUM needs more than Docker's default 64 MiB /dev/shm. Skip unless
+	# VACUUM=1 and the container was started with shm_size >= 256m.
+	if [[ "${VACUUM:-0}" == 1 ]]; then
+		pg_query "VACUUM ANALYZE ${table}"
+	fi
 	log "\"table\":\"${table}\",\"msg\":\"done\",\"pg_left\":$(pg_query "SELECT count(*) FROM ${table}")"
 }
 

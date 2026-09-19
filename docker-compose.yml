@@ -22,6 +22,8 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Default Docker shm is 64 MiB; VACUUM / parallel query DSM needs more.
+    shm_size: 256mb
     environment:
       POSTGRES_USER: dota
       POSTGRES_PASSWORD: dota
