@@ -31,7 +31,7 @@ ch_query() {
 
 pg_query() {
 	docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" \
-		-v ON_ERROR_STOP=1 -At -c "$1"
+		-v ON_ERROR_STOP=1 -At -F $'\t' -c "$1"
 }
 
 log() {
@@ -159,6 +159,9 @@ migrate_table() {
 	local min_id max_id count lo hi
 	preflight "${table}"
 	IFS=$'\t' read -r min_id max_id count <<<"$(pg_query "SELECT COALESCE(min(id),0), COALESCE(max(id),0), count(*) FROM ${table}")"
+	if [[ ! "${min_id}" =~ ^[0-9]+$ || ! "${max_id}" =~ ^[0-9]+$ || ! "${count}" =~ ^[0-9]+$ ]]; then
+		die "failed to parse ${table} bounds min=${min_id:-?} max=${max_id:-?} count=${count:-?}"
+	fi
 
 	log "\"table\":\"${table}\",\"msg\":\"start\",\"min_id\":${min_id},\"max_id\":${max_id},\"pg_count\":${count},\"batch\":${BATCH},\"workers\":${WORKERS}"
 	if [[ "${count}" -le 0 ]]; then

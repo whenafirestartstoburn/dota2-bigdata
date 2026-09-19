@@ -21,6 +21,9 @@ PG is the work queue. Each id range: insert into CH, then `DELETE` that
 range from PG. Re-run: if CH already has the range, skip insert and
 delete leftover PG rows. A failed insert leaves PG intact.
 
+`psql -A` field separator is `|`. The drain script must use `-F $'\\t'`
+or it parses `min|max|count` as one field and skips the table.
+
 ## Run (after deploy)
 
 ```bash
