@@ -24,6 +24,7 @@ describe('getAppSettings', () => {
 		expect(settings.apiKeyErrorWindow).toBe(20)
 		expect(settings.apiKeyRetestMax).toBe(20)
 		expect(settings.livePollIntervalMs).toBe(1000)
+		expect(settings.liveMaxConcurrent).toBe(5)
 		expect(settings.liveMissingThreshold).toBe(2)
 		expect(settings.replayLiveDelayMs).toBe(30_000)
 		expect(settings.historyPageSize).toBe(100)

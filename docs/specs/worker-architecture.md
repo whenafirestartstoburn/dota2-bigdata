@@ -39,7 +39,7 @@ Collection must work if the API is down.
 
 | Role | Jobs | graphile concurrency |
 |---|---|---|
-| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `fetch_seq_details`, `walk_seq_history`, `fetch_seq_window` (+ `run_scheduled_job`) | 4 |
+| `live` | `poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `fetch_seq_details`, `walk_seq_history`, `fetch_seq_window` (+ `run_scheduled_job`) | 8 |
 | `historical` | `walk_league_history`, `poll_finished_history`, `fetch_seq_details`, `walk_seq_history`, `fetch_seq_window`, `fetch_leagues`, `process_league`, `sync_catalogs` (+ `run_scheduled_job`) | 4 |
 | `match-processing` | `fetch_match_details`, `download_replay`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` (+ `run_scheduled_job`) | 35 |
 
@@ -72,9 +72,9 @@ transitions, and ClickHouse / catalog inserts:
 
 | identifier | Cadence | One unit |
 |---|---|---|
-| `poll_live_games` | every `settings.live_poll_interval_ms` (seed 1 s) | GetLiveLeagueGames → live ticks + DB finish detection |
-| `poll_top_live` | same interval | GetTopLiveGame (`league_id > 0`) → `server_steam_id` + finish detection |
-| `poll_realtime_stats` | same interval | GetRealtimeStats for live rows with `server_steam_id`, paced by the key limiter |
+| `poll_live_games` | every `settings.live_poll_interval_ms` from tick start (seed 1 s); skip if `live_max_concurrent` (seed 5) live ticks are in flight | GetLiveLeagueGames → live ticks + DB finish detection |
+| `poll_top_live` | same period and cap | GetTopLiveGame (`league_id > 0`) → `server_steam_id` + finish detection |
+| `poll_realtime_stats` | same period and cap | GetRealtimeStats for live rows with `server_steam_id`, paced by the key limiter |
 | `poll_finished_history` | every `settings.history_fast_poll_ms` (seed 5 s) | page GetMatchHistory until waiting ids are found or the league is exhausted (max 100 / call) |
 | `walk_seq_history` | every `settings.seq_walk_interval_ms` (seed 1 s; 60 s after catching the tip) | claim `settings.seq_walk_cursor` windows up to `seq_walk_parallelism` (seed 2) |
 | `fetch_seq_window` | on demand per claimed seqnum | `GetMatchHistoryBySequenceNum` (`matches_requested = seq_batch_size`) for that exact start; upsert `league_id > 0` |
@@ -262,7 +262,7 @@ Historical ingest does not wait for `FINISHED`. A match is live only while a liv
 - A disabled proxy is rotated off the current key/account even before the window fills; it stays in the ready pool until the threshold hits.
 - GC timeout → next Steam account; do not block live polls.
 - A thrown job on a named queue does **not** graphile-retry on that shard. The wrapper parks `run_scheduled_job` (30 s, 1 m, 3 m, …) and hops back when due. After the stamped budget the job leaves the queue.
-- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, `walk_seq_history`, archive / replenish / settle / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. If Postgres dies mid-tick, the `finally` reschedule also fails; graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
+- Self-reschedule loops (`poll_live_games`, `poll_top_live`, `poll_realtime_stats`, `poll_finished_history`, `walk_league_history`, `walk_seq_history`, archive / replenish / settle / retest / request-log maintain) use `maxAttempts = 25`. `maxAttempts = 1` is only for named-queue shards. Live polls enqueue the next `jobKey` at tick start (`runAt = started + live_poll_interval_ms`) so a slow Steam call does not slip the period; a sixth overlapping tick is skipped instead of queued. If Postgres dies before that enqueue, graphile retries the same `jobKey` after LISTEN comes back. `ensure_loop_jobs` (reconnect + 1 min cron) re-enqueues a key that is missing or permafailed without touching a scheduled or locked row.
 - GC `CMsgGCMatchDetailsResponse.result = 15` (AccessDenied) → not a proxy / account fault. Mark the match `replay_unavailable` and finish the job; other results still throw and retry.
 - Empty GetLiveLeagueGames / GetTopLiveGame → do not finish-detect that feed.
 - Download without `source_url` → fail until details ran.

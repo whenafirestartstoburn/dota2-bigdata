@@ -90,7 +90,7 @@ describe('task ownership', () => {
 			SCHEDULED_JOB,
 			ENSURE_LOOP_JOBS,
 		])
-		expect(concurrencyFor('live')).toBe(4)
+		expect(concurrencyFor('live')).toBe(8)
 		expect(concurrencyFor('historical')).toBe(4)
 		expect(concurrencyFor('match-processing')).toBe(35)
 		expect(concurrencyFor('all')).toBe(35)

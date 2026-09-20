@@ -16,6 +16,7 @@ export type AppSettings = {
 	apiKeyErrorWindow: number
 	apiKeyRetestMax: number
 	livePollIntervalMs: number
+	liveMaxConcurrent: number
 	liveMissingThreshold: number
 	replayLiveDelayMs: number
 	historyPageSize: number
@@ -60,6 +61,7 @@ const KEYS = {
 	apiKeyErrorWindow: 'api_key_error_window',
 	apiKeyRetestMax: 'api_key_retest_max',
 	livePollIntervalMs: 'live_poll_interval_ms',
+	liveMaxConcurrent: 'live_max_concurrent',
 	liveMissingThreshold: 'live_missing_threshold',
 	replayLiveDelayMs: 'replay_live_delay_ms',
 	historyPageSize: 'history_page_size',
@@ -152,6 +154,7 @@ export async function getAppSettings(): Promise<AppSettings> {
 		apiKeyErrorWindow: requiredPositiveInt(map, KEYS.apiKeyErrorWindow),
 		apiKeyRetestMax: requiredPositiveInt(map, KEYS.apiKeyRetestMax),
 		livePollIntervalMs: requiredPositiveInt(map, KEYS.livePollIntervalMs),
+		liveMaxConcurrent: optionalPositiveInt(map, KEYS.liveMaxConcurrent, 5),
 		liveMissingThreshold: requiredPositiveInt(map, KEYS.liveMissingThreshold),
 		replayLiveDelayMs: requiredPositiveInt(map, KEYS.replayLiveDelayMs),
 		historyPageSize: Math.min(historyPage, VALVE_HISTORY_MAX),

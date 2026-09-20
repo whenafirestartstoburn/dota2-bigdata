@@ -639,6 +639,7 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
     - api_key_error_window
     - api_key_retest_max
     - live_poll_interval_ms
+    - live_max_concurrent
     - live_missing_threshold
     - replay_live_delay_ms
     - history_page_size

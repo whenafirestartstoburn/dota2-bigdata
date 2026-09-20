@@ -45,6 +45,19 @@ export const jobsInProgress = new Gauge(
 	'graphile-worker tasks currently running',
 	['job'],
 )
+export const liveCallsInProgress = new Gauge(
+	'dota_live_calls_in_progress',
+	'In-flight poll_live_games / poll_top_live / poll_realtime_stats ticks',
+)
+export const liveCircuitOpen = new Gauge(
+	'dota_live_circuit_open',
+	'1 while in-flight live ticks are at settings.live_max_concurrent',
+)
+export const livePollSkipped = new Counter(
+	'dota_live_poll_skipped_total',
+	'Live poll ticks not started',
+	['job', 'reason'],
+)
 export const replayDownloads = new Counter(
 	'dota_replay_downloads_total',
 	'Valve CDN replay downloads',
@@ -303,6 +316,11 @@ function steamStatus(error: unknown): number | undefined {
 	return typeof status === 'number' ? status : undefined
 }
 
+const LIVE_POLL_JOBS = [
+	'poll_live_games',
+	'poll_top_live',
+	'poll_realtime_stats',
+] as const
 const HISTORY_WALK_RESULTS = ['hits', 'empty', 'skipped'] as const
 const SEQ_WALK_RESULTS = ['hits', 'empty'] as const
 const GC_REQUEST_RESULTS = ['success', 'timeout', 'no_account', 'error']
@@ -332,6 +350,16 @@ const WEBAPI_METHODS: Array<[WebApiSource, string]> = [
 	['dota2', 'itemlist'],
 	['dota2', 'abilitylist'],
 ]
+
+export function seedIdleLiveCircuitSeries(): void {
+	if (liveCallsInProgress.get() === 0) liveCallsInProgress.setValue(0)
+	if (liveCircuitOpen.get() === 0) liveCircuitOpen.setValue(0)
+	for (const job of LIVE_POLL_JOBS) {
+		if (livePollSkipped.get({ job, reason: 'concurrency' }) === 0) {
+			livePollSkipped.inc({ job, reason: 'concurrency' }, 0)
+		}
+	}
+}
 
 export function seedIdleHistorySeries(): void {
 	if (historyWalkMatches.get() === 0) historyWalkMatches.inc({}, 0)
@@ -383,6 +411,7 @@ function seedIdleCatalog(): void {
 	seedIdleGcSeries()
 	seedIdleWebApiSeries()
 	seedIdleReplaySeries()
+	seedIdleLiveCircuitSeries()
 }
 
 onMetricsReset(seedIdleCatalog)

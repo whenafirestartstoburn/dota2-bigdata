@@ -7,6 +7,7 @@ import { metricsResponse } from '@app/shared/src/metrics/http'
 import {
 	seedIdleGcSeries,
 	seedIdleHistorySeries,
+	seedIdleLiveCircuitSeries,
 	seedIdleReplaySeries,
 	seedIdleWebApiSeries,
 } from '@app/shared/src/metrics/observe'
@@ -35,6 +36,7 @@ if (role === 'all' || role === 'match-processing') seedIdleGcSeries()
 if (role === 'all' || role === 'historical' || role === 'live') {
 	seedIdleHistorySeries()
 }
+if (role === 'all' || role === 'live') seedIdleLiveCircuitSeries()
 seedIdleWebApiSeries()
 seedIdleReplaySeries()
 const taskNames = taskNamesFor(role)

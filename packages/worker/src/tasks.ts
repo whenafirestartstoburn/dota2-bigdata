@@ -18,6 +18,14 @@ import {
 	runFetchSeqDetails,
 } from '@app/shared/src/jobs/fetch-seq-details'
 import { runFetchSeqWindow } from '@app/shared/src/jobs/fetch-seq-window'
+import {
+	LiveCircuitOpenError,
+	type LivePollJob,
+	leaveLiveCall,
+	nextLiveRunAt,
+	skipLiveCall,
+	tryEnterLiveCall,
+} from '@app/shared/src/jobs/live-circuit'
 import { runMaintainRequestLogsJob } from '@app/shared/src/jobs/maintain-request-logs'
 import { runPollFinishedHistory } from '@app/shared/src/jobs/poll-finished-history'
 import { runPollLiveGames } from '@app/shared/src/jobs/poll-live'
@@ -66,6 +74,11 @@ function traced(name: string, fn: Task, opts?: { skipNoKey?: boolean }): Task {
 					await fn(payload, helpers)
 					observeJob(name, 'success', started)
 				} catch (error) {
+					if (error instanceof LiveCircuitOpenError) {
+						observeJob(name, 'skipped', started)
+						logger.warn({ job: name }, error.message)
+						return
+					}
 					if (
 						opts?.skipNoKey === true &&
 						/no ready Steam API key/i.test(errorMessage(error))
@@ -109,21 +122,31 @@ function traced(name: string, fn: Task, opts?: { skipNoKey?: boolean }): Task {
 	}
 }
 
-async function rescheduleLive(
+async function runLiveTick(
 	helpers: JobHelpers,
-	identifier: 'poll_live_games' | 'poll_top_live' | 'poll_realtime_stats',
+	identifier: LivePollJob,
+	work: () => Promise<unknown>,
 ): Promise<void> {
+	const started = Date.now()
 	const settings = await getAppSettings()
 	await helpers.addJob(
 		identifier,
 		{},
 		{
-			runAt: new Date(Date.now() + settings.livePollIntervalMs),
+			runAt: nextLiveRunAt(started, settings.livePollIntervalMs),
 			jobKey: identifier,
 			jobKeyMode: 'replace',
 			maxAttempts: LOOP_JOB_MAX_ATTEMPTS,
 		},
 	)
+	if (!tryEnterLiveCall(settings.liveMaxConcurrent)) {
+		skipLiveCall(identifier)
+	}
+	try {
+		await work()
+	} finally {
+		leaveLiveCall()
+	}
 }
 
 async function rescheduleFinishedHistory(helpers: JobHelpers): Promise<void> {
@@ -242,33 +265,21 @@ export const allTasks = {
 	poll_live_games: traced(
 		'poll_live_games',
 		async (_payload, helpers) => {
-			try {
-				await runPollLiveGames()
-			} finally {
-				await rescheduleLive(helpers, 'poll_live_games')
-			}
+			await runLiveTick(helpers, 'poll_live_games', runPollLiveGames)
 		},
 		{ skipNoKey: true },
 	),
 	poll_top_live: traced(
 		'poll_top_live',
 		async (_payload, helpers) => {
-			try {
-				await runPollTopLive()
-			} finally {
-				await rescheduleLive(helpers, 'poll_top_live')
-			}
+			await runLiveTick(helpers, 'poll_top_live', runPollTopLive)
 		},
 		{ skipNoKey: true },
 	),
 	poll_realtime_stats: traced(
 		'poll_realtime_stats',
 		async (_payload, helpers) => {
-			try {
-				await runPollRealtimeStats()
-			} finally {
-				await rescheduleLive(helpers, 'poll_realtime_stats')
-			}
+			await runLiveTick(helpers, 'poll_realtime_stats', runPollRealtimeStats)
 		},
 		{ skipNoKey: true },
 	),

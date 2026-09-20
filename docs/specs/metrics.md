@@ -78,7 +78,7 @@ GC request: `success`, `timeout`, `no_account`, `error`.
 GC logon: `success`, `timeout`, `invalid_password`, `rate_limit`, `error`.
 
 Jobs: `success`, `error` (`skipped` when the task swallows “no ready Steam
-API key”).
+API key”, or a live poll that hits `live_max_concurrent`).
 
 Replay download: `success`, `already_stored`, `not_found`, `error`.
 
@@ -104,6 +104,9 @@ counters; only the worker serves them.
 | `dota_jobs_total` | counter | `job`, `result` | graphile task outcomes |
 | `dota_job_duration_seconds` | histogram | `job` | |
 | `dota_jobs_in_progress` | gauge | `job` | currently running tasks |
+| `dota_live_calls_in_progress` | gauge | | in-flight live poll ticks (the three live identifiers) |
+| `dota_live_circuit_open` | gauge | | 1 while in-flight live ticks are at `live_max_concurrent` |
+| `dota_live_poll_skipped_total` | counter | `job`, `reason` | live tick not started (`reason=concurrency`) |
 | `dota_replay_downloads_total` | counter | `method`, `result` | Valve CDN → S3 (`method=GetReplay`) |
 | `dota_replay_download_duration_seconds` | histogram | `method` | |
 | `dota_replay_download_bytes_total` | counter | | stored object size |
@@ -125,7 +128,8 @@ row counts under three `role=` labels. Process-local counters
 (Web API, jobs, downloads) stay on the role that increments them.
 
 Idle GC / walk zero series are seeded only on the role that owns that
-plane (`match-processing` / `historical`). Web API duration histograms
+plane (`match-processing` / `historical`). Live circuit gauges and
+skip zeros are seeded on `live` / `all`. Web API duration histograms
 and replay download zeros are seeded on every worker so the Valve APIs
 dashboard has lines before the first call.
 

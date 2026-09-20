@@ -193,7 +193,7 @@ object.
 | cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
 | cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` hourly |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
-| self-reschedule | live polls (`live_poll_interval_ms`, seed 1 s), `poll_finished_history` (`history_fast_poll_ms`), `walk_seq_history` (`seq_walk_interval_ms`, seed 1 s; 60 s after an empty tip window), `walk_league_history` (`steam_api_min_interval_ms`), archive / replenish / settle / retest / request-log maintain |
+| self-reschedule | live polls (`live_poll_interval_ms` period from tick start, seed 1 s; skip the second when `live_max_concurrent` in-flight ticks are already running), `poll_finished_history` (`history_fast_poll_ms`), `walk_seq_history` (`seq_walk_interval_ms`, seed 1 s; 60 s after an empty tip window), `walk_league_history` (`steam_api_min_interval_ms`), archive / replenish / settle / retest / request-log maintain |
 | live finish (`live_duration_max > 0`) | `fetch_match_details` origin `live` (GC starts in parallel with history; waiter stays armed until a seqnum or timeout) |
 | `poll_finished_history` hit | `fetch_seq_details` + `fetch_match_details` origin `live`, priority 0. Status already past `awaiting_details` is kept |
 | `walk_league_history` listed rows | `fetch_seq_details` when `seq_fetched_at` is null |
@@ -218,9 +218,17 @@ orders 16, retest 25, archive 30, request-log maintain 40.
 ### `poll_live_games`
 
 **Cadence.** Boot + every `settings.live_poll_interval_ms` (seed 1 s),
-`jobKey = poll_live_games`. `maxAttempts = 25` (not 1): a Postgres crash
-that kills both the poll and the `finally` reschedule is retried after
-graphile reconnects. `ensure_loop_jobs` (LISTEN recovery + 1 min cron)
+measured from tick **start** (Steam / DB latency does not stretch the
+period). The next `jobKey = poll_live_games` row is enqueued at the
+beginning of the tick. Shared cap `settings.live_max_concurrent`
+(seed 5) across `poll_live_games` / `poll_top_live` /
+`poll_realtime_stats`: if that many ticks are already in flight, this
+second is skipped (circuit open) and the next scheduled second still
+fires. The cap is process-local on the live worker. Two ticks that
+share one API key still serialise on the 1 rps limiter while holding
+their slots. `maxAttempts = 25` (not 1): a Postgres crash that kills both
+the poll and the start-of-tick reschedule is retried after graphile
+reconnects. `ensure_loop_jobs` (LISTEN recovery + 1 min cron)
 re-enqueues the key if the row is missing or permafailed.
 
 **Calls.** `IDOTA2Match_570/GetLiveLeagueGames/v1` via `getLiveLeagueGames`.
@@ -265,7 +273,8 @@ even if the hash was unchanged:
 
 ### `poll_top_live`
 
-**Cadence.** Same interval, `jobKey = poll_top_live`. Same retry /
+**Cadence.** Same period from tick start and the same
+`live_max_concurrent` skip, `jobKey = poll_top_live`. Same retry /
 `ensure_loop_jobs` recovery as `poll_live_games`.
 
 **Calls.** `IDOTA2Match_570/GetTopLiveGame/v1` (`partner=0`) via
@@ -289,7 +298,8 @@ even if the hash was unchanged:
 
 ### `poll_realtime_stats`
 
-**Cadence.** Same interval. Does not enqueue other jobs. Same retry /
+**Cadence.** Same period from tick start and the same
+`live_max_concurrent` skip. Does not enqueue other jobs. Same retry /
 `ensure_loop_jobs` recovery as `poll_live_games`.
 
 **Calls.** `IDOTA2MatchStats_570/GetRealtimeStats/v1` for

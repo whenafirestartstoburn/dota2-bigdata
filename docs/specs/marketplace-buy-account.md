@@ -88,7 +88,8 @@ Collector cadence (was env):
 
 | key | seed | meaning |
 |---|---|---|
-| `live_poll_interval_ms` | 1000 | `poll_live_games` / `poll_top_live` / `poll_realtime_stats` period |
+| `live_poll_interval_ms` | 1000 | `poll_live_games` / `poll_top_live` / `poll_realtime_stats` period from tick start |
+| `live_max_concurrent` | 5 | max in-flight live poll ticks; a further tick that second is skipped |
 | `seq_walk_interval_ms` | 1000 | `walk_seq_history` claim period while catching up |
 | `live_missing_threshold` | 2 | missing live ticks before finish |
 | `replay_live_delay_ms` | 30000 | first live replay download wait after finish. 404s: 1 m, 1 m, 3 m × 20, 1 h × 24, then `replay_unavailable` |

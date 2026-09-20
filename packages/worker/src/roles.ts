@@ -43,7 +43,7 @@ export const WORKER_TASKS = {
 } as const satisfies Record<WorkerRole, readonly string[]>
 
 export const WORKER_CONCURRENCY: Record<WorkerRole, number> = {
-	live: 4,
+	live: 8,
 	historical: 4,
 	'match-processing': 35,
 }
