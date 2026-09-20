@@ -44,13 +44,13 @@ bun run api       # another terminal
 
 | Job | Worker | Schedule | What it does |
 |---|---|---|---|
-| `poll_live_games` | live | every 3s (`jobKey`) | `GetLiveLeagueGames`, current state in Postgres, ticks in ClickHouse |
-| `poll_top_live` | live | every 3s | `GetTopLiveGame` (`league_id > 0`) → `server_steam_id`; merges onto the same `matches` row |
-| `poll_realtime_stats` | live | every 3s | `GetRealtimeStats` for live rows that have `server_steam_id` |
+| `poll_live_games` | live | every 1s (`jobKey`) | `GetLiveLeagueGames`, current state in Postgres, ticks in ClickHouse |
+| `poll_top_live` | live | every 1s | `GetTopLiveGame` (`league_id > 0`) → `server_steam_id`; merges onto the same `matches` row |
+| `poll_realtime_stats` | live | every 1s | `GetRealtimeStats` for live rows that have `server_steam_id` |
 | `fetch_leagues` | historical | hourly + startup | `GetLeagueInfoList`, upsert `leagues` |
 | `walk_league_history` | historical | continuous | `GetMatchHistory` pages (discovery only) |
 | `poll_finished_history` | live + historical | every 5s | paginated `GetMatchHistory` waiter after a live match leaves the feed; independent of GC / replay |
-| `walk_seq_history` | live + historical | continuous | claim `GetMatchHistoryBySequenceNum` windows (`seq_walk_cursor`, parallelism 2) |
+| `walk_seq_history` | live + historical | every 1s (60s after empty tip) | claim `GetMatchHistoryBySequenceNum` windows (`seq_walk_cursor`, parallelism 2) |
 | `fetch_seq_window` | live + historical | on demand | one seq window (100 matches); upsert `league_id > 0`, enqueue GC |
 | `fetch_seq_details` | live + historical | on demand | `GetMatchHistoryBySequenceNum` for one match (parallel with GC) |
 | `process_league` | historical | via HTTP | reset + walk one league |

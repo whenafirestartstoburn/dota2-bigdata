@@ -59,7 +59,7 @@ export async function enqueueSeqWalkWindows(): Promise<{
 		enqueued += 1
 		room -= 1
 	}
-	return { enqueued, delayMs: settings.steamApiMinIntervalMs }
+	return { enqueued, delayMs: settings.seqWalkIntervalMs }
 }
 
 export async function runWalkSeqHistory(): Promise<{

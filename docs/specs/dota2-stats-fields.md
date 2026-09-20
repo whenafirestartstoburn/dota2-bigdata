@@ -647,6 +647,7 @@ Postgres — лиги, серии, матчи, игроки, драфт, ито�
     - seq_batch_size
     - seq_walk_cursor
     - seq_walk_parallelism
+    - seq_walk_interval_ms
     - seq_walk_latest_start_time
     - seq_walk_cooldown_until
     - steam_api_min_interval_ms

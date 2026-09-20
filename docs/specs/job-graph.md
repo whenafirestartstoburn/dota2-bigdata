@@ -193,7 +193,7 @@ object.
 | cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
 | cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` hourly |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
-| self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk / seq-walk (`steam_api_min_interval_ms`; seq-walk sleeps 1 min after an empty window), archive / replenish / settle / retest / request-log maintain |
+| self-reschedule | live polls (`live_poll_interval_ms`, seed 1 s), `poll_finished_history` (`history_fast_poll_ms`), `walk_seq_history` (`seq_walk_interval_ms`, seed 1 s; 60 s after an empty tip window), `walk_league_history` (`steam_api_min_interval_ms`), archive / replenish / settle / retest / request-log maintain |
 | live finish (`live_duration_max > 0`) | `fetch_match_details` origin `live` (GC starts in parallel with history; waiter stays armed until a seqnum or timeout) |
 | `poll_finished_history` hit | `fetch_seq_details` + `fetch_match_details` origin `live`, priority 0. Status already past `awaiting_details` is kept |
 | `walk_league_history` listed rows | `fetch_seq_details` when `seq_fetched_at` is null |
@@ -217,7 +217,7 @@ orders 16, retest 25, archive 30, request-log maintain 40.
 
 ### `poll_live_games`
 
-**Cadence.** Boot + every `settings.live_poll_interval_ms` (seed 2 s),
+**Cadence.** Boot + every `settings.live_poll_interval_ms` (seed 1 s),
 `jobKey = poll_live_games`. `maxAttempts = 25` (not 1): a Postgres crash
 that kills both the poll and the `finally` reschedule is retried after
 graphile reconnects. `ensure_loop_jobs` (LISTEN recovery + 1 min cron)
@@ -406,9 +406,9 @@ league is exhausted (Valve page size 100). Not gated on `matches.status`
 
 ### `walk_seq_history`
 
-**Cadence.** Boot + self-requeue every `steam_api_min_interval_ms` on
-`jobKey = walk_seq_history` (live and historical). After an empty
-seq window the dispatcher waits until `seq_walk_cooldown_until`
+**Cadence.** Boot + self-requeue every `settings.seq_walk_interval_ms`
+(seed 1 s) on `jobKey = walk_seq_history` (live and historical). After
+an empty seq window the dispatcher waits until `seq_walk_cooldown_until`
 (now + 60 s). `ensure_loop_jobs` revives a permafailed key.
 Priority 20.
 

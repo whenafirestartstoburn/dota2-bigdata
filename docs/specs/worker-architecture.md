@@ -72,11 +72,11 @@ transitions, and ClickHouse / catalog inserts:
 
 | identifier | Cadence | One unit |
 |---|---|---|
-| `poll_live_games` | every `settings.live_poll_interval_ms` (seed 2 s) | GetLiveLeagueGames → live ticks + DB finish detection |
+| `poll_live_games` | every `settings.live_poll_interval_ms` (seed 1 s) | GetLiveLeagueGames → live ticks + DB finish detection |
 | `poll_top_live` | same interval | GetTopLiveGame (`league_id > 0`) → `server_steam_id` + finish detection |
 | `poll_realtime_stats` | same interval | GetRealtimeStats for live rows with `server_steam_id`, paced by the key limiter |
 | `poll_finished_history` | every `settings.history_fast_poll_ms` (seed 5 s) | page GetMatchHistory until waiting ids are found or the league is exhausted (max 100 / call) |
-| `walk_seq_history` | every `settings.steam_api_min_interval_ms` (1 min after catching the tip) | claim `settings.seq_walk_cursor` windows up to `seq_walk_parallelism` (seed 2) |
+| `walk_seq_history` | every `settings.seq_walk_interval_ms` (seed 1 s; 60 s after catching the tip) | claim `settings.seq_walk_cursor` windows up to `seq_walk_parallelism` (seed 2) |
 | `fetch_seq_window` | on demand per claimed seqnum | `GetMatchHistoryBySequenceNum` (`matches_requested = seq_batch_size`) for that exact start; upsert `league_id > 0` |
 | `fetch_leagues` | hourly + startup | GetLeagueInfoList |
 | `walk_league_history` | continuous self-requeue (`steam_api_min_interval_ms`) | one GetMatchHistory page (discovery); enqueue seq + GC |
@@ -102,7 +102,7 @@ A match seen in **both** feeds is one `matches` row: `ingest_sources` accumulate
 
 ### Realtime stats (`poll_realtime_stats`)
 
-Whole match, same cadence as live poll — not a 1 s draft-only scanner. Select `status = live` rows with `server_steam_id`, oldest `last_realtime_at` first. Call GetRealtimeStats through the shared 1 rps limiter until `live_poll_interval_ms` elapses; leftovers wait for the next tick. Upsert PG teams / players / draft / score. Append CH ticks with `source = GetRealtimeStats` (`game_state`, `server_steam_id`, backpack `item6`–`item8`). That blob has no GPM/XPM/ultimate/respawn — those stay `0` on the GetRealtimeStats tick; GetLiveLeagueGames fills them when the scoreboard has them. If the server hosts a pub (`league_id <= 0`), clear `server_steam_id` and stop scanning that id.
+Whole match, same cadence as live poll. Select `status = live` rows with `server_steam_id`, oldest `last_realtime_at` first. Call GetRealtimeStats through the shared 1 rps limiter until `live_poll_interval_ms` elapses; leftovers wait for the next tick. Upsert PG teams / players / draft / score. Append CH ticks with `source = GetRealtimeStats` (`game_state`, `server_steam_id`, backpack `item6`–`item8`). That blob has no GPM/XPM/ultimate/respawn — those stay `0` on the GetRealtimeStats tick; GetLiveLeagueGames fills them when the scoreboard has them. If the server hosts a pub (`league_id <= 0`), clear `server_steam_id` and stop scanning that id.
 
 ### Finished-history waiter (`poll_finished_history`)
 
