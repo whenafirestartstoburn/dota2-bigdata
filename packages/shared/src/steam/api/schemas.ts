@@ -215,7 +215,7 @@ export const topLiveGamesResponseSchema = z.object({
 	num_games: z.number().optional(),
 	game_list_index: z.number().optional(),
 	specific_games: z.union([z.number(), z.boolean()]).optional(),
-	bot_game: z.union([z.number(), z.boolean()]).optional(),
+	bot_game: z.unknown().optional(),
 	game_list: z.array(z.unknown()).default([]),
 })
 

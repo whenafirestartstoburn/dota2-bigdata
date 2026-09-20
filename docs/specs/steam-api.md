@@ -22,7 +22,8 @@ keys, not only the subset this repo persists. Live extras that are
 declared (so they are not drift): `GetLiveLeagueGames` `result.status`
 and side `abilities`; `GetTopLiveGame` query-echo envelope
 (`search_key`, `league_id`, `hero_id`, `start_game`, `num_games`,
-`game_list_index`, `specific_games`, `bot_game`) plus
+`game_list_index`, `specific_games`, `bot_game` — flag or a game
+object) plus
 `is_player_draft` / `is_watch_eligible` on each game;
 `GetMatchHistory` player `hero_variant`. Anonymous history players
 omit `account_id` — that is not missing. `GetMatchHistoryBySequenceNum`

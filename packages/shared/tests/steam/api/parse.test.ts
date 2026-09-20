@@ -171,8 +171,13 @@ describe('parseTopLiveGames', () => {
 			start_game: 0,
 			num_games: 2,
 			game_list_index: 0,
-			specific_games: 0,
-			bot_game: 0,
+			specific_games: false,
+			bot_game: {
+				match_id: '9',
+				server_steam_id: '1',
+				league_id: 0,
+				delay: 0,
+			},
 			game_list: [
 				{
 					match_id: '1',
@@ -188,6 +193,12 @@ describe('parseTopLiveGames', () => {
 		expect(games).toHaveLength(1)
 		expect(games[0]?.league_id).toBe(10)
 		expect(games[0]?.delay).toBe(30)
+	})
+
+	test('still accepts a numeric bot_game flag', () => {
+		expect(
+			parseTopLiveGames({ game_list: [], bot_game: 0 }).games,
+		).toEqual([])
 	})
 })
 
