@@ -1,42 +1,93 @@
-import { fetchCatalogRaw } from '#src/jobs/catalog-constants'
+import { pickReadyProxy } from '#src/components/proxies'
+import {
+	fetchDatafeedJson,
+	missingPatches,
+	parseDatafeedAbilities,
+	parseDatafeedHeroes,
+	parseDatafeedItems,
+	parseDatafeedPatches,
+} from '#src/jobs/catalog-datafeed'
+import { runWithProxy } from '#src/steam/http'
+import type { CatalogSnapshot } from '#src/store/catalogs'
 import {
 	countHeroes,
-	parseCatalogs,
+	listPatchNames,
 	persistCatalogs,
 } from '#src/store/catalogs'
 import { errorMessage } from '#src/store/coerce'
 import { logger } from '#src/utils/logger'
 
-export { fetchCatalogRaw } from '#src/jobs/catalog-constants'
-
-export async function runSyncCatalogs(): Promise<{
+export type SyncCatalogsResult = {
+	skipped: boolean
+	newPatches: string[]
 	heroes: number
 	items: number
 	abilities: number
 	patches: number
-}> {
-	const snapshot = parseCatalogs(await fetchCatalogRaw())
-	await persistCatalogs(snapshot)
+}
+
+const EMPTY_LISTS = {
+	heroAbilities: [],
+	heroFacets: [],
+	gameModes: [],
+	lobbyTypes: [],
+	regions: [],
+	clusters: [],
+	permanentBuffs: [],
+	xpLevels: [],
+} satisfies Partial<CatalogSnapshot>
+
+export async function runSyncCatalogs(): Promise<SyncCatalogsResult> {
+	const proxy = await pickReadyProxy('api')
+	const patches = await runWithProxy(proxy.url, async () =>
+		parseDatafeedPatches(await fetchDatafeedJson('patchnoteslist')),
+	)
+	const newPatches = missingPatches(patches, await listPatchNames())
+	const heroes = await countHeroes()
+	if (newPatches.length === 0 && heroes > 0) {
+		logger.info(
+			{ patches: patches.length, heroes },
+			'catalog datafeed unchanged; skip dictionary refresh',
+		)
+		return {
+			skipped: true,
+			newPatches: [],
+			heroes: 0,
+			items: 0,
+			abilities: 0,
+			patches: 0,
+		}
+	}
+
+	const snapshot = await runWithProxy(proxy.url, async () => {
+		const [heroesRaw, itemsRaw, abilitiesRaw] = await Promise.all([
+			fetchDatafeedJson('herolist'),
+			fetchDatafeedJson('itemlist'),
+			fetchDatafeedJson('abilitylist'),
+		])
+		return {
+			heroes: parseDatafeedHeroes(heroesRaw),
+			items: parseDatafeedItems(itemsRaw),
+			abilities: parseDatafeedAbilities(abilitiesRaw),
+			patches,
+			...EMPTY_LISTS,
+		} satisfies CatalogSnapshot
+	})
+
+	await persistCatalogs(snapshot, { preserveMissingFields: true })
 	logger.info(
 		{
+			newPatches,
 			heroes: snapshot.heroes.length,
 			items: snapshot.items.length,
 			abilities: snapshot.abilities.length,
-			talents: snapshot.abilities.filter((row) => row.kind === 'talent').length,
-			spells: snapshot.abilities.filter((row) => row.kind === 'spell').length,
-			heroAbilities: snapshot.heroAbilities.length,
-			heroFacets: snapshot.heroFacets.length,
 			patches: snapshot.patches.length,
-			gameModes: snapshot.gameModes.length,
-			lobbyTypes: snapshot.lobbyTypes.length,
-			regions: snapshot.regions.length,
-			clusters: snapshot.clusters.length,
-			permanentBuffs: snapshot.permanentBuffs.length,
-			xpLevels: snapshot.xpLevels.length,
 		},
-		'synced game catalogs',
+		'synced official game catalogs',
 	)
 	return {
+		skipped: false,
+		newPatches,
 		heroes: snapshot.heroes.length,
 		items: snapshot.items.length,
 		abilities: snapshot.abilities.length,

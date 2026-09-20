@@ -172,9 +172,9 @@ export async function upsertPlayer(
 		matchId?: number | null
 		matchAt?: Date | null
 	},
-): Promise<void> {
-	if (row.accountId <= 0) return
-	await tx.execute(sql`
+): Promise<number | null> {
+	if (row.accountId <= 0) return null
+	const [created] = await tx.execute(sql`
 		INSERT INTO players (
 			account_id, steam_id, persona_name, is_pro, current_team_id,
 			last_match_id, last_match_at, updated_at
@@ -196,6 +196,211 @@ export async function upsertPlayer(
 			last_match_id = COALESCE(players.last_match_id, excluded.last_match_id),
 			last_match_at = COALESCE(players.last_match_at, excluded.last_match_at),
 			updated_at = now()
+		RETURNING id
+	`)
+	return asNumber(created?.id)
+}
+
+async function lookupPlayerIds(
+	tx: Executor,
+	accountIds: readonly number[],
+): Promise<Map<number, number>> {
+	const ids = [...new Set(accountIds.filter((id) => id > 0))]
+	if (ids.length === 0) return new Map()
+	const rows = await tx.execute(sql`
+		SELECT id, account_id
+		FROM players
+		WHERE account_id IN ${sqlIn(ids)}
+	`)
+	const out = new Map<number, number>()
+	for (const row of rows) {
+		const accountId = asNumber(row.account_id)
+		const id = asNumber(row.id)
+		if (accountId != null && id != null) out.set(accountId, id)
+	}
+	return out
+}
+
+async function matchSideTeamIds(
+	tx: Executor,
+	matchId: number,
+): Promise<{ radiant: number | null; dire: number | null }> {
+	const [row] = await tx.execute(sql`
+		SELECT radiant_team_id, dire_team_id
+		FROM matches
+		WHERE match_id = ${matchId}
+	`)
+	return {
+		radiant: asNumber(row?.radiant_team_id) ?? null,
+		dire: asNumber(row?.dire_team_id) ?? null,
+	}
+}
+
+function sideTeamId(
+	slot: number,
+	sides: { radiant: number | null; dire: number | null },
+): number | null {
+	return slot < 128 ? sides.radiant : sides.dire
+}
+
+export async function fillMatchPlayerLinks(
+	tx: Executor,
+	matchId: number,
+): Promise<void> {
+	await tx.execute(sql`
+		UPDATE match_players mp
+		SET
+			player_id = COALESCE(mp.player_id, p.id),
+			team_id = COALESCE(
+				mp.team_id,
+				CASE
+					WHEN mp.player_slot < 128 THEN m.radiant_team_id
+					ELSE m.dire_team_id
+				END
+			)
+		FROM matches m
+		LEFT JOIN players p
+			ON p.account_id = mp.account_id
+			AND mp.account_id > 0
+		WHERE mp.match_id = ${matchId}
+			AND m.match_id = mp.match_id
+	`)
+	await tx.execute(sql`
+		UPDATE match_player_buffs
+		SET
+			account_id = CASE
+				WHEN match_player_buffs.account_id = 0 THEN mp.account_id
+				ELSE match_player_buffs.account_id
+			END,
+			player_id = COALESCE(match_player_buffs.player_id, mp.player_id),
+			team_id = COALESCE(match_player_buffs.team_id, mp.team_id)
+		FROM match_players mp
+		WHERE match_player_buffs.match_id = ${matchId}
+			AND mp.match_id = match_player_buffs.match_id
+			AND mp.player_slot = match_player_buffs.player_slot
+	`)
+	await tx.execute(sql`
+		UPDATE match_player_ability_upgrades
+		SET
+			account_id = CASE
+				WHEN match_player_ability_upgrades.account_id = 0
+					THEN mp.account_id
+				ELSE match_player_ability_upgrades.account_id
+			END,
+			player_id = COALESCE(
+				match_player_ability_upgrades.player_id, mp.player_id
+			),
+			team_id = COALESCE(match_player_ability_upgrades.team_id, mp.team_id)
+		FROM match_players mp
+		WHERE match_player_ability_upgrades.match_id = ${matchId}
+			AND mp.match_id = match_player_ability_upgrades.match_id
+			AND mp.player_slot = match_player_ability_upgrades.player_slot
+	`)
+	await tx.execute(sql`
+		UPDATE match_player_damage_breakdown
+		SET
+			account_id = CASE
+				WHEN match_player_damage_breakdown.account_id = 0
+					THEN mp.account_id
+				ELSE match_player_damage_breakdown.account_id
+			END,
+			player_id = COALESCE(
+				match_player_damage_breakdown.player_id, mp.player_id
+			),
+			team_id = COALESCE(match_player_damage_breakdown.team_id, mp.team_id)
+		FROM match_players mp
+		WHERE match_player_damage_breakdown.match_id = ${matchId}
+			AND mp.match_id = match_player_damage_breakdown.match_id
+			AND mp.player_slot = match_player_damage_breakdown.player_slot
+	`)
+	await tx.execute(sql`
+		UPDATE match_player_units
+		SET
+			account_id = CASE
+				WHEN match_player_units.account_id = 0 THEN mp.account_id
+				ELSE match_player_units.account_id
+			END,
+			player_id = COALESCE(match_player_units.player_id, mp.player_id),
+			team_id = COALESCE(match_player_units.team_id, mp.team_id)
+		FROM match_players mp
+		WHERE match_player_units.match_id = ${matchId}
+			AND mp.match_id = match_player_units.match_id
+			AND mp.player_slot = match_player_units.player_slot
+	`)
+	await fillDraftPlayerSlots(tx, matchId)
+	await tx.execute(sql`
+		UPDATE match_objectives o
+		SET
+			account_id = COALESCE(o.account_id, mp.account_id),
+			player_id = COALESCE(o.player_id, mp.player_id),
+			team_id = COALESCE(
+				o.team_id,
+				mp.team_id,
+				CASE
+					WHEN o.team = 0 THEN m.radiant_team_id
+					WHEN o.team = 1 THEN m.dire_team_id
+				END
+			)
+		FROM matches m
+		LEFT JOIN match_players mp
+			ON mp.match_id = o.match_id
+			AND mp.player_slot = CASE
+				WHEN o.slot IS NULL THEN NULL
+				WHEN o.slot BETWEEN 0 AND 4 THEN o.slot
+				WHEN o.slot BETWEEN 5 AND 9 THEN o.slot + 123
+				ELSE o.slot
+			END
+		WHERE o.match_id = ${matchId}
+			AND m.match_id = o.match_id
+	`)
+	await tx.execute(sql`
+		UPDATE match_coaches c
+		SET
+			player_id = COALESCE(c.player_id, p.id),
+			team_id = COALESCE(
+				c.team_id,
+				CASE
+					WHEN c.coach_team IN (0, 2) THEN m.radiant_team_id
+					WHEN c.coach_team IN (1, 3) THEN m.dire_team_id
+				END
+			)
+		FROM matches m
+		LEFT JOIN players p
+			ON p.account_id = c.account_id
+			AND c.account_id > 0
+		WHERE c.match_id = ${matchId}
+			AND m.match_id = c.match_id
+	`)
+	await tx.execute(sql`
+		UPDATE match_broadcasters b
+		SET player_id = COALESCE(b.player_id, p.id)
+		FROM players p
+		WHERE b.match_id = ${matchId}
+			AND b.account_id > 0
+			AND p.account_id = b.account_id
+	`)
+	await tx.execute(sql`
+		UPDATE matches m
+		SET
+			radiant_captain_player_id = COALESCE(
+				m.radiant_captain_player_id,
+				(
+					SELECT p.id
+					FROM players p
+					WHERE p.account_id = m.radiant_captain
+						AND m.radiant_captain > 0
+				)
+			),
+			dire_captain_player_id = COALESCE(
+				m.dire_captain_player_id,
+				(
+					SELECT p.id
+					FROM players p
+					WHERE p.account_id = m.dire_captain
+						AND m.dire_captain > 0
+				)
+			)
+		WHERE m.match_id = ${matchId}
 	`)
 }
 
@@ -722,85 +927,101 @@ export async function upsertMatchPlayers(
 ): Promise<void> {
 	const fillOnly = opts?.fillOnly === true
 	if (players.length === 0) return
-	const rows = players.flatMap((player) => {
+	const playerIds = await lookupPlayerIds(
+		tx,
+		players.map((player) => player.accountId),
+	)
+	const sides = await matchSideTeamIds(tx, matchId)
+	const resolved = players.flatMap((player) => {
 		const playerSlot = normalizeValvePlayerSlot(player.playerSlot)
 		if (playerSlot === null) return []
 		return [
 			{
-				match_id: matchId,
-				account_id: player.accountId,
-				player_slot: playerSlot,
-				hero_id: player.heroId,
-				hero_variant: player.heroVariant,
-				player_name: player.playerName,
-				pro_name: player.proName,
-				real_name: player.realName,
-				team_number: player.teamNumber,
-				team_slot: player.teamSlot,
-				side: playerSlot < 128 ? 'radiant' : 'dire',
-				kills: player.kills,
-				deaths: player.deaths,
-				assists: player.assists,
-				last_hits: player.lastHits,
-				denies: player.denies,
-				gold: player.gold,
-				gold_spent: player.goldSpent,
-				level: player.level,
-				gold_per_min: player.goldPerMin,
-				xp_per_min: player.xpPerMin,
-				net_worth: player.netWorth,
-				hero_damage: player.heroDamage,
-				tower_damage: player.towerDamage,
-				hero_healing: player.heroHealing,
-				scaled_hero_damage: player.scaledHeroDamage,
-				scaled_tower_damage: player.scaledTowerDamage,
-				scaled_hero_healing: player.scaledHeroHealing,
-				item_0: asItemId(player.item0),
-				item_1: asItemId(player.item1),
-				item_2: asItemId(player.item2),
-				item_3: asItemId(player.item3),
-				item_4: asItemId(player.item4),
-				item_5: asItemId(player.item5),
-				item_neutral: asItemId(player.itemNeutral),
-				item_neutral2: asItemId(player.itemNeutral2),
-				item_6: asItemId(player.item6),
-				item_7: asItemId(player.item7),
-				item_8: asItemId(player.item8),
-				item_9: asItemId(player.item9),
-				item_10: asItemId(player.item10),
-				item_10_lvl: player.item10Lvl,
-				backpack_0: asItemId(player.backpack0),
-				backpack_1: asItemId(player.backpack1),
-				backpack_2: asItemId(player.backpack2),
-				selected_facet: player.selectedFacet,
-				aghanims_scepter: player.aghanimsScepter,
-				aghanims_shard: player.aghanimsShard,
-				moonshard: player.moonshard,
-				ability_upgrades: player.abilityUpgrades,
-				leaver_status: player.leaverStatus,
-				party_id: player.partyId,
-				claimed_farm_gold: player.claimedFarmGold,
-				support_gold: player.supportGold,
-				claimed_denies: player.claimedDenies,
-				claimed_misses: player.claimedMisses,
-				misses: player.misses,
-				support_ability_value: player.supportAbilityValue,
-				scaled_kills: player.scaledKills,
-				scaled_deaths: player.scaledDeaths,
-				scaled_assists: player.scaledAssists,
-				hero_pick_order: player.heroPickOrder,
-				hero_was_randomed: player.heroWasRandomed,
-				seconds_dead: player.secondsDead,
-				gold_lost_to_death: player.goldLostToDeath,
-				lane_selection_flags: player.laneSelectionFlags,
-				bounty_runes: player.bountyRunes,
-				outposts_captured: player.outpostsCaptured,
-				disable_duration: player.disableDuration,
-				updated_at: new Date(),
+				player,
+				playerSlot,
+				playerId:
+					player.accountId > 0
+						? (playerIds.get(player.accountId) ?? null)
+						: null,
+				teamId: sideTeamId(playerSlot, sides),
 			},
 		]
 	})
-	if (rows.length === 0) return
+	if (resolved.length === 0) return
+	const rows = resolved.map(({ player, playerSlot, playerId, teamId }) => ({
+		match_id: matchId,
+		account_id: player.accountId,
+		player_id: playerId,
+		team_id: teamId,
+		player_slot: playerSlot,
+		hero_id: player.heroId,
+		hero_variant: player.heroVariant,
+		player_name: player.playerName,
+		pro_name: player.proName,
+		real_name: player.realName,
+		team_number: player.teamNumber,
+		team_slot: player.teamSlot,
+		side: playerSlot < 128 ? 'radiant' : 'dire',
+		kills: player.kills,
+		deaths: player.deaths,
+		assists: player.assists,
+		last_hits: player.lastHits,
+		denies: player.denies,
+		gold: player.gold,
+		gold_spent: player.goldSpent,
+		level: player.level,
+		gold_per_min: player.goldPerMin,
+		xp_per_min: player.xpPerMin,
+		net_worth: player.netWorth,
+		hero_damage: player.heroDamage,
+		tower_damage: player.towerDamage,
+		hero_healing: player.heroHealing,
+		scaled_hero_damage: player.scaledHeroDamage,
+		scaled_tower_damage: player.scaledTowerDamage,
+		scaled_hero_healing: player.scaledHeroHealing,
+		item_0: asItemId(player.item0),
+		item_1: asItemId(player.item1),
+		item_2: asItemId(player.item2),
+		item_3: asItemId(player.item3),
+		item_4: asItemId(player.item4),
+		item_5: asItemId(player.item5),
+		item_neutral: asItemId(player.itemNeutral),
+		item_neutral2: asItemId(player.itemNeutral2),
+		item_6: asItemId(player.item6),
+		item_7: asItemId(player.item7),
+		item_8: asItemId(player.item8),
+		item_9: asItemId(player.item9),
+		item_10: asItemId(player.item10),
+		item_10_lvl: player.item10Lvl,
+		backpack_0: asItemId(player.backpack0),
+		backpack_1: asItemId(player.backpack1),
+		backpack_2: asItemId(player.backpack2),
+		selected_facet: player.selectedFacet,
+		aghanims_scepter: player.aghanimsScepter,
+		aghanims_shard: player.aghanimsShard,
+		moonshard: player.moonshard,
+		ability_upgrades: player.abilityUpgrades,
+		leaver_status: player.leaverStatus,
+		party_id: player.partyId,
+		claimed_farm_gold: player.claimedFarmGold,
+		support_gold: player.supportGold,
+		claimed_denies: player.claimedDenies,
+		claimed_misses: player.claimedMisses,
+		misses: player.misses,
+		support_ability_value: player.supportAbilityValue,
+		scaled_kills: player.scaledKills,
+		scaled_deaths: player.scaledDeaths,
+		scaled_assists: player.scaledAssists,
+		hero_pick_order: player.heroPickOrder,
+		hero_was_randomed: player.heroWasRandomed,
+		seconds_dead: player.secondsDead,
+		gold_lost_to_death: player.goldLostToDeath,
+		lane_selection_flags: player.laneSelectionFlags,
+		bounty_runes: player.bountyRunes,
+		outposts_captured: player.outpostsCaptured,
+		disable_duration: player.disableDuration,
+		updated_at: new Date(),
+	}))
 	const zeroIds = new Set([
 		'account_id',
 		'hero_id',
@@ -898,19 +1119,24 @@ export async function upsertMatchPlayers(
 						takePlayerCol(col, fillOnly, zeroIds.has(col)),
 					),
 					fillOnly ? sql`side = match_players.side` : sql`side = excluded.side`,
+					sql`player_id = COALESCE(match_players.player_id, excluded.player_id)`,
+					sql`team_id = COALESCE(match_players.team_id, excluded.team_id)`,
 					sql`updated_at = now()`,
 				],
 				sql`, `,
 			)}
 	`)
 
-	for (const player of players) {
+	for (const { player, playerSlot, playerId, teamId } of resolved) {
 		if (player.buffs.length > 0) {
 			await tx.execute(sql`
 				INSERT INTO match_player_buffs ${sqlValues(
 					player.buffs.map((buff) => ({
 						match_id: matchId,
-						player_slot: player.playerSlot,
+						player_slot: playerSlot,
+						account_id: player.accountId,
+						player_id: playerId,
+						team_id: teamId,
 						buff_id: buff.buffId,
 						stacks: buff.stacks,
 						grant_time: buff.grantTime,
@@ -924,7 +1150,16 @@ export async function upsertMatchPlayers(
 					},
 					grant_time = COALESCE(
 						match_player_buffs.grant_time, excluded.grant_time
-					)
+					),
+					account_id = COALESCE(
+						NULLIF(match_player_buffs.account_id, 0),
+						NULLIF(excluded.account_id, 0),
+						match_player_buffs.account_id
+					),
+					player_id = COALESCE(
+						match_player_buffs.player_id, excluded.player_id
+					),
+					team_id = COALESCE(match_player_buffs.team_id, excluded.team_id)
 			`)
 		}
 		if (player.units.length > 0) {
@@ -932,7 +1167,10 @@ export async function upsertMatchPlayers(
 				INSERT INTO match_player_units ${sqlValues(
 					player.units.map((unit) => ({
 						match_id: matchId,
-						player_slot: player.playerSlot,
+						player_slot: playerSlot,
+						account_id: player.accountId,
+						player_id: playerId,
+						team_id: teamId,
 						unit_name: unit.unitName,
 						item_0: unit.item0,
 						item_1: unit.item1,
@@ -948,7 +1186,16 @@ export async function upsertMatchPlayers(
 					item_2 = COALESCE(NULLIF(match_player_units.item_2, 0), NULLIF(excluded.item_2, 0), match_player_units.item_2),
 					item_3 = COALESCE(NULLIF(match_player_units.item_3, 0), NULLIF(excluded.item_3, 0), match_player_units.item_3),
 					item_4 = COALESCE(NULLIF(match_player_units.item_4, 0), NULLIF(excluded.item_4, 0), match_player_units.item_4),
-					item_5 = COALESCE(NULLIF(match_player_units.item_5, 0), NULLIF(excluded.item_5, 0), match_player_units.item_5)
+					item_5 = COALESCE(NULLIF(match_player_units.item_5, 0), NULLIF(excluded.item_5, 0), match_player_units.item_5),
+					account_id = COALESCE(
+						NULLIF(match_player_units.account_id, 0),
+						NULLIF(excluded.account_id, 0),
+						match_player_units.account_id
+					),
+					player_id = COALESCE(
+						match_player_units.player_id, excluded.player_id
+					),
+					team_id = COALESCE(match_player_units.team_id, excluded.team_id)
 			`)
 		}
 		if (player.abilityUpgradeRows.length > 0) {
@@ -956,7 +1203,10 @@ export async function upsertMatchPlayers(
 				INSERT INTO match_player_ability_upgrades ${sqlValues(
 					player.abilityUpgradeRows.map((row) => ({
 						match_id: matchId,
-						player_slot: player.playerSlot,
+						player_slot: playerSlot,
+						account_id: player.accountId,
+						player_id: playerId,
+						team_id: teamId,
 						seq: row.seq,
 						ability_id: row.abilityId,
 						time: row.time,
@@ -974,6 +1224,17 @@ export async function upsertMatchPlayers(
 					),
 					level = COALESCE(
 						match_player_ability_upgrades.level, excluded.level
+					),
+					account_id = COALESCE(
+						NULLIF(match_player_ability_upgrades.account_id, 0),
+						NULLIF(excluded.account_id, 0),
+						match_player_ability_upgrades.account_id
+					),
+					player_id = COALESCE(
+						match_player_ability_upgrades.player_id, excluded.player_id
+					),
+					team_id = COALESCE(
+						match_player_ability_upgrades.team_id, excluded.team_id
 					)
 			`)
 		}
@@ -982,7 +1243,10 @@ export async function upsertMatchPlayers(
 				INSERT INTO match_player_damage_breakdown ${sqlValues(
 					player.damageBreakdown.map((row) => ({
 						match_id: matchId,
-						player_slot: player.playerSlot,
+						player_slot: playerSlot,
+						account_id: player.accountId,
+						player_id: playerId,
+						team_id: teamId,
 						direction: row.direction,
 						damage_type: row.damageType,
 						pre_reduction: row.preReduction,
@@ -998,6 +1262,17 @@ export async function upsertMatchPlayers(
 					post_reduction = COALESCE(
 						match_player_damage_breakdown.post_reduction,
 						excluded.post_reduction
+					),
+					account_id = COALESCE(
+						NULLIF(match_player_damage_breakdown.account_id, 0),
+						NULLIF(excluded.account_id, 0),
+						match_player_damage_breakdown.account_id
+					),
+					player_id = COALESCE(
+						match_player_damage_breakdown.player_id, excluded.player_id
+					),
+					team_id = COALESCE(
+						match_player_damage_breakdown.team_id, excluded.team_id
 					)
 			`)
 		}
@@ -1045,6 +1320,7 @@ export async function replaceMatchDraft(
 		clocks.set(`${heroId}:${row.is_pick === true}`, clock)
 	}
 	await tx.execute(sql`DELETE FROM match_draft WHERE match_id = ${matchId}`)
+	const sides = await matchSideTeamIds(tx, matchId)
 	await tx.execute(sql`
 		INSERT INTO match_draft ${sqlValues(
 			rows.map((row) => ({
@@ -1054,6 +1330,7 @@ export async function replaceMatchDraft(
 				hero_id: row.heroId,
 				team: row.team,
 				player_slot: row.playerSlot ?? null,
+				team_id: row.team === 0 ? sides.radiant : sides.dire,
 				clock: row.clock ?? clocks.get(`${row.heroId}:${row.isPick}`) ?? null,
 			})),
 		)}
@@ -1097,6 +1374,32 @@ export async function fillDraftPlayerSlots(
 			AND d.hero_id <> 0
 			AND p.hero_id = d.hero_id
 			AND d.player_slot IS NULL
+	`)
+	await tx.execute(sql`
+		UPDATE match_draft AS d
+		SET
+			account_id = COALESCE(d.account_id, p.account_id),
+			player_id = COALESCE(d.player_id, p.player_id),
+			team_id = COALESCE(d.team_id, p.team_id)
+		FROM match_players AS p
+		WHERE d.match_id = ${matchId}
+			AND p.match_id = d.match_id
+			AND p.player_slot = d.player_slot
+	`)
+	await tx.execute(sql`
+		UPDATE match_draft AS d
+		SET team_id = CASE
+			WHEN d.team = 0 THEN m.radiant_team_id
+			ELSE m.dire_team_id
+		END
+		FROM matches m
+		WHERE d.match_id = ${matchId}
+			AND m.match_id = d.match_id
+			AND d.team_id IS NULL
+			AND CASE
+				WHEN d.team = 0 THEN m.radiant_team_id
+				ELSE m.dire_team_id
+			END IS NOT NULL
 	`)
 }
 
@@ -1390,19 +1693,40 @@ export async function replaceObjectives(
 			FROM match_objectives
 			WHERE match_id = ${matchId}
 		`)
+		const seq = asNumber(next?.n) ?? 0
 		await tx.execute(sql`
-			INSERT INTO match_objectives ${sqlValues([
-				{
-					match_id: matchId,
-					seq: asNumber(next?.n) ?? 0,
-					time: row.time,
-					kind: row.kind,
-					team: row.team,
-					slot: row.slot,
-					key: row.key,
-					value: row.value,
-				},
-			])}
+			INSERT INTO match_objectives (
+				match_id, seq, time, kind, team, slot, key, value,
+				account_id, player_id, team_id
+			)
+			SELECT
+				${matchId},
+				${seq},
+				${row.time},
+				${row.kind},
+				${row.team},
+				${row.slot},
+				${row.key},
+				${row.value},
+				mp.account_id,
+				mp.player_id,
+				COALESCE(
+					mp.team_id,
+					CASE
+						WHEN ${row.team} = 0 THEN m.radiant_team_id
+						WHEN ${row.team} = 1 THEN m.dire_team_id
+					END
+				)
+			FROM (SELECT ${matchId}::bigint AS match_id) x
+			LEFT JOIN matches m ON m.match_id = x.match_id
+			LEFT JOIN match_players mp
+				ON mp.match_id = x.match_id
+				AND mp.player_slot = CASE
+					WHEN ${row.slot} IS NULL THEN NULL
+					WHEN ${row.slot} BETWEEN 0 AND 4 THEN ${row.slot}
+					WHEN ${row.slot} BETWEEN 5 AND 9 THEN ${row.slot} + 123
+					ELSE ${row.slot}
+				END
 		`)
 	}
 }
@@ -1413,11 +1737,24 @@ export async function replaceCoaches(
 	rows: MatchFacts['coaches'],
 ): Promise<void> {
 	if (rows.length === 0) return
+	const playerIds = await lookupPlayerIds(
+		tx,
+		rows.map((row) => row.accountId),
+	)
+	const sides = await matchSideTeamIds(tx, matchId)
 	await tx.execute(sql`
 		INSERT INTO match_coaches ${sqlValues(
 			rows.map((row) => ({
 				match_id: matchId,
 				account_id: row.accountId,
+				player_id:
+					row.accountId > 0 ? (playerIds.get(row.accountId) ?? null) : null,
+				team_id:
+					row.coachTeam === 0 || row.coachTeam === 2
+						? sides.radiant
+						: row.coachTeam === 1 || row.coachTeam === 3
+							? sides.dire
+							: null,
 				coach_name: row.coachName,
 				coach_rating: row.coachRating,
 				coach_team: row.coachTeam,
@@ -1432,7 +1769,9 @@ export async function replaceCoaches(
 			coach_party_id = COALESCE(match_coaches.coach_party_id, excluded.coach_party_id),
 			is_private_coach = COALESCE(
 				match_coaches.is_private_coach, excluded.is_private_coach
-			)
+			),
+			player_id = COALESCE(match_coaches.player_id, excluded.player_id),
+			team_id = COALESCE(match_coaches.team_id, excluded.team_id)
 	`)
 }
 
@@ -1442,6 +1781,10 @@ export async function replaceBroadcasters(
 	rows: MatchFacts['broadcasters'],
 ): Promise<void> {
 	if (rows.length === 0) return
+	const playerIds = await lookupPlayerIds(
+		tx,
+		rows.flatMap((row) => (row.accountId != null ? [row.accountId] : [])),
+	)
 	await tx.execute(sql`
 		INSERT INTO match_broadcasters ${sqlValues(
 			rows.map((row) => ({
@@ -1451,6 +1794,10 @@ export async function replaceBroadcasters(
 				description: row.description,
 				language_code: row.languageCode,
 				account_id: row.accountId,
+				player_id:
+					row.accountId != null && row.accountId > 0
+						? (playerIds.get(row.accountId) ?? null)
+						: null,
 				name: row.name,
 			})),
 		)}
@@ -1468,6 +1815,9 @@ export async function replaceBroadcasters(
 				NULLIF(match_broadcasters.account_id, 0),
 				NULLIF(excluded.account_id, 0),
 				match_broadcasters.account_id
+			),
+			player_id = COALESCE(
+				match_broadcasters.player_id, excluded.player_id
 			),
 			name = COALESCE(match_broadcasters.name, excluded.name)
 	`)

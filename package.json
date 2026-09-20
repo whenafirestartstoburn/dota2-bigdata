@@ -40,6 +40,7 @@
 		"steam:proxies": "bun run packages/cli/src/import-proxies.ts",
 		"parser:fetch-patches": "bun run --env-file=.env packages/cli/src/fetch-patch-replays.ts",
 		"catalogs:sync": "bun run --env-file=.env packages/cli/src/sync-catalogs.ts",
+		"catalogs:sync-external": "bun run --env-file=.env packages/cli/src/sync-catalogs-external.ts",
 		"leagues:fetch": "bun run --env-file=.env packages/cli/src/fetch-leagues.ts",
 		"ticks:migrate": "scripts/migrate-live-ticks.sh",
 		"league:ingest-details": "bun run --env-file=.env packages/cli/src/ingest-league-details.ts",

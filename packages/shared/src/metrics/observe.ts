@@ -327,6 +327,10 @@ const WEBAPI_METHODS: Array<[WebApiSource, string]> = [
 	['steam', 'GetMatchHistory'],
 	['steam', 'GetMatchHistoryBySequenceNum'],
 	['dota2', 'GetLeagueInfoList'],
+	['dota2', 'patchnoteslist'],
+	['dota2', 'herolist'],
+	['dota2', 'itemlist'],
+	['dota2', 'abilitylist'],
 ]
 
 export function seedIdleHistorySeries(): void {

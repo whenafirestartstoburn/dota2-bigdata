@@ -156,13 +156,19 @@ describe('parseCatalogs', () => {
 describe('persistCatalogs', () => {
 	const heroId = 990001
 	const abilityId = 990001
+	const officialHeroId = 990002
+	const officialAbilityId = 990002
 
 	afterAll(async () => {
-		await db.execute(sql`DELETE FROM hero_facets WHERE hero_id = ${heroId}`)
-		await db.execute(sql`DELETE FROM hero_abilities WHERE hero_id = ${heroId}`)
-		await db.execute(sql`DELETE FROM heroes WHERE hero_id = ${heroId}`)
-		await db.execute(sql`DELETE FROM abilities WHERE ability_id = ${abilityId}`)
-		await db.execute(sql`DELETE FROM items WHERE item_id = ${990001}`)
+		for (const id of [heroId, officialHeroId]) {
+			await db.execute(sql`DELETE FROM hero_facets WHERE hero_id = ${id}`)
+			await db.execute(sql`DELETE FROM hero_abilities WHERE hero_id = ${id}`)
+			await db.execute(sql`DELETE FROM heroes WHERE hero_id = ${id}`)
+		}
+		await db.execute(
+			sql`DELETE FROM abilities WHERE ability_id IN (${abilityId}, ${officialAbilityId})`,
+		)
+		await db.execute(sql`DELETE FROM items WHERE item_id IN (990001, 990002)`)
 		await db.execute(sql`DELETE FROM permanent_buffs WHERE buff_id = ${990001}`)
 		await db.execute(sql`DELETE FROM game_modes WHERE game_mode = ${990001}`)
 		await db.execute(sql`DELETE FROM lobby_types WHERE lobby_type = ${990001}`)
@@ -170,6 +176,7 @@ describe('persistCatalogs', () => {
 		await db.execute(sql`DELETE FROM clusters WHERE cluster = ${990001}`)
 		await db.execute(sql`DELETE FROM xp_levels WHERE level = ${990001}`)
 		await db.execute(sql`DELETE FROM patches WHERE patch = ${'99.001-test'}`)
+		await db.execute(sql`DELETE FROM patches WHERE patch = ${'99.002-test'}`)
 	})
 
 	test('upserts a synthetic catalog slice', async () => {
@@ -240,5 +247,145 @@ describe('persistCatalogs', () => {
 		`)
 		expect(hero?.localized_name).toBe('Catalog Test')
 		expect(hero?.roles).toEqual(['Carry'])
+	})
+
+	test('official upsert keeps fields and rows the other job already filled', async () => {
+		await persistCatalogs({
+			heroes: [
+				{
+					hero_id: officialHeroId,
+					name: 'npc_dota_hero_catalog_official',
+					localized_name: 'External Name',
+					primary_attr: 'str',
+					attack_type: 'Melee',
+					roles: ['Carry'],
+				},
+			],
+			items: [
+				{
+					item_id: 990002,
+					name: 'catalog_official_item',
+					localized_name: 'External Item',
+					cost: 2250,
+				},
+			],
+			abilities: [
+				{
+					ability_id: officialAbilityId,
+					name: 'catalog_official_spell',
+					localized_name: 'External Spell',
+					kind: 'spell',
+				},
+			],
+			heroAbilities: [
+				{
+					hero_id: officialHeroId,
+					ability_id: officialAbilityId,
+					slot: 0,
+					is_talent: false,
+					talent_level: null,
+				},
+			],
+			heroFacets: [
+				{
+					hero_id: officialHeroId,
+					facet_id: 0,
+					name: 'catalog_official_facet',
+					localized_name: 'External Facet',
+					icon: 'test',
+					color: 'Blue',
+					deprecated: false,
+				},
+			],
+			patches: [
+				{
+					patch: '99.002-test',
+					released_at: new Date('2099-02-01T00:00:00Z'),
+				},
+			],
+			gameModes: [],
+			lobbyTypes: [],
+			regions: [],
+			clusters: [],
+			permanentBuffs: [],
+			xpLevels: [],
+		})
+
+		await persistCatalogs(
+			{
+				heroes: [
+					{
+						hero_id: officialHeroId,
+						name: 'npc_dota_hero_catalog_official',
+						localized_name: 'Official Name',
+						primary_attr: 'agi',
+						attack_type: null,
+						roles: [],
+					},
+				],
+				items: [
+					{
+						item_id: 990002,
+						name: 'catalog_official_item',
+						localized_name: '',
+						cost: null,
+					},
+				],
+				abilities: [
+					{
+						ability_id: officialAbilityId,
+						name: 'catalog_official_spell',
+						localized_name: '',
+						kind: 'innate',
+					},
+				],
+				heroAbilities: [],
+				heroFacets: [],
+				patches: [
+					{
+						patch: '99.002-test',
+						released_at: new Date('2099-02-02T00:00:00Z'),
+					},
+				],
+				gameModes: [],
+				lobbyTypes: [],
+				regions: [],
+				clusters: [],
+				permanentBuffs: [],
+				xpLevels: [],
+			},
+			{ preserveMissingFields: true },
+		)
+
+		const [hero] = await db.execute(sql`
+			SELECT localized_name, primary_attr, attack_type, roles
+			FROM heroes WHERE hero_id = ${officialHeroId}
+		`)
+		expect(hero).toMatchObject({
+			localized_name: 'Official Name',
+			primary_attr: 'agi',
+			attack_type: 'Melee',
+			roles: ['Carry'],
+		})
+		const [item] = await db.execute(sql`
+			SELECT localized_name, cost FROM items WHERE item_id = 990002
+		`)
+		expect(item).toEqual({ localized_name: 'External Item', cost: 2250 })
+		const [ability] = await db.execute(sql`
+			SELECT localized_name, kind
+			FROM abilities WHERE ability_id = ${officialAbilityId}
+		`)
+		expect(ability).toEqual({
+			localized_name: 'External Spell',
+			kind: 'innate',
+		})
+		const kits = await db.execute(sql`
+			SELECT slot FROM hero_abilities WHERE hero_id = ${officialHeroId}
+		`)
+		expect(kits).toHaveLength(1)
+		const facets = await db.execute(sql`
+			SELECT name FROM hero_facets WHERE hero_id = ${officialHeroId}
+		`)
+		expect(facets).toEqual([{ name: 'catalog_official_facet' }])
 	})
 })

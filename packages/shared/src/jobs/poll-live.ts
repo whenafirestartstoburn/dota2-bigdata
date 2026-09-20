@@ -24,6 +24,7 @@ import {
 } from '#src/store/match-details'
 import { INGEST } from '#src/store/match-phase'
 import {
+	fillMatchPlayerLinks,
 	finishMissingLiveMatches,
 	matchPostgameWritten,
 	noteLiveClock,
@@ -138,7 +139,6 @@ export async function runPollLiveGames(): Promise<{
 				})
 
 				const roster = rosterFromLivePlayers(game.players)
-				await upsertMatchPlayers(tx, game.match_id, roster, { fillOnly })
 				for (const player of roster) {
 					await upsertPlayer(tx, {
 						accountId: player.accountId,
@@ -151,9 +151,11 @@ export async function runPollLiveGames(): Promise<{
 						matchId: game.match_id,
 					})
 				}
+				await upsertMatchPlayers(tx, game.match_id, roster, { fillOnly })
 				await replaceMatchDraft(tx, game.match_id, collectDraft(game), {
 					fillOnly,
 				})
+				await fillMatchPlayerLinks(tx, game.match_id)
 				hashes.set(game.match_id, digest)
 				wrote += 1
 			}

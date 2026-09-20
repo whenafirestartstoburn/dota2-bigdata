@@ -64,6 +64,16 @@ export const relations = defineRelations(schema, (r) => ({
 			to: r.teams.team_id,
 			alias: 'matches_radiant_team_id_teams_team_id',
 		}),
+		player_radiant_captain: r.one.players({
+			from: r.matches.radiant_captain_player_id,
+			to: r.players.id,
+			alias: 'matches_radiant_captain_player_id_players_id',
+		}),
+		player_dire_captain: r.one.players({
+			from: r.matches.dire_captain_player_id,
+			to: r.players.id,
+			alias: 'matches_dire_captain_player_id_players_id',
+		}),
 		series: r.one.series({
 			from: r.matches.series_id,
 			to: r.series.series_id,
@@ -100,11 +110,23 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_broadcasters.match_id,
 			to: r.matches.match_id,
 		}),
+		player: r.one.players({
+			from: r.match_broadcasters.player_id,
+			to: r.players.id,
+		}),
 	},
 	match_coaches: {
 		match: r.one.matches({
 			from: r.match_coaches.match_id,
 			to: r.matches.match_id,
+		}),
+		player: r.one.players({
+			from: r.match_coaches.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_coaches.team_id,
+			to: r.teams.team_id,
 		}),
 	},
 	match_draft: {
@@ -112,11 +134,27 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_draft.match_id,
 			to: r.matches.match_id,
 		}),
+		player: r.one.players({
+			from: r.match_draft.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_draft.team_id,
+			to: r.teams.team_id,
+		}),
 	},
 	match_objectives: {
 		match: r.one.matches({
 			from: r.match_objectives.match_id,
 			to: r.matches.match_id,
+		}),
+		player: r.one.players({
+			from: r.match_objectives.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_objectives.team_id,
+			to: r.teams.team_id,
 		}),
 	},
 	match_player_ability_upgrades: {
@@ -124,11 +162,27 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_player_ability_upgrades.match_id,
 			to: r.matches.match_id,
 		}),
+		player: r.one.players({
+			from: r.match_player_ability_upgrades.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_player_ability_upgrades.team_id,
+			to: r.teams.team_id,
+		}),
 	},
 	match_player_buffs: {
 		match: r.one.matches({
 			from: r.match_player_buffs.match_id,
 			to: r.matches.match_id,
+		}),
+		player: r.one.players({
+			from: r.match_player_buffs.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_player_buffs.team_id,
+			to: r.teams.team_id,
 		}),
 	},
 	match_player_damage_breakdown: {
@@ -136,17 +190,41 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_player_damage_breakdown.match_id,
 			to: r.matches.match_id,
 		}),
+		player: r.one.players({
+			from: r.match_player_damage_breakdown.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_player_damage_breakdown.team_id,
+			to: r.teams.team_id,
+		}),
 	},
 	match_player_units: {
 		match: r.one.matches({
 			from: r.match_player_units.match_id,
 			to: r.matches.match_id,
 		}),
+		player: r.one.players({
+			from: r.match_player_units.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_player_units.team_id,
+			to: r.teams.team_id,
+		}),
 	},
 	match_players: {
 		match: r.one.matches({
 			from: r.match_players.match_id,
 			to: r.matches.match_id,
+		}),
+		player: r.one.players({
+			from: r.match_players.player_id,
+			to: r.players.id,
+		}),
+		team: r.one.teams({
+			from: r.match_players.team_id,
+			to: r.teams.team_id,
 		}),
 	},
 	match_replays: {
@@ -179,6 +257,14 @@ export const relations = defineRelations(schema, (r) => ({
 		matches_radiant_team_id: r.many.matches({
 			alias: 'matches_radiant_team_id_teams_team_id',
 		}),
+		match_coaches: r.many.match_coaches(),
+		match_drafts: r.many.match_draft(),
+		match_objectives: r.many.match_objectives(),
+		match_player_ability_upgrades: r.many.match_player_ability_upgrades(),
+		match_player_buffs: r.many.match_player_buffs(),
+		match_player_damage_breakdowns: r.many.match_player_damage_breakdown(),
+		match_player_units: r.many.match_player_units(),
+		match_players: r.many.match_players(),
 		players: r.many.players(),
 		series_dire_team_id: r.many.series({
 			alias: 'series_dire_team_id_teams_team_id',
@@ -215,6 +301,21 @@ export const relations = defineRelations(schema, (r) => ({
 		team: r.one.teams({
 			from: r.players.current_team_id,
 			to: r.teams.team_id,
+		}),
+		match_broadcasters: r.many.match_broadcasters(),
+		match_coaches: r.many.match_coaches(),
+		match_drafts: r.many.match_draft(),
+		match_objectives: r.many.match_objectives(),
+		match_player_ability_upgrades: r.many.match_player_ability_upgrades(),
+		match_player_buffs: r.many.match_player_buffs(),
+		match_player_damage_breakdowns: r.many.match_player_damage_breakdown(),
+		match_player_units: r.many.match_player_units(),
+		match_players: r.many.match_players(),
+		matches_radiant_captain: r.many.matches({
+			alias: 'matches_radiant_captain_player_id_players_id',
+		}),
+		matches_dire_captain: r.many.matches({
+			alias: 'matches_dire_captain_player_id_players_id',
 		}),
 	},
 }))

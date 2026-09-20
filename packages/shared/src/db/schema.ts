@@ -469,11 +469,17 @@ export const match_broadcasters = pgTable(
 		language_code: text(),
 		account_id: bigint({ mode: 'number' }),
 		name: text(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_broadcasters_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
 		unique('match_broadcasters_match_id_seq_key').on(table.match_id, table.seq),
 	],
 )
@@ -485,6 +491,12 @@ export const match_coaches = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		account_id: bigint({ mode: 'number' }).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		coach_name: text(),
 		coach_rating: integer(),
 		coach_team: integer(),
@@ -495,6 +507,12 @@ export const match_coaches = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_coaches_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_coaches_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_coaches_match_id_account_id_key').on(
 			table.match_id,
 			table.account_id,
@@ -513,12 +531,25 @@ export const match_draft = pgTable(
 		hero_id: integer().notNull(),
 		team: smallint().notNull(),
 		player_slot: integer(),
+		account_id: bigint({ mode: 'number' }),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		clock: integer(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		updated_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_draft_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_draft_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_draft_match_id_ord_key').on(table.match_id, table.ord),
 	],
 )
@@ -534,6 +565,13 @@ export const match_objectives = pgTable(
 		kind: text().notNull(),
 		team: smallint(),
 		slot: integer(),
+		account_id: bigint({ mode: 'number' }),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		key: text(),
 		value: integer(),
 		created_at: timestamp({ withTimezone: true }).default(sql`now()`).notNull(),
@@ -541,6 +579,12 @@ export const match_objectives = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_objectives_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_objectives_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_objectives_match_id_seq_key').on(table.match_id, table.seq),
 	],
 )
@@ -552,6 +596,13 @@ export const match_player_ability_upgrades = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		player_slot: integer().notNull(),
+		account_id: bigint({ mode: 'number' }).default(0).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		seq: integer().notNull(),
 		ability_id: integer().notNull(),
 		time: integer(),
@@ -561,6 +612,12 @@ export const match_player_ability_upgrades = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_player_ability_upgrades_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_player_ability_upgrades_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_player_ability_upgrades_match_slot_seq_key').on(
 			table.match_id,
 			table.player_slot,
@@ -576,6 +633,13 @@ export const match_player_buffs = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		player_slot: integer().notNull(),
+		account_id: bigint({ mode: 'number' }).default(0).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		buff_id: integer().notNull(),
 		stacks: integer().default(1).notNull(),
 		grant_time: integer(),
@@ -584,6 +648,12 @@ export const match_player_buffs = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_player_buffs_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_player_buffs_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_player_buffs_match_slot_buff_key').on(
 			table.match_id,
 			table.player_slot,
@@ -599,6 +669,13 @@ export const match_player_damage_breakdown = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		player_slot: integer().notNull(),
+		account_id: bigint({ mode: 'number' }).default(0).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		direction: text().notNull(),
 		damage_type: integer().notNull(),
 		pre_reduction: integer(),
@@ -608,6 +685,12 @@ export const match_player_damage_breakdown = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_player_damage_breakdown_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_player_damage_breakdown_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_player_damage_breakdown_natural_key').on(
 			table.match_id,
 			table.player_slot,
@@ -624,6 +707,13 @@ export const match_player_units = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		player_slot: integer().notNull(),
+		account_id: bigint({ mode: 'number' }).default(0).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		unit_name: text().notNull(),
 		item_0: integer(),
 		item_1: integer(),
@@ -636,6 +726,12 @@ export const match_player_units = pgTable(
 		id: bigserial({ mode: 'number' }).primaryKey(),
 	},
 	(table) => [
+		index('match_player_units_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_player_units_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_player_units_match_slot_unit_key').on(
 			table.match_id,
 			table.player_slot,
@@ -651,6 +747,12 @@ export const match_players = pgTable(
 			.notNull()
 			.references(() => matches.match_id, { onDelete: 'cascade' }),
 		account_id: bigint({ mode: 'number' }).notNull(),
+		player_id: bigint({ mode: 'number' }).references(() => players.id, {
+			onDelete: 'set null',
+		}),
+		team_id: integer().references(() => teams.team_id, {
+			onDelete: 'set null',
+		}),
 		player_slot: integer().notNull(),
 		hero_id: integer().default(0).notNull(),
 		player_name: text(),
@@ -740,6 +842,12 @@ export const match_players = pgTable(
 			'btree',
 			table.account_id.asc().nullsLast(),
 		),
+		index('match_players_player_idx')
+			.using('btree', table.player_id.asc().nullsLast())
+			.where(sql`(player_id IS NOT NULL)`),
+		index('match_players_team_idx')
+			.using('btree', table.team_id.asc().nullsLast())
+			.where(sql`(team_id IS NOT NULL)`),
 		unique('match_players_match_id_player_slot_key').on(
 			table.match_id,
 			table.player_slot,
@@ -862,6 +970,14 @@ export const matches = pgTable(
 		dire_team_complete: smallint(),
 		radiant_captain: bigint({ mode: 'number' }),
 		dire_captain: bigint({ mode: 'number' }),
+		radiant_captain_player_id: bigint({ mode: 'number' }).references(
+			() => players.id,
+			{ onDelete: 'set null' },
+		),
+		dire_captain_player_id: bigint({ mode: 'number' }).references(
+			() => players.id,
+			{ onDelete: 'set null' },
+		),
 		patch: text().references(() => patches.patch, { onDelete: 'set null' }),
 		last_error: text(),
 		last_error_at: timestamp({ withTimezone: true }),
@@ -953,6 +1069,12 @@ export const matches = pgTable(
 			table.start_time.desc().nullsFirst(),
 		),
 		index('matches_status_idx').using('btree', table.status.asc().nullsLast()),
+		index('matches_radiant_captain_player_idx')
+			.using('btree', table.radiant_captain_player_id.asc().nullsLast())
+			.where(sql`(radiant_captain_player_id IS NOT NULL)`),
+		index('matches_dire_captain_player_idx')
+			.using('btree', table.dire_captain_player_id.asc().nullsLast())
+			.where(sql`(dire_captain_player_id IS NOT NULL)`),
 		unique('matches_match_id_key').on(table.match_id),
 		check(
 			'matches_last_error_kind_check',

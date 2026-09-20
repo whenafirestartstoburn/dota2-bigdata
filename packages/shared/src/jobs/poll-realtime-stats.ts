@@ -19,6 +19,7 @@ import { partialPlayerFacts } from '#src/store/match-details'
 import { INGEST } from '#src/store/match-phase'
 import {
 	clearServerSteamId,
+	fillMatchPlayerLinks,
 	listLiveRealtimeTargets,
 	matchPostgameWritten,
 	noteLiveClock,
@@ -90,7 +91,6 @@ export async function runPollRealtimeStats(): Promise<{
 				await noteLiveClock(tx, matchId, asNumber(stats.match.game_time) ?? 0)
 				const players = [...sides.radiant.players, ...sides.dire.players]
 				const fillOnly = await matchPostgameWritten(tx, matchId)
-				await upsertMatchPlayers(tx, matchId, players, { fillOnly })
 				for (const player of players) {
 					await upsertPlayer(tx, {
 						accountId: player.accountId,
@@ -103,10 +103,12 @@ export async function runPollRealtimeStats(): Promise<{
 						matchId,
 					})
 				}
+				await upsertMatchPlayers(tx, matchId, players, { fillOnly })
 				const draft = collectRealtimeDraft(stats.match.picks, stats.match.bans)
 				if (draft.length > 0) {
 					await replaceMatchDraft(tx, matchId, draft, { fillOnly })
 				}
+				await fillMatchPlayerLinks(tx, matchId)
 			})
 			tickRows.push({
 				match_id: matchId,

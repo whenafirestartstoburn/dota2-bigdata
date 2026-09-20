@@ -123,7 +123,8 @@ historical replay / walk 20.
 | Джоба | Роль | Описание |
 |---|---|---|
 | `fetch_leagues` | historical | Раз в час GetLeagueInfoList (плюс live-фиды, чтобы не пропустить живые `league_id`). Upsert в Postgres `leagues` (`LIVE` / `UPCOMING` / `FINISHED`). Матчи не трогает. |
-| `sync_catalogs` | historical | На старте и раз в сутки в 05:00 UTC обновляет Postgres `heroes`, `items`, `abilities`, `patches` и остальные справочники. Если `heroes` пуст — ingest не стартует. |
+| `sync_catalogs` | historical | На старте и раз в час: `patchnoteslist` через api-прокси; если появился новый патч (или `heroes` пуст) — upsert `heroes` / `items` / `abilities` / `patches` с datafeed. Чужие строки не удаляет. Если `heroes` пуст — ingest не стартует. |
+| `sync_catalogs_external_providers` | CLI | Не джоба graphile. `bun run catalogs:sync-external` — VPK d2vpkr + odota `json/` (режимы, регионы, грани, слоты). Upsert, без DELETE. |
 | `replenish_accounts` | match-processing | Если готовых API-ключей или GC-аккаунтов меньше порога — покупка на dark.shopping. Пишет `marketplace_orders`, новые строки в `steam_api_keys` / `steam_accounts`. Стабильный `failed` (та же ошибка после трёх ретраев) — Telegram, не чаще раза в 10 минут. |
 | `settle_marketplace_orders` | match-processing | Раз в минуту опрашивает `marketplace_orders` в `pending`. Dark Shopping `completed`/`ok` — та же выдача, что buy-account; `in_process` держит `pending` до часа от `created_at`, потом `failed`. Тот же Telegram при стабильном `failed`. |
 | `retest_disabled_resources` | match-processing | Проверяет `disabled` прокси, GC-аккаунты и ключи. Успех — статус `ready`. Пишет `proxies`, `steam_accounts`, `steam_api_keys`. |
@@ -131,7 +132,8 @@ historical replay / walk 20.
 | `run_scheduled_job` | все роли | Именованная очередь не держит отложенный `runAt`. Когда срок наступил — возвращает работу на `details:*` / `seq:*` / `replay-*`. |
 | `ensure_loop_jobs` | все роли | Раз в минуту и после reconnect graphile LISTEN. Если self-reschedule джоба (`poll_live_games` и т.п.) пропала или `attempts >= max_attempts` — ставит её снова. Живую или запланированную не трогает. |
 
-Не джобы: CLI `persistSeqMatches` (пакетный seq), `POST /api/buy-account`
+Не джобы: CLI `persistSeqMatches` (пакетный seq), `catalogs:sync-external`,
+`POST /api/buy-account`
 (та же покупка, что replenish), `/metrics` парсера.
 
 ---

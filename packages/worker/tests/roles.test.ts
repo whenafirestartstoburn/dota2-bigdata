@@ -105,7 +105,11 @@ describe('boot per role', () => {
 		expect(cronFor('historical')).toContain(ENSURE_LOOP_JOBS)
 		expect(cronFor('historical')).toContain('fetch_leagues')
 		expect(cronFor('historical')).toContain('walk_league_history')
-		expect(cronFor('historical')).toContain('sync_catalogs')
+		expect(cronFor('historical')).toContain('0 * * * * sync_catalogs')
+		expect(cronFor('historical')).not.toContain('0 5 * * * sync_catalogs')
+		expect(cronFor('historical')).not.toContain(
+			'sync_catalogs_external_providers',
+		)
 		expect(cronFor('all')).toBe(cronFor('historical'))
 		expect(syncsCatalogsOnBoot('historical')).toBe(true)
 		expect(syncsCatalogsOnBoot('all')).toBe(true)

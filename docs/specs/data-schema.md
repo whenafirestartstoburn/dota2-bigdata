@@ -18,7 +18,7 @@ Operational tables (`steam_accounts`, `steam_api_keys`, `proxies`, `settings`, `
 
 Valve attempt logs (`steam_api_requests`, `steam_gc_requests`, `replay_requests`): daily partitions, `match_id` nullable, retained 3 days. `steam_api_requests` also stores the 200 JSON body (`response_body` jsonb), except `fetch_seq_window` walker pages. Web API / GC rows also store `steam_api_key_id` / `steam_account_id`. [`request-logs.md`](./request-logs.md), [`steam-api.md`](./steam-api.md).
 
-Every public Postgres table except dbmate `schema_migrations` has `id bigserial` PK and `created_at` / `updated_at` (`set_updated_at` trigger; `created_at` is immutable). Those three columns are omitted below. Natural identifiers (`match_id`, `league_id`, `account_id`, …) are UNIQUE. FKs point at the natural keys.
+Every public Postgres table except dbmate `schema_migrations` has `id bigserial` PK and `created_at` / `updated_at` (`set_updated_at` trigger; `created_at` is immutable). Those three columns are omitted below. Natural identifiers (`match_id`, `league_id`, `account_id`, …) are UNIQUE. FKs point at the natural keys, except `player_id` → `players.id`: a match row can exist before the `players` row, so the FK is nullable and `account_id` stays on the row.
 
 ---
 
@@ -26,9 +26,10 @@ Every public Postgres table except dbmate `schema_migrations` has `id bigserial`
 
 ```
 leagues 1──* series 1──* matches
-                │            ├── 10 match_players ──> players
+                │            ├── 10 match_players ── player_id → players
+                │            │                      └── team_id → teams
                 │            ├── * match_draft          (picks and bans, one sequence)
-                │            ├── * match_player_buffs
+                │            ├── * match_player_buffs   (FK match_players + player_id / team_id)
                 │            ├── * match_objectives
                 │            ├── 1 match_replay
                 │            └── * ClickHouse live_*_ticks / replay_*
@@ -140,6 +141,8 @@ One row per game. Team names are a snapshot at game time.
 | `dire_team_complete` | Dire roster complete flag. Comes from GC |
 | `radiant_captain` | Radiant captain `account_id`. Comes from GetMatchHistoryBySequenceNum; replay parse fills if still null |
 | `dire_captain` | Dire captain `account_id`. Comes from GetMatchHistoryBySequenceNum; replay parse fills if still null |
+| `radiant_captain_player_id` | `players.id` for `radiant_captain` when that row exists |
+| `dire_captain_player_id` | `players.id` for `dire_captain` when that row exists |
 | `patch` | Patch string. Derived from `start_time` vs `patches` |
 | `stream_delay_s` | Stream delay, seconds. Comes from GetLiveLeagueGames |
 | `status` | Enum `match_status`: `discovered` → `live` → `awaiting_history` → `awaiting_details` → `details_ready` → `awaiting_replay` → `replay_stored` → `parsed` / `replay_unavailable` / `failed` / `not_started`. Later statuses are not rewritten backwards except a live flap: `not_started`, `awaiting_history`, `awaiting_details`, `failed` return to `live` when a live feed lists the id again |
@@ -177,7 +180,9 @@ Box score: live may refresh `match_players` while the match is still live. The f
 | Column | Description |
 |---|---|
 | `match_id` | Parent match |
-| `account_id` | Steam 32-bit account. Comes from GetLiveLeagueGames / GC |
+| `account_id` | Steam 32-bit account. Comes from GetLiveLeagueGames / GC. Kept even when `player_id` is null |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id for this slot (`matches.radiant_team_id` / `dire_team_id` by side) |
 | `player_slot` | Valve slot (0–4 radiant, 128–132 dire). Comes from GC; GetLiveLeagueGames has no slot (per-team index) |
 | `hero_id` | Picked hero; 0 before pick. Comes from GetLiveLeagueGames / GC |
 | `player_name` | Name at game time. Comes from GetLiveLeagueGames / GC |
@@ -261,24 +266,30 @@ Box score: live may refresh `match_players` while the match is still live. The f
 
 ### match_player_buffs
 
-Unique `(match_id, player_slot, buff_id)`. Stack counts of permanent buffs (Aghs, Moonshard, …).
+Unique `(match_id, player_slot, buff_id)`. Stack counts of permanent buffs (Aghs, Moonshard, …). FK `(match_id, player_slot)` → `match_players`.
 
 | Column | Description |
 |---|---|
 | `match_id` | Parent match |
 | `player_slot` | Valve player slot |
+| `account_id` | Steam 32-bit from `match_players` |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id from `match_players` |
 | `buff_id` | Permanent buff id; catalog `permanent_buffs`. Comes from GC |
 | `stacks` | Stack count. Comes from GC |
 | `grant_time` | When the buff was granted, game clock. Comes from GC |
 
 ### match_player_ability_upgrades
 
-Unique `(match_id, player_slot, seq)`. `CMatchPlayerAbilityUpgrade`.
+Unique `(match_id, player_slot, seq)`. `CMatchPlayerAbilityUpgrade`. FK `(match_id, player_slot)` → `match_players`.
 
 | Column | Description |
 |---|---|
 | `match_id` | Parent match |
 | `player_slot` | Valve player slot |
+| `account_id` | Steam 32-bit from `match_players` |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id from `match_players` |
 | `seq` | Upgrade sequence |
 | `ability_id` | Ability id. Comes from GC |
 | `time` | Game clock of the upgrade. Comes from GC |
@@ -286,12 +297,15 @@ Unique `(match_id, player_slot, seq)`. `CMatchPlayerAbilityUpgrade`.
 
 ### match_player_damage_breakdown
 
-Unique `(match_id, player_slot, direction, damage_type)`.
+Unique `(match_id, player_slot, direction, damage_type)`. FK `(match_id, player_slot)` → `match_players`.
 
 | Column | Description |
 |---|---|
 | `match_id` | Parent match |
 | `player_slot` | Valve player slot |
+| `account_id` | Steam 32-bit from `match_players` |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id from `match_players` |
 | `direction` | `received` or `dealt`. Comes from GC (`hero_damage_received` / `hero_damage_dealt`) |
 | `damage_type` | Valve damage type id. Comes from GC |
 | `pre_reduction` | Damage before reduction. Comes from GC |
@@ -299,12 +313,15 @@ Unique `(match_id, player_slot, direction, damage_type)`.
 
 ### match_player_units
 
-Additional units (Spirit Bear, …). Unique `(match_id, player_slot, unit_name)`.
+Additional units (Spirit Bear, …). Unique `(match_id, player_slot, unit_name)`. FK `(match_id, player_slot)` → `match_players`.
 
 | Column | Description |
 |---|---|
 | `match_id` | Parent match |
 | `player_slot` | Valve player slot |
+| `account_id` | Steam 32-bit from `match_players` |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id from `match_players` |
 | `unit_name` | Extra unit name |
 | `item_0` | Unit inventory slot 0. Comes from GC |
 | `item_1` | Unit inventory slot 1. Comes from GC |
@@ -321,6 +338,8 @@ Unique `(match_id, account_id)`. Public lobby coaches (`CMsgDOTAMatch.Coach`).
 |---|---|
 | `match_id` | Parent match |
 | `account_id` | Coach Steam 32-bit account. Comes from GC |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id for the coached side |
 | `coach_name` | Coach name. Comes from GC |
 | `coach_rating` | Coach rating. Comes from GC |
 | `coach_team` | Side the coach is on. Comes from GC |
@@ -339,6 +358,7 @@ Unique `(match_id, seq)`. Broadcaster channels.
 | `description` | Channel description. Comes from GC |
 | `language_code` | Broadcast language. Comes from GC |
 | `account_id` | Caster account. Comes from GC |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
 | `name` | Caster name. Comes from GC |
 
 ### players
@@ -368,16 +388,16 @@ Current team name / tag / logo. Game-time names are on `matches`.
 
 ### heroes
 
-Valve-id dictionary. Refreshed by `sync_catalogs` (worker boot + daily) from Valve VPK dumps ([dotabuff/d2vpkr](https://github.com/dotabuff/d2vpkr)), same pipeline as [odota/dotaconstants `updateconstants.ts`](https://github.com/odota/dotaconstants/blob/master/tasks/updateconstants.ts). Manual tables (patch / modes / buffs / XP) still come from that repo's `json/`; regions from VPK; cluster from leftover `build/cluster.json`. Event tables store ids and have no FK to catalogs. GetLiveLeagueGames draft uses `hero_id = 0` before a pick.
+Valve-id dictionary. Hourly `sync_catalogs` upserts id / name / localized_name / primary_attr from `www.dota2.com/datafeed/herolist` (after `patchnoteslist` shows a new patch). Attack type and roles come from CLI `sync_catalogs_external_providers` (d2vpkr VPK, same pipeline as odota/dotaconstants). Event tables store ids and have no FK to catalogs. GetLiveLeagueGames draft uses `hero_id = 0` before a pick.
 
 | Column | Description |
 |---|---|
-| `hero_id` | Valve hero id (unique). Comes from odota/dotaconstants |
-| `name` | Internal name (`npc_dota_hero_*`). Comes from odota/dotaconstants |
-| `localized_name` | Display name. Comes from odota/dotaconstants |
-| `primary_attr` | Primary attribute. Comes from odota/dotaconstants |
-| `attack_type` | Melee / ranged. Comes from odota/dotaconstants |
-| `roles` | Role list. Comes from odota/dotaconstants |
+| `hero_id` | Valve hero id (unique). Comes from datafeed `herolist` |
+| `name` | Internal name (`npc_dota_hero_*`). Comes from datafeed `herolist` |
+| `localized_name` | Display name. Comes from datafeed `herolist` |
+| `primary_attr` | Primary attribute (`str` / `agi` / `int` / `all`). Comes from datafeed `herolist` |
+| `attack_type` | Melee / ranged. Comes from `sync_catalogs_external_providers` |
+| `roles` | Role list. Comes from `sync_catalogs_external_providers` |
 
 ### items
 
@@ -385,10 +405,10 @@ Valve item dictionary. No FK from event tables.
 
 | Column | Description |
 |---|---|
-| `item_id` | Valve item id (unique). Comes from odota/dotaconstants |
-| `name` | Internal name. Comes from odota/dotaconstants |
-| `localized_name` | Display name. Comes from odota/dotaconstants |
-| `cost` | Gold cost. Comes from odota/dotaconstants |
+| `item_id` | Valve item id (unique). Comes from datafeed `itemlist` |
+| `name` | Internal name (`item_` prefix stripped). Comes from datafeed `itemlist` |
+| `localized_name` | Display name. Comes from datafeed `itemlist` |
+| `cost` | Gold cost. Comes from `sync_catalogs_external_providers` |
 
 ### patches
 
@@ -396,8 +416,8 @@ Lookup for `matches.patch` from `start_time`.
 
 | Column | Description |
 |---|---|
-| `patch` | Patch string (unique). Comes from odota/dotaconstants |
-| `released_at` | Patch release time. Comes from odota/dotaconstants |
+| `patch` | Patch string (unique). Comes from datafeed `patchnoteslist` (`patch_number`) |
+| `released_at` | Patch release time. Comes from datafeed `patch_timestamp` (6.x / early 7.x still from external CLI) |
 
 ### abilities
 
@@ -405,10 +425,10 @@ Spells and talents share one ability-id space. Talents are `kind = talent` (`spe
 
 | Column | Description |
 |---|---|
-| `ability_id` | Valve ability id (unique). Comes from odota/dotaconstants |
-| `name` | Internal name. Comes from odota/dotaconstants |
-| `localized_name` | Display name. Comes from odota/dotaconstants |
-| `kind` | `spell` / `talent` / `innate` / `item` / `other`. Comes from odota/dotaconstants |
+| `ability_id` | Valve ability id (unique). Comes from datafeed `abilitylist` |
+| `name` | Internal name. Comes from datafeed `abilitylist` |
+| `localized_name` | Display name. Comes from datafeed `abilitylist` |
+| `kind` | `spell` / `talent` / `innate` / `item` / `other`. Inferred from the name / `is_innate` |
 
 ### hero_abilities
 
@@ -416,11 +436,11 @@ Skill build + talent tree. Unique `(hero_id, slot, is_talent)`. FK to `heroes` /
 
 | Column | Description |
 |---|---|
-| `hero_id` | Parent hero. Comes from odota/dotaconstants |
-| `ability_id` | Ability on this slot. Comes from odota/dotaconstants |
-| `slot` | Skill / talent slot. Comes from odota/dotaconstants |
-| `is_talent` | Talent-tree row. Comes from odota/dotaconstants |
-| `talent_level` | Talent level when `is_talent`. Comes from odota/dotaconstants |
+| `hero_id` | Parent hero. Comes from `sync_catalogs_external_providers` |
+| `ability_id` | Ability on this slot. Comes from `sync_catalogs_external_providers` |
+| `slot` | Skill / talent slot. Comes from `sync_catalogs_external_providers` |
+| `is_talent` | Talent-tree row. Comes from `sync_catalogs_external_providers` |
+| `talent_level` | Talent level when `is_talent`. Comes from `sync_catalogs_external_providers` |
 
 ### hero_facets
 
@@ -428,13 +448,13 @@ Unique `(hero_id, facet_id)`. Join `match_players.selected_facet` to `facet_id`.
 
 | Column | Description |
 |---|---|
-| `hero_id` | Parent hero. Comes from odota/dotaconstants |
-| `facet_id` | Facet id. Comes from odota/dotaconstants |
-| `name` | Internal name. Comes from odota/dotaconstants |
-| `localized_name` | Display name. Comes from odota/dotaconstants |
-| `icon` | Facet icon. Comes from odota/dotaconstants |
-| `color` | Facet color. Comes from odota/dotaconstants |
-| `deprecated` | No longer offered. Comes from odota/dotaconstants |
+| `hero_id` | Parent hero. Comes from `sync_catalogs_external_providers` |
+| `facet_id` | Facet id. Comes from `sync_catalogs_external_providers` |
+| `name` | Internal name. Comes from `sync_catalogs_external_providers` |
+| `localized_name` | Display name. Comes from `sync_catalogs_external_providers` |
+| `icon` | Facet icon. Comes from `sync_catalogs_external_providers` |
+| `color` | Facet color. Comes from `sync_catalogs_external_providers` |
+| `deprecated` | No longer offered. Comes from `sync_catalogs_external_providers` |
 
 ### permanent_buffs
 
@@ -442,8 +462,8 @@ Catalog for `match_player_buffs.buff_id` (Aghs / Moonshard / …).
 
 | Column | Description |
 |---|---|
-| `buff_id` | Valve buff id (unique). Comes from odota/dotaconstants |
-| `name` | Buff name. Comes from odota/dotaconstants |
+| `buff_id` | Valve buff id (unique). Comes from `sync_catalogs_external_providers` |
+| `name` | Buff name. Comes from `sync_catalogs_external_providers` |
 
 ### game_modes
 
@@ -451,9 +471,9 @@ Catalog for `matches.game_mode`.
 
 | Column | Description |
 |---|---|
-| `game_mode` | Valve game-mode id (unique). Comes from odota/dotaconstants |
-| `name` | Mode name. Comes from odota/dotaconstants |
-| `balanced` | Whether the mode is considered balanced. Comes from odota/dotaconstants |
+| `game_mode` | Valve game-mode id (unique). Comes from `sync_catalogs_external_providers` |
+| `name` | Mode name. Comes from `sync_catalogs_external_providers` |
+| `balanced` | Whether the mode is considered balanced. Comes from `sync_catalogs_external_providers` |
 
 ### lobby_types
 
@@ -461,9 +481,9 @@ Catalog for `matches.lobby_type`.
 
 | Column | Description |
 |---|---|
-| `lobby_type` | Valve lobby-type id (unique). Comes from odota/dotaconstants |
-| `name` | Lobby name. Comes from odota/dotaconstants |
-| `balanced` | Whether the lobby is considered balanced. Comes from odota/dotaconstants |
+| `lobby_type` | Valve lobby-type id (unique). Comes from `sync_catalogs_external_providers` |
+| `name` | Lobby name. Comes from `sync_catalogs_external_providers` |
+| `balanced` | Whether the lobby is considered balanced. Comes from `sync_catalogs_external_providers` |
 
 ### regions
 
@@ -471,8 +491,8 @@ Valve region id dictionary.
 
 | Column | Description |
 |---|---|
-| `region` | Valve region id (unique). Comes from odota/dotaconstants |
-| `name` | Region name. Comes from odota/dotaconstants |
+| `region` | Valve region id (unique). Comes from `sync_catalogs_external_providers` |
+| `name` | Region name. Comes from `sync_catalogs_external_providers` |
 
 ### clusters
 
@@ -480,8 +500,8 @@ Maps `matches.cluster` → `regions.region`.
 
 | Column | Description |
 |---|---|
-| `cluster` | Valve cluster id (unique). Comes from odota/dotaconstants |
-| `region` | Parent region. Comes from odota/dotaconstants |
+| `cluster` | Valve cluster id (unique). Comes from `sync_catalogs_external_providers` |
+| `region` | Parent region. Comes from `sync_catalogs_external_providers` |
 
 ### xp_levels
 
@@ -489,8 +509,8 @@ Cumulative XP to reach that hero level.
 
 | Column | Description |
 |---|---|
-| `level` | Hero level (unique). Comes from odota/dotaconstants |
-| `xp` | Cumulative XP required. Comes from odota/dotaconstants |
+| `level` | Hero level (unique). Comes from `sync_catalogs_external_providers` |
+| `xp` | Cumulative XP required. Comes from `sync_catalogs_external_providers` |
 
 ### match_draft
 
@@ -504,6 +524,9 @@ Unique `(match_id, ord)`. GetLiveLeagueGames writes unordered per-side lists wit
 | `hero_id` | Hero id; 0 before a pick. Comes from GetLiveLeagueGames / GC |
 | `team` | 0 radiant, 1 dire. Comes from GetLiveLeagueGames / GC |
 | `player_slot` | Valve slot (0–4 / 128–132). Comes from GC; replay parse fills from `match_players.hero_id` on picks when `-1` |
+| `account_id` | Steam 32-bit from `match_players` when the slot is known |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id for `team` 0/1 (`matches.radiant_team_id` / `dire_team_id`) |
 | `clock` | Seconds into draft. Comes from replay parse |
 
 ### match_objectives
@@ -517,7 +540,10 @@ Tens of rows per match. First blood from GC `first_blood_time`, then replay pars
 | `time` | Game clock seconds |
 | `kind` | `first_blood`, `tower`, `barracks`, `roshan`, `aegis`, `aegis_stolen`, `aegis_denied`, `buyback`, `glyph`, `scan`, `pause`, `reconnect`, `disconnect`, `win`, `courier`, `shrine`, `ward`, `tormentor`, `smoke`, `banner`, `outpost`. Comes from GC (`first_blood`) then replay parse (`CHAT_MESSAGE_*` / combat log) |
 | `team` | 0 / 1 / null |
-| `slot` | Player slot if applicable |
+| `slot` | Replay slot 0–9 if applicable (`player_slot = if(slot < 5, slot, slot + 123)`) |
+| `account_id` | Steam 32-bit from `match_players` when `slot` maps to a row |
+| `player_id` | `players.id` when that account was upserted; otherwise null |
+| `team_id` | Valve team id: from `match_players` when `slot` maps, else `matches` by `team` 0/1 |
 | `key` | Extra key (tower npc / lane, …) |
 | `value` | Extra int |
 
@@ -598,6 +624,17 @@ Besides UNIQUE natural keys:
 | `steam_accounts` | `(status)`, `(proxy_id)` | Game Coordinator session pick, occupancy |
 | `proxies` | `(purpose, status)` | assign |
 | `match_players` | `(account_id)` | player’s matches |
+| `match_players` | `(player_id)` where set | player’s matches by FK |
+| `match_players` | `(team_id)` where set | team’s match-players |
+| `match_player_buffs` | `(player_id)` where set; `(team_id)` where set | player / team buffs |
+| `match_player_ability_upgrades` | `(player_id)` where set; `(team_id)` where set | player / team upgrades |
+| `match_player_damage_breakdown` | `(player_id)` where set; `(team_id)` where set | player / team damage |
+| `match_player_units` | `(player_id)` where set; `(team_id)` where set | player / team units |
+| `match_draft` | `(player_id)` where set; `(team_id)` where set | player / team draft |
+| `match_objectives` | `(player_id)` where set; `(team_id)` where set | player / team objectives |
+| `match_coaches` | `(player_id)` where set; `(team_id)` where set | player / team coaches |
+| `match_broadcasters` | `(player_id)` where set | caster’s matches |
+| `matches` | `(radiant_captain_player_id)` where set; `(dire_captain_player_id)` where set | captain’s matches |
 | `players` | `(current_team_id)` where set | roster |
 | `patches` | `(released_at DESC)` | stamp `matches.patch` |
 | `series` | `(league_id)` | league series |

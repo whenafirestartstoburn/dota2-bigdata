@@ -5,6 +5,7 @@ import {
 	extractPlayers,
 } from '#src/store/match-details'
 import {
+	fillMatchPlayerLinks,
 	insertUndiscoveredMatch,
 	matchPostgameWritten,
 	replaceBroadcasters,
@@ -64,7 +65,6 @@ export async function persistMatchRecord(
 	const fillOnly = await matchPostgameWritten(tx, facts.matchId)
 	await saveMatchFacts(tx, facts, opts.fetched ?? 'gc')
 	const players = extractPlayers(raw)
-	await upsertMatchPlayers(tx, facts.matchId, players, { fillOnly })
 	for (const player of players) {
 		await upsertPlayer(tx, {
 			accountId: player.accountId,
@@ -79,6 +79,7 @@ export async function persistMatchRecord(
 					: null,
 		})
 	}
+	await upsertMatchPlayers(tx, facts.matchId, players, { fillOnly })
 	const draft = extractDraft(raw)
 	if (draft.length > 0) {
 		await replaceMatchDraft(tx, facts.matchId, draft, { fillOnly })
@@ -102,5 +103,6 @@ export async function persistMatchRecord(
 			},
 		])
 	}
+	await fillMatchPlayerLinks(tx, facts.matchId)
 	return facts.matchId
 }

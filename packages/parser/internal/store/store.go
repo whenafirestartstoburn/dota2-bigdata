@@ -290,8 +290,31 @@ func publishObjectives(ctx context.Context, tx pgx.Tx, res *model.Result) error 
 			return fmt.Errorf("match_objectives seq: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO match_objectives (match_id, seq, time, kind, team, slot, key, value)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO match_objectives (
+				match_id, seq, time, kind, team, slot, key, value,
+				account_id, player_id, team_id
+			)
+			SELECT
+				$1, $2, $3, $4, $5, $6, $7, $8,
+				mp.account_id,
+				mp.player_id,
+				COALESCE(
+					mp.team_id,
+					CASE
+						WHEN $5 = 0 THEN m.radiant_team_id
+						WHEN $5 = 1 THEN m.dire_team_id
+					END
+				)
+			FROM (SELECT $1::bigint AS match_id) x
+			LEFT JOIN matches m ON m.match_id = x.match_id
+			LEFT JOIN match_players mp
+				ON mp.match_id = x.match_id
+				AND mp.player_slot = CASE
+					WHEN $6::integer IS NULL THEN NULL
+					WHEN $6 BETWEEN 0 AND 4 THEN $6
+					WHEN $6 BETWEEN 5 AND 9 THEN $6 + 123
+					ELSE $6
+				END
 		`, res.MatchID, next, o.Time, o.Kind, o.Team, o.Slot, nullStr(o.Key), o.Value); err != nil {
 			return fmt.Errorf("match_objectives: %w", err)
 		}
@@ -347,8 +370,16 @@ func publishDraft(ctx context.Context, tx pgx.Tx, res *model.Result) error {
 			slotArg = slot
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO match_draft (match_id, ord, is_pick, hero_id, team, player_slot, clock)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO match_draft (
+				match_id, ord, is_pick, hero_id, team, player_slot, clock, team_id
+			)
+			SELECT $1, $2, $3, $4, $5, $6, $7,
+				CASE
+					WHEN $5 = 0 THEN m.radiant_team_id
+					WHEN $5 = 1 THEN m.dire_team_id
+				END
+			FROM (SELECT $1::bigint AS match_id) x
+			LEFT JOIN matches m ON m.match_id = x.match_id
 		`, res.MatchID, int(d.Ord), d.IsPick == 1, d.HeroID, int16(d.Team), slotArg, d.Clock); err != nil {
 			return fmt.Errorf("match_draft: %w", err)
 		}
@@ -369,6 +400,36 @@ func fillDraftSlots(ctx context.Context, tx pgx.Tx, matchID uint64) error {
 			AND d.player_slot IS NULL
 	`, matchID); err != nil {
 		return fmt.Errorf("match_draft slots: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE match_draft AS d
+		SET
+			account_id = COALESCE(d.account_id, p.account_id),
+			player_id = COALESCE(d.player_id, p.player_id),
+			team_id = COALESCE(d.team_id, p.team_id)
+		FROM match_players AS p
+		WHERE d.match_id = $1
+			AND p.match_id = d.match_id
+			AND p.player_slot = d.player_slot
+	`, matchID); err != nil {
+		return fmt.Errorf("match_draft links: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE match_draft AS d
+		SET team_id = CASE
+			WHEN d.team = 0 THEN m.radiant_team_id
+			ELSE m.dire_team_id
+		END
+		FROM matches m
+		WHERE d.match_id = $1
+			AND m.match_id = d.match_id
+			AND d.team_id IS NULL
+			AND CASE
+				WHEN d.team = 0 THEN m.radiant_team_id
+				ELSE m.dire_team_id
+			END IS NOT NULL
+	`, matchID); err != nil {
+		return fmt.Errorf("match_draft team: %w", err)
 	}
 	return nil
 }

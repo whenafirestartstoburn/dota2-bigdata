@@ -19,6 +19,7 @@ import {
 } from '#src/store/leagues'
 import { partialPlayerFacts } from '#src/store/match-details'
 import {
+	fillMatchPlayerLinks,
 	upsertHistoryMatches,
 	upsertMatchPlayers,
 	upsertPlayer,
@@ -280,9 +281,6 @@ async function persistListed(
 					}),
 				]
 			})
-			await upsertMatchPlayers(tx, match.match_id, players, {
-				fillOnly: true,
-			})
 			for (const player of players) {
 				await upsertPlayer(tx, {
 					accountId: player.accountId,
@@ -296,6 +294,10 @@ async function persistListed(
 						match.start_time > 0 ? new Date(match.start_time * 1000) : null,
 				})
 			}
+			await upsertMatchPlayers(tx, match.match_id, players, {
+				fillOnly: true,
+			})
+			await fillMatchPlayerLinks(tx, match.match_id)
 		}
 	})
 }

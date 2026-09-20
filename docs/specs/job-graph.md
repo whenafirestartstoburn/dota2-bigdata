@@ -72,7 +72,7 @@ flowchart TD
   S3cold[S3 cold] <-- archive
   Marketplace[dark.shopping] --> replenish
   Marketplace --> settle
-  DotaConst[d2vpkr VPK + odota json] --> syncCat
+  ValveFeed[dota2.com/datafeed] --> syncCat
 
   pollLive -->|"status=live / awaiting_history / not_started"| PG[(Postgres matches)]
   pollTop --> PG
@@ -191,7 +191,7 @@ object.
 |---|---|
 | worker boot (`startupJobsFor`) | live polls + `poll_finished_history` + `walk_seq_history` (live and historical roles), `fetch_leagues`, `walk_league_history`, `archive_parsed_replays`, `maintain_request_logs`, `replenish_accounts`, `settle_marketplace_orders`, `retest_disabled_resources` |
 | cron (every role) | `ensure_loop_jobs` every minute: re-enqueue a self-reschedule `jobKey` that is missing or permafailed (`locked_at` null and `attempts >= max_attempts`). Does not touch a scheduled or in-flight row. |
-| cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` 05:00 UTC |
+| cron (historical / `all` only) | `fetch_leagues` hourly; `walk_league_history` 5 min watchdog (`preserve_run_at`); `sync_catalogs` hourly |
 | historical boot (sync, before ingest) | `runSyncCatalogsOnBoot` (not a graphile job) |
 | self-reschedule | live polls (`live_poll_interval_ms`), `poll_finished_history` (`history_fast_poll_ms`), walk / seq-walk (`steam_api_min_interval_ms`; seq-walk sleeps 1 min after an empty window), archive / replenish / settle / retest / request-log maintain |
 | live finish (`live_duration_max > 0`) | `fetch_match_details` origin `live` (GC starts in parallel with history; waiter stays armed until a seqnum or timeout) |
@@ -471,9 +471,28 @@ null (the page is large).
 ### `sync_catalogs`
 
 **Cadence.** Historical boot (blocking if `heroes` is empty) + cron
-`0 5 * * *`. CLI `bun run catalogs:sync`.
+`0 * * * *`. CLI `bun run catalogs:sync`. Through an `api` proxy.
 
-**Calls.** Builds the same snapshot as odota/dotaconstants
+**Calls.** `www.dota2.com/datafeed/patchnoteslist`. If every
+`patch_number` is already in `patches` and `heroes` is non-empty —
+stop. Otherwise fetch `herolist`, `itemlist`, `abilitylist` and
+upsert those four dictionaries. List payloads only: no `herodata` /
+`itemdata` / `abilitydata`, no attack type, roles, item cost, facets,
+or hero–ability slots.
+
+**Postgres (upsert, never delete).** `heroes` (id / name /
+localized_name / primary_attr), `items` (id / name / localized_name),
+`abilities` (id / name / localized_name / kind), `patches`
+(number + `patch_timestamp`). Empty official fields do not overwrite
+values written by `sync_catalogs_external_providers`. Failed boot
+keeps last good rows unless `heroes` is empty.
+
+### `sync_catalogs_external_providers`
+
+**Cadence.** CLI only (`bun run catalogs:sync-external`). Not a
+graphile task, not on cron.
+
+**Calls.** Same snapshot as odota/dotaconstants
 `tasks/updateconstants.ts`: Valve VPK dumps from
 [dotabuff/d2vpkr](https://github.com/dotabuff/d2vpkr)
 (`npc_heroes` `#base` includes, per-hero files with
@@ -481,14 +500,12 @@ null (the page is large).
 English localization). Manual tables (`patch`, `game_mode`,
 `lobby_type`, `permanent_buffs`, `xp_level`) come from
 odota/dotaconstants `json/`. `cluster` is the leftover
-`build/cluster.json` (their generator is commented out; it
-used Stratz). No OpenDota `/api/constants` fetch.
+`build/cluster.json`. No OpenDota `/api/constants` fetch.
 
-**Postgres (replace catalogs, not match rows).** `heroes`, `items`,
-`abilities`, `patches`, `game_modes`, `lobby_types`, `regions`,
-`clusters`, `permanent_buffs`, `xp_levels`, `hero_abilities`,
-`hero_facets`. Failed boot keeps last good rows unless `heroes` is
-empty.
+**Postgres (upsert, never delete).** Same catalog tables as before,
+including `game_modes`, `lobby_types`, `regions`, `clusters`,
+`permanent_buffs`, `xp_levels`, `hero_abilities`, `hero_facets`.
+Does not remove rows the official job inserted.
 
 ---
 

@@ -51,7 +51,7 @@ export const WORKER_CONCURRENCY: Record<WorkerRole, number> = {
 const HISTORICAL_CRON =
 	'0 * * * * fetch_leagues ?max=3\n' +
 	'*/5 * * * * walk_league_history ?jobKey=walk_league_history&jobKeyMode=preserve_run_at&max=3\n' +
-	'0 5 * * * sync_catalogs ?max=3'
+	'0 * * * * sync_catalogs ?max=3'
 
 const ENSURE_CRON = `* * * * * ${ENSURE_LOOP_JOBS} ?jobKey=${ENSURE_LOOP_JOBS}&jobKeyMode=preserve_run_at&max=3`
 

@@ -232,7 +232,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Steam API RPS per method",
-      "description": "Logical calls per second, one line per Web API method (GetLiveLeagueGames, GetTopLiveGame, GetRealtimeStats, GetMatchHistory, GetMatchHistoryBySequenceNum, GetLeagueInfoList).",
+      "description": "Logical calls per second, one line per Web API method (GetLiveLeagueGames, GetTopLiveGame, GetRealtimeStats, GetMatchHistory, GetMatchHistoryBySequenceNum, GetLeagueInfoList, datafeed lists).",
       "gridPos": { "h": 9, "w": 8, "x": 0, "y": 5 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [

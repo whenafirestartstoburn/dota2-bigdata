@@ -61,7 +61,8 @@ bun run api       # another terminal
 | `settle_marketplace_orders` | match-processing | every 60s + startup | resume pending Dark Shopping orders for up to 1 h |
 | `retest_disabled_resources` | match-processing | interval + startup | probe disabled proxies / accounts / keys |
 | `maintain_request_logs` | match-processing | hourly + startup | retain Valve request-log partitions |
-| `sync_catalogs` | historical | boot + daily 05:00 UTC | heroes / items / patches from d2vpkr VPK + odota `json/` |
+| `sync_catalogs` | historical | boot + hourly | Valve `datafeed` lists via proxy when a new patch appears |
+| `sync_catalogs_external_providers` | CLI | on demand | d2vpkr VPK + odota `json/` (facets, roles, cost, modes) |
 | parser (Go) | parser | polls `match_replays` | `stored` `.dem.bz2` from S3 → ClickHouse `replay_*` |
 
 League status is **ours**, not Valve's `status` integer (that flag is stored as `valve_status`). A league is `LIVE` if it currently appears in live games, or now is between `start_timestamp` and `end_timestamp`; `UPCOMING` if start is in the future; `FINISHED` if the window ended, Valve marked it concluded (`status=5`), or activity is stale.

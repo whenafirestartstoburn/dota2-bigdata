@@ -8,6 +8,7 @@ import { getMatchHistoryPage } from '#src/steam/web-api'
 import { asNumber } from '#src/store/coerce'
 import { partialPlayerFacts } from '#src/store/match-details'
 import {
+	fillMatchPlayerLinks,
 	listAwaitingHistoryMatchIds,
 	listDueHistoryLeagueIds,
 	markHistoryAvailable,
@@ -93,9 +94,6 @@ export async function runPollFinishedHistory(): Promise<{
 						}),
 					]
 				})
-				await upsertMatchPlayers(tx, match.match_id, players, {
-					fillOnly: true,
-				})
 				for (const player of players) {
 					await upsertPlayer(tx, {
 						accountId: player.accountId,
@@ -107,6 +105,10 @@ export async function runPollFinishedHistory(): Promise<{
 						matchId: match.match_id,
 					})
 				}
+				await upsertMatchPlayers(tx, match.match_id, players, {
+					fillOnly: true,
+				})
+				await fillMatchPlayerLinks(tx, match.match_id)
 			}
 			await recordHistoryPollMisses(tx, missed, {
 				fastLimit: settings.historyFastPollLimit,

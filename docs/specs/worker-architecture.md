@@ -88,7 +88,7 @@ transitions, and ClickHouse / catalog inserts:
 | `replenish_accounts` | every `settings.replenish_interval_ms` + startup | if ready API keys or dedicated GC accounts (plus pending orders) are below `settings`, buy the gap from the whitelist, one store order per missing unit; Telegram after a stable failed error (3 retries, 10 min cooldown) |
 | `settle_marketplace_orders` | every `settings.marketplace_settle_interval_ms` + startup | poll pending `marketplace_orders`; fulfill when Dark Shopping is `completed`/`ok`; fail after `marketplace_pending_ttl_ms` (seed 1 h) if still `in_process`; same Telegram on a stable fail |
 | `retest_disabled_resources` | every `settings.retest_interval_ms` + startup | probe disabled proxies / GC accounts / API keys with `retest_count` below the matching `*_retest_max`; restore on success; give up after max |
-| `sync_catalogs` | worker boot (sync, before ingest jobs) + daily 05:00 UTC | rebuild `heroes` / `items` / `patches` / `abilities` / facets / modes / regions from d2vpkr VPK + odota `json/` |
+| `sync_catalogs` | worker boot (sync, before ingest jobs) + hourly | `patchnoteslist` via api proxy; on a new patch (or empty `heroes`) upsert `heroes` / `items` / `abilities` / `patches` from datafeed lists |
 
 ### Live (`poll_live_games`)
 
@@ -290,7 +290,7 @@ Three compose services, same image, `WORKER_ROLE` set:
 | `worker-historical` | `:3004` | GetMatchHistory discovery. Scale is `WORKER_HISTORICAL_REPLICAS` (0 for now) |
 | `worker-match-processing` | `:3005` | GC / replay / archive / request-log partitions / replenish |
 
-Cron (`ensure_loop_jobs` every minute on every role; `fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` 05:00 UTC on `historical` / `all`) is registered in `cronFor`. `walk_seq_history` is a boot loop on live and historical (`jobKey`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
+Cron (`ensure_loop_jobs` every minute on every role; `fetch_leagues` hourly, `walk_league_history` 5-minute watchdog, `sync_catalogs` hourly on `historical` / `all`) is registered in `cronFor`. `walk_seq_history` is a boot loop on live and historical (`jobKey`). Catalog sync on boot is the same process: ingest on the other two does not wait for `heroes`.
 
 API `POST /api/leagues/process-finished` forces `walk_league_history` for an id (reset exhausted); the historical process picks it up.
 
@@ -321,4 +321,4 @@ minutes is released to `stored` so a restarted parser can claim it.
 
 ### Catalogs (`sync_catalogs`)
 
-`heroes` / `items` / `patches` (and abilities, facets, modes, …) are lookup tables. Match ingest writes Valve ids and never fills those rows — that is why an empty `heroes` table with a full `match_draft` is possible. `sync_catalogs` rebuilds them from Valve VPK dumps (d2vpkr) the same way odota/dotaconstants `updateconstants.ts` does; patch / mode / buff / XP tables come from that repo's `json/`, regions from VPK, cluster from leftover `build/cluster.json`. The worker **blocks ingest startup** on a successful catalog sync when `heroes` is empty, and otherwise keeps the last good rows if the feed is down. CLI: `bun run catalogs:sync`.
+`heroes` / `items` / `patches` (and abilities, facets, modes, …) are lookup tables. Match ingest writes Valve ids and never fills those rows — that is why an empty `heroes` table with a full `match_draft` is possible. Hourly `sync_catalogs` (and historical boot) asks `www.dota2.com/datafeed/patchnoteslist` through an `api` proxy; a new `patch_number` (or an empty `heroes` table) then upserts `herolist` / `itemlist` / `abilitylist` / patches. It does not delete rows and does not overwrite attack type, roles, or item cost when the list feed has none. Richer fields (facets, slots, modes, regions, XP) stay on the CLI-only `sync_catalogs_external_providers` (`bun run catalogs:sync-external`) from d2vpkr VPK + odota `json/`. The worker **blocks ingest startup** on a successful catalog sync when `heroes` is empty, and otherwise keeps the last good rows if the feed is down. CLI: `bun run catalogs:sync`.

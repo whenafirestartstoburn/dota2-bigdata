@@ -1,5 +1,5 @@
 import { asBool, asNumber, asRecord, asString, asText } from '#src/store/coerce'
-import { db, sql, sqlIn, sqlValues } from '#src/utils/db'
+import { db, sql, sqlValues } from '#src/utils/db'
 
 export type AbilityKind = 'spell' | 'talent' | 'innate' | 'item' | 'other'
 
@@ -384,47 +384,98 @@ async function upsertChunks(
 	}
 }
 
+export type PersistCatalogsOptions = {
+	/** Official datafeed omits attack_type / roles / cost — keep other job's values. */
+	preserveMissingFields?: boolean
+}
+
 export async function persistCatalogs(
 	snapshot: CatalogSnapshot,
+	opts?: PersistCatalogsOptions,
 ): Promise<void> {
 	if (snapshot.heroes.length === 0) {
 		throw new Error('catalog snapshot has no heroes')
 	}
+	const preserve = opts?.preserveMissingFields === true
 
 	await db.transaction(async (tx) => {
 		await upsertChunks(snapshot.heroes, async (chunk) => {
-			await tx.execute(sql`
-				INSERT INTO heroes ${sqlValues(chunk)}
-				ON CONFLICT (hero_id) DO UPDATE SET
-					name = excluded.name,
-					localized_name = excluded.localized_name,
-					primary_attr = excluded.primary_attr,
-					attack_type = excluded.attack_type,
-					roles = excluded.roles,
-					updated_at = now()
-			`)
+			await tx.execute(
+				preserve
+					? sql`
+						INSERT INTO heroes ${sqlValues(chunk)}
+						ON CONFLICT (hero_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = CASE
+								WHEN excluded.localized_name = '' THEN heroes.localized_name
+								ELSE excluded.localized_name
+							END,
+							primary_attr = COALESCE(
+								excluded.primary_attr,
+								heroes.primary_attr
+							),
+							updated_at = now()
+					`
+					: sql`
+						INSERT INTO heroes ${sqlValues(chunk)}
+						ON CONFLICT (hero_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = excluded.localized_name,
+							primary_attr = excluded.primary_attr,
+							attack_type = excluded.attack_type,
+							roles = excluded.roles,
+							updated_at = now()
+					`,
+			)
 		})
 
 		await upsertChunks(snapshot.items, async (chunk) => {
-			await tx.execute(sql`
-				INSERT INTO items ${sqlValues(chunk)}
-				ON CONFLICT (item_id) DO UPDATE SET
-					name = excluded.name,
-					localized_name = excluded.localized_name,
-					cost = excluded.cost,
-					updated_at = now()
-			`)
+			await tx.execute(
+				preserve
+					? sql`
+						INSERT INTO items ${sqlValues(chunk)}
+						ON CONFLICT (item_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = CASE
+								WHEN excluded.localized_name = '' THEN items.localized_name
+								ELSE excluded.localized_name
+							END,
+							updated_at = now()
+					`
+					: sql`
+						INSERT INTO items ${sqlValues(chunk)}
+						ON CONFLICT (item_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = excluded.localized_name,
+							cost = excluded.cost,
+							updated_at = now()
+					`,
+			)
 		})
 
 		await upsertChunks(snapshot.abilities, async (chunk) => {
-			await tx.execute(sql`
-				INSERT INTO abilities ${sqlValues(chunk)}
-				ON CONFLICT (ability_id) DO UPDATE SET
-					name = excluded.name,
-					localized_name = excluded.localized_name,
-					kind = excluded.kind,
-					updated_at = now()
-			`)
+			await tx.execute(
+				preserve
+					? sql`
+						INSERT INTO abilities ${sqlValues(chunk)}
+						ON CONFLICT (ability_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = CASE
+								WHEN excluded.localized_name = '' THEN abilities.localized_name
+								ELSE excluded.localized_name
+							END,
+							kind = excluded.kind,
+							updated_at = now()
+					`
+					: sql`
+						INSERT INTO abilities ${sqlValues(chunk)}
+						ON CONFLICT (ability_id) DO UPDATE SET
+							name = excluded.name,
+							localized_name = excluded.localized_name,
+							kind = excluded.kind,
+							updated_at = now()
+					`,
+			)
 		})
 
 		await upsertChunks(snapshot.patches, async (chunk) => {
@@ -506,28 +557,38 @@ export async function persistCatalogs(
 			`)
 		})
 
-		const mappedHeroIds = [
-			...new Set([
-				...snapshot.heroes.map((row) => row.hero_id),
-				...snapshot.heroAbilities.map((row) => row.hero_id),
-				...snapshot.heroFacets.map((row) => row.hero_id),
-			]),
-		]
-		if (mappedHeroIds.length > 0) {
-			await tx.execute(
-				sql`DELETE FROM hero_abilities WHERE hero_id IN ${sqlIn(mappedHeroIds)}`,
-			)
-			await tx.execute(
-				sql`DELETE FROM hero_facets WHERE hero_id IN ${sqlIn(mappedHeroIds)}`,
-			)
-		}
 		await upsertChunks(snapshot.heroAbilities, async (chunk) => {
-			await tx.execute(sql`INSERT INTO hero_abilities ${sqlValues(chunk)}`)
+			await tx.execute(sql`
+				INSERT INTO hero_abilities ${sqlValues(chunk)}
+				ON CONFLICT (hero_id, slot, is_talent) DO UPDATE SET
+					ability_id = excluded.ability_id,
+					talent_level = excluded.talent_level,
+					updated_at = now()
+			`)
 		})
 		await upsertChunks(snapshot.heroFacets, async (chunk) => {
-			await tx.execute(sql`INSERT INTO hero_facets ${sqlValues(chunk)}`)
+			await tx.execute(sql`
+				INSERT INTO hero_facets ${sqlValues(chunk)}
+				ON CONFLICT (hero_id, facet_id) DO UPDATE SET
+					name = excluded.name,
+					localized_name = excluded.localized_name,
+					icon = excluded.icon,
+					color = excluded.color,
+					deprecated = excluded.deprecated,
+					updated_at = now()
+			`)
 		})
 	})
+}
+
+export async function listPatchNames(): Promise<Set<string>> {
+	const rows = await db.execute(sql`SELECT patch FROM patches`)
+	const out = new Set<string>()
+	for (const row of rows) {
+		const patch = asString(row.patch)
+		if (patch != null) out.add(patch)
+	}
+	return out
 }
 
 export async function countHeroes(): Promise<number> {

@@ -131,6 +131,28 @@ func publishCaptains(ctx context.Context, tx pgx.Tx, res *model.Result) error {
 					  AND p.account_id > 0
 				)
 			),
+			radiant_captain_player_id = COALESCE(
+				m.radiant_captain_player_id,
+				(
+					SELECT pl.id
+					FROM match_players p
+					JOIN players pl ON pl.account_id = p.account_id
+					WHERE p.match_id = m.match_id
+					  AND p.player_slot = $2
+					  AND p.account_id > 0
+				)
+			),
+			dire_captain_player_id = COALESCE(
+				m.dire_captain_player_id,
+				(
+					SELECT pl.id
+					FROM match_players p
+					JOIN players pl ON pl.account_id = p.account_id
+					WHERE p.match_id = m.match_id
+					  AND p.player_slot = $3
+					  AND p.account_id > 0
+				)
+			),
 			updated_at = now()
 		WHERE m.match_id = $1
 	`, res.MatchID, radiantSlot, direSlot); err != nil {
