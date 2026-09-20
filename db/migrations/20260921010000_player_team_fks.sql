@@ -163,18 +163,10 @@ UPDATE match_draft d
 SET
 	account_id = mp.account_id,
 	player_id = mp.player_id,
-	team_id = COALESCE(
-		mp.team_id,
-		CASE
-			WHEN d.team = 0 THEN m.radiant_team_id
-			WHEN d.team = 1 THEN m.dire_team_id
-		END
-	)
-FROM matches m
-LEFT JOIN match_players mp
-	ON mp.match_id = d.match_id
-	AND mp.player_slot = d.player_slot
-WHERE m.match_id = d.match_id;
+	team_id = COALESCE(d.team_id, mp.team_id)
+FROM match_players mp
+WHERE d.match_id = mp.match_id
+	AND d.player_slot = mp.player_slot;
 
 UPDATE match_draft d
 SET team_id = CASE
@@ -193,23 +185,15 @@ UPDATE match_objectives o
 SET
 	account_id = mp.account_id,
 	player_id = mp.player_id,
-	team_id = COALESCE(
-		mp.team_id,
-		CASE
-			WHEN o.team = 0 THEN m.radiant_team_id
-			WHEN o.team = 1 THEN m.dire_team_id
-		END
-	)
-FROM matches m
-LEFT JOIN match_players mp
-	ON mp.match_id = o.match_id
+	team_id = COALESCE(o.team_id, mp.team_id)
+FROM match_players mp
+WHERE o.match_id = mp.match_id
 	AND mp.player_slot = CASE
 		WHEN o.slot IS NULL THEN NULL
 		WHEN o.slot BETWEEN 0 AND 4 THEN o.slot
 		WHEN o.slot BETWEEN 5 AND 9 THEN o.slot + 123
 		ELSE o.slot
-	END
-WHERE m.match_id = o.match_id;
+	END;
 
 UPDATE match_objectives o
 SET team_id = CASE

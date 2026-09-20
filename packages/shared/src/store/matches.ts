@@ -333,43 +333,54 @@ export async function fillMatchPlayerLinks(
 		SET
 			account_id = COALESCE(o.account_id, mp.account_id),
 			player_id = COALESCE(o.player_id, mp.player_id),
-			team_id = COALESCE(
-				o.team_id,
-				mp.team_id,
-				CASE
-					WHEN o.team = 0 THEN m.radiant_team_id
-					WHEN o.team = 1 THEN m.dire_team_id
-				END
-			)
-		FROM matches m
-		LEFT JOIN match_players mp
-			ON mp.match_id = o.match_id
+			team_id = COALESCE(o.team_id, mp.team_id)
+		FROM match_players mp
+		WHERE o.match_id = ${matchId}
+			AND mp.match_id = o.match_id
 			AND mp.player_slot = CASE
 				WHEN o.slot IS NULL THEN NULL
 				WHEN o.slot BETWEEN 0 AND 4 THEN o.slot
 				WHEN o.slot BETWEEN 5 AND 9 THEN o.slot + 123
 				ELSE o.slot
 			END
+	`)
+	await tx.execute(sql`
+		UPDATE match_objectives o
+		SET team_id = CASE
+			WHEN o.team = 0 THEN m.radiant_team_id
+			WHEN o.team = 1 THEN m.dire_team_id
+		END
+		FROM matches m
 		WHERE o.match_id = ${matchId}
 			AND m.match_id = o.match_id
+			AND o.team_id IS NULL
+			AND CASE
+				WHEN o.team = 0 THEN m.radiant_team_id
+				WHEN o.team = 1 THEN m.dire_team_id
+			END IS NOT NULL
 	`)
 	await tx.execute(sql`
 		UPDATE match_coaches c
-		SET
-			player_id = COALESCE(c.player_id, p.id),
-			team_id = COALESCE(
-				c.team_id,
-				CASE
-					WHEN c.coach_team IN (0, 2) THEN m.radiant_team_id
-					WHEN c.coach_team IN (1, 3) THEN m.dire_team_id
-				END
-			)
-		FROM matches m
-		LEFT JOIN players p
-			ON p.account_id = c.account_id
+		SET player_id = COALESCE(c.player_id, p.id)
+		FROM players p
+		WHERE c.match_id = ${matchId}
 			AND c.account_id > 0
+			AND p.account_id = c.account_id
+	`)
+	await tx.execute(sql`
+		UPDATE match_coaches c
+		SET team_id = CASE
+			WHEN c.coach_team IN (0, 2) THEN m.radiant_team_id
+			WHEN c.coach_team IN (1, 3) THEN m.dire_team_id
+		END
+		FROM matches m
 		WHERE c.match_id = ${matchId}
 			AND m.match_id = c.match_id
+			AND c.team_id IS NULL
+			AND CASE
+				WHEN c.coach_team IN (0, 2) THEN m.radiant_team_id
+				WHEN c.coach_team IN (1, 3) THEN m.dire_team_id
+			END IS NOT NULL
 	`)
 	await tx.execute(sql`
 		UPDATE match_broadcasters b
