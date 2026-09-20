@@ -143,6 +143,29 @@ describe('findSchemaDrift', () => {
 		expect(
 			findSchemaDrift(
 				{
+					result: {
+						status: 1,
+						matches: [
+							{
+								match_id: 1,
+								match_seq_num: 2,
+								leagueid: 10,
+							},
+							{
+								match_id: 3,
+								match_seq_num: 4,
+								tournament_id: 17,
+								tournament_round: 2,
+							},
+						],
+					},
+				},
+				STEAM_API_DRIFT.GetMatchHistoryBySequenceNum ?? { required: [] },
+			),
+		).toBeNull()
+		expect(
+			findSchemaDrift(
+				{
 					match: {
 						match_id: '1',
 						league_id: 7,

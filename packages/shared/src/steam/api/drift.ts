@@ -243,6 +243,8 @@ const seqMatchSpec: DriftSpec = {
 		'dire_team_complete',
 		'radiant_captain',
 		'dire_captain',
+		'tournament_id',
+		'tournament_round',
 		'flags',
 		'match_flags',
 		'positive_votes',

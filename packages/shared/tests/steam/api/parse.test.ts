@@ -141,6 +141,8 @@ describe('parseMatchHistoryBySequenceNum', () => {
 						leagueid: 18322,
 						radiant_win: true,
 						start_time: 100,
+						tournament_id: 17,
+						tournament_round: 2,
 					},
 				],
 			},
@@ -148,6 +150,8 @@ describe('parseMatchHistoryBySequenceNum', () => {
 		expect(matches[0]?.match_id).toBe(8)
 		expect(matches[0]?.leagueid).toBe(18322)
 		expect(matches[0]?.radiant_win).toBe(true)
+		expect(matches[0]?.tournament_id).toBe(17)
+		expect(matches[0]?.tournament_round).toBe(2)
 	})
 
 	test('empty window is valid', () => {

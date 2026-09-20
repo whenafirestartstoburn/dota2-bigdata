@@ -21,11 +21,15 @@ describe('extractMatchFacts', () => {
 			cluster: 1,
 			replay_salt: 42,
 			radiant_name: 'Team A',
+			tournament_id: 17,
+			tournament_round: 2,
 		})
 		expect(facts.leagueId).toBe(19719)
 		expect(facts.radiantWin).toBe(true)
 		expect(facts.replaySalt).toBe(42)
 		expect(facts.radiantTeamName).toBe('Team A')
+		expect(facts.tournamentId).toBe(17)
+		expect(facts.tournamentRound).toBe(2)
 	})
 
 	test('maps seq captains', () => {

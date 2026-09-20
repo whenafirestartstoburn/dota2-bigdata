@@ -25,10 +25,12 @@ and side `abilities`; `GetTopLiveGame` query-echo envelope
 `game_list_index`, `specific_games`, `bot_game`) plus
 `is_player_draft` / `is_watch_eligible` on each game;
 `GetMatchHistory` player `hero_variant`. Anonymous history players
-omit `account_id` — that is not missing. `GetRealtimeStats`
-`match.lobby_type` / `start_timestamp` / `is_player_draft`, team
-`team_tag` / `team_logo_url`, and envelope `delta_frame`. Also
-`leagueid`, `accountid`/`heroid`, scoreboard `death` vs `deaths`.
+omit `account_id` — that is not missing. `GetMatchHistoryBySequenceNum`
+match `tournament_id` / `tournament_round` (not on every match).
+`GetRealtimeStats` `match.lobby_type` / `start_timestamp` /
+`is_player_draft`, team `team_tag` / `team_logo_url`, and envelope
+`delta_frame`. Also `leagueid`, `accountid`/`heroid`, scoreboard
+`death` vs `deaths`.
 
 An empty `games` / `matches` / `infos` / `game_list` / `teams` array is
 a valid response, not a parse error and not schema drift.

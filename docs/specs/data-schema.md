@@ -122,8 +122,8 @@ One row per game. Team names are a snapshot at game time.
 | `dire_team_tag` | Dire team tag. Comes from GC |
 | `radiant_guild_id` | Radiant guild id. Comes from GC |
 | `dire_guild_id` | Dire guild id. Comes from GC |
-| `tournament_id` | Tournament id. Comes from GC |
-| `tournament_round` | Tournament round. Comes from GC |
+| `tournament_id` | Tournament id. Comes from GetMatchHistoryBySequenceNum / GC |
+| `tournament_round` | Tournament round. Comes from GetMatchHistoryBySequenceNum / GC |
 | `league_series_id` | League series id. Comes from GetLiveLeagueGames |
 | `league_game_id` | League game id. Comes from GetLiveLeagueGames |
 | `game_number` | Game number in the series. Comes from GetLiveLeagueGames |
@@ -1284,7 +1284,7 @@ Order of magnitude for ~2×10⁵ professional matches: combat log ~10¹⁰ rows,
 | `GetTopLiveGame` | `matches.server_steam_id`, `ingest_sources`, live status |
 | `GetRealtimeStats` | live PG scoreboard/draft plus CH `live_*` ticks (`source = GetRealtimeStats`, `game_state`, `server_steam_id`, backpack `item6`–`item8`). Those ticks do not get GPM/XPM/ultimate/respawn |
 | `GetMatchHistory` (`league_id`) | `match_id` / `match_seq_num` / series / teams; live-finished waiter (paginated until found or league exhausted) |
-| `GetMatchHistoryBySequenceNum` | box score, draft, backpack, ability upgrades, captains, `seq_fetched_at`. Worker `fetch_seq_details` (`matches_requested = 1`); CLI `persistSeqMatches` batch |
+| `GetMatchHistoryBySequenceNum` | box score, draft, backpack, ability upgrades, captains, tournament id/round, `seq_fetched_at`. Worker `fetch_seq_details` (`matches_requested = 1`); CLI `persistSeqMatches` batch |
 | GC `CMsgGCMatchDetailsResponse` → `CMsgDOTAMatch` | `cluster` / `replay_salt`, box score, draft, team columns. `item_6..8` map to backpack. `match_replays.steam_account_id` / `proxy_id` |
 | Replay parse | CH `replay_*`, PG `match_objectives`, parse summaries on `match_players`, `match_draft.clock` (complete details draft is left in place), `matches.barracks_status_*` from rax kills, captains + leftover backpack / neutrals / Aghs from metadata |
 

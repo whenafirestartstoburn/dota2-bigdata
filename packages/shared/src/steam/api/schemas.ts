@@ -191,6 +191,8 @@ export const seqMatchSchema = z.object({
 	dire_team_complete: z.union([z.number(), z.boolean()]).optional(),
 	radiant_captain: z.number().optional(),
 	dire_captain: z.number().optional(),
+	tournament_id: z.number().optional(),
+	tournament_round: z.number().optional(),
 	flags: z.number().optional(),
 	match_flags: z.number().optional(),
 	players: z.array(z.unknown()).optional(),
