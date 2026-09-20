@@ -138,7 +138,7 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_draft.player_id,
 			to: r.players.id,
 		}),
-		team: r.one.teams({
+		team_team_id: r.one.teams({
 			from: r.match_draft.team_id,
 			to: r.teams.team_id,
 		}),
@@ -152,7 +152,7 @@ export const relations = defineRelations(schema, (r) => ({
 			from: r.match_objectives.player_id,
 			to: r.players.id,
 		}),
-		team: r.one.teams({
+		team_team_id: r.one.teams({
 			from: r.match_objectives.team_id,
 			to: r.teams.team_id,
 		}),
