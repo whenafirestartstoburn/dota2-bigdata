@@ -295,14 +295,15 @@ func publishObjectives(ctx context.Context, tx pgx.Tx, res *model.Result) error 
 				account_id, player_id, team_id
 			)
 			SELECT
-				$1, $2, $3, $4, $5, $6, $7, $8,
+				$1::bigint, $2::integer, $3::integer, $4::text,
+				$5::smallint, $6::integer, $7::text, $8::integer,
 				mp.account_id,
 				mp.player_id,
 				COALESCE(
 					mp.team_id,
 					CASE
-						WHEN $5 = 0 THEN m.radiant_team_id
-						WHEN $5 = 1 THEN m.dire_team_id
+						WHEN $5::smallint = 0 THEN m.radiant_team_id
+						WHEN $5::smallint = 1 THEN m.dire_team_id
 					END
 				)
 			FROM (SELECT $1::bigint AS match_id) x
@@ -311,9 +312,9 @@ func publishObjectives(ctx context.Context, tx pgx.Tx, res *model.Result) error 
 				ON mp.match_id = x.match_id
 				AND mp.player_slot = CASE
 					WHEN $6::integer IS NULL THEN NULL
-					WHEN $6 BETWEEN 0 AND 4 THEN $6
-					WHEN $6 BETWEEN 5 AND 9 THEN $6 + 123
-					ELSE $6
+					WHEN $6::integer BETWEEN 0 AND 4 THEN $6::integer
+					WHEN $6::integer BETWEEN 5 AND 9 THEN $6::integer + 123
+					ELSE $6::integer
 				END
 		`, res.MatchID, next, o.Time, o.Kind, o.Team, o.Slot, nullStr(o.Key), o.Value); err != nil {
 			return fmt.Errorf("match_objectives: %w", err)
@@ -373,10 +374,11 @@ func publishDraft(ctx context.Context, tx pgx.Tx, res *model.Result) error {
 			INSERT INTO match_draft (
 				match_id, ord, is_pick, hero_id, team, player_slot, clock, team_id
 			)
-			SELECT $1, $2, $3, $4, $5, $6, $7,
+			SELECT $1::bigint, $2::integer, $3::boolean, $4::integer,
+				$5::smallint, $6::integer, $7::integer,
 				CASE
-					WHEN $5 = 0 THEN m.radiant_team_id
-					WHEN $5 = 1 THEN m.dire_team_id
+					WHEN $5::smallint = 0 THEN m.radiant_team_id
+					WHEN $5::smallint = 1 THEN m.dire_team_id
 				END
 			FROM (SELECT $1::bigint AS match_id) x
 			LEFT JOIN matches m ON m.match_id = x.match_id

@@ -249,19 +249,22 @@ export async function fillMatchPlayerLinks(
 ): Promise<void> {
 	await tx.execute(sql`
 		UPDATE match_players mp
-		SET
-			player_id = COALESCE(mp.player_id, p.id),
-			team_id = COALESCE(
-				mp.team_id,
-				CASE
-					WHEN mp.player_slot < 128 THEN m.radiant_team_id
-					ELSE m.dire_team_id
-				END
-			)
-		FROM matches m
-		LEFT JOIN players p
-			ON p.account_id = mp.account_id
+		SET player_id = COALESCE(mp.player_id, p.id)
+		FROM players p
+		WHERE mp.match_id = ${matchId}
 			AND mp.account_id > 0
+			AND p.account_id = mp.account_id
+	`)
+	await tx.execute(sql`
+		UPDATE match_players mp
+		SET team_id = COALESCE(
+			mp.team_id,
+			CASE
+				WHEN mp.player_slot < 128 THEN m.radiant_team_id
+				ELSE m.dire_team_id
+			END
+		)
+		FROM matches m
 		WHERE mp.match_id = ${matchId}
 			AND m.match_id = mp.match_id
 	`)
